@@ -1,8 +1,8 @@
 # Mathstral
 
 Mathstral is a native macOS editor for writing prose with inline
-math. Type a rough description of a formula between slashes, such as
-`/integral from 0 to infinity of e^-x^2 dx/`, and keep writing. A local model
+math. Type a rough description of a formula between backslashes, such as
+`\integral from 0 to infinity of e^-x^2 dx\`, and keep writing. A local model
 running in [Ollama](https://ollama.com) turns the description into LaTeX. The
 formula is rendered in the background with MiTeX and Typst, so plain writing
 never waits for it.
@@ -22,7 +22,7 @@ never waits for it.
 
 No TeX distribution, browser, JavaScript engine or GPU is needed. Writing, opening
 and saving files, and rendering math that is already in a document all work without
-Ollama. Only new `/…/` prompts need the model.
+Ollama. Only new `\…\` prompts need the model.
 
 ## Install
 
@@ -49,7 +49,7 @@ Renderer benchmarks and their outputs are described in
 
 ## Using Mathstral
 
-- Type `/…/` to start a math prompt. An open prompt is tinted; it is dim while the
+- Type `\…\` to start a math prompt. An open prompt is tinted; it is dim while the
   model works and turns into a formula when it is ready. If generation fails, the
   prompt stays with a red underline.
 - Press **Enter** at the left edge of a formula, or **Backspace** just after it, to
@@ -70,7 +70,7 @@ Files are Markdown-compatible text.
 - A formula's source prompt is kept in a hidden comment,
   `<!--mathstral:BASE64URL-->`, so the prompt can be edited later.
 - Literal dollar signs in prose are saved as `\$`. Pending prompts are saved as
-  `/prompt/` and resume when the file is opened.
+  `\prompt\` and resume when the file is opened.
 - Settings and the last-opened path are stored in `~/Library/Application Support/Mathstral`.
 
 ## Project layout

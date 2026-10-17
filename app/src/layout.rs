@@ -306,7 +306,7 @@ impl Typesetter {
         out
     }
     fn layout_plain_label(&mut self, label: &str, width: f32) -> Layout {
-        // No parsing here: a prompt may contain literal dollar signs and slashes.
+        // No parsing here: a prompt may contain literal dollar signs and backslashes.
         let mut out = Layout::default();
         let mut row = Vec::new();
         let mut x = 0.0;

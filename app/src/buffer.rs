@@ -38,7 +38,7 @@ impl Formula {
     pub fn label(&self) -> String {
         self.prompt
             .as_ref()
-            .map(|p| format!("/{p}/"))
+            .map(|p| format!("\\{p}\\"))
             .unwrap_or_else(|| "math…".into())
     }
 }
@@ -138,7 +138,7 @@ impl Document {
             } else {
                 let c = text[pos..].chars().next().unwrap();
                 // Explicit cancellation survives a save/reopen without activating math.
-                if c == '/' && self.cancelled.contains(&pos) {
+                if c == '\\' && self.cancelled.contains(&pos) {
                     result.push_str("<!--mathstral:literal-->");
                 }
                 let next = pos + c.len_utf8();
@@ -256,7 +256,7 @@ impl Document {
             return;
         }
         let now = Instant::now();
-        let structural = value.contains('/') || value.contains('\n');
+        let structural = value.contains('\\') || value.contains('\n');
         let grouped = typing
             && !structural
             && range.is_empty()
@@ -267,8 +267,8 @@ impl Document {
             self.undo.push(self.snapshot());
         }
         self.redo.clear();
-        // A slash at EOF closes immediately, but a subsequently typed denominator
-        // reinterprets it as an internal slash, even if rendering already finished.
+        // A backslash at EOF closes immediately, but a subsequently typed denominator
+        // reinterprets it as an internal backslash, even if rendering already finished.
         if range.is_empty()
             && value.chars().next().is_some_and(|c| !closing_boundary(c))
             && let Some((&pos, f)) = self.formulas.range(..self.caret).next_back()
@@ -285,7 +285,7 @@ impl Document {
         }
         let mut range = self.selection();
         let text_before = self.text();
-        let completes_edit = value == "/"
+        let completes_edit = value == "\\"
             && self.editing.as_ref().is_some_and(|e| {
                 self.caret == e.end - 1
                     || text_before[self.caret..]
@@ -353,7 +353,7 @@ impl Document {
                     open = None;
                     continue;
                 }
-                if c != '/' {
+                if c != '\\' {
                     continue;
                 }
                 if let Some(start) = open {
@@ -390,7 +390,7 @@ impl Document {
             if c == ATOM_CHAR {
                 open = None;
             }
-            if c == '/'
+            if c == '\\'
                 && open.is_none()
                 && !self.cancelled.contains(&i)
                 && opening_boundary(&text, i)
@@ -677,25 +677,36 @@ mod tests {
         }
     }
     #[test]
-    fn slash_rules_and_provisional_fraction() {
+    fn backslash_rules_and_provisional_fraction() {
         let mut d = Document::new("");
-        type_text(&mut d, "and/or https://a/b /1/2 plus a/b/ done");
+        type_text(&mut d, r"and\or C:\a\b \1\2 plus a\b\ done");
         assert_eq!(d.formulas.len(), 1);
         assert_eq!(
             d.formulas.values().next().unwrap().prompt.as_deref(),
-            Some("1/2 plus a/b")
+            Some(r"1\2 plus a\b")
         );
-        assert_eq!(d.text(), format!("and/or https://a/b {ATOM} done"));
-        type_text(&mut d, " /unfinished");
+        assert_eq!(d.text(), format!(r"and\or C:\a\b {ATOM} done"));
+        type_text(&mut d, r" \unfinished");
         assert!(d.open_range().is_some());
         assert!(d.cancel());
-        type_text(&mut d, "/");
+        type_text(&mut d, r"\");
         assert_eq!(d.formulas.len(), 1);
         assert_eq!(Document::new(&d.markdown()).formulas.len(), 1);
+        let mut d = Document::new("");
+        type_text(&mut d, r"\1\");
+        assert_eq!(d.formulas.len(), 1);
+        type_text(&mut d, "2");
+        assert!(d.formulas.is_empty());
+        assert_eq!(d.text(), r"\1\2");
+        type_text(&mut d, r"\");
+        assert_eq!(
+            d.formulas.values().next().unwrap().prompt.as_deref(),
+            Some(r"1\2")
+        );
     }
     #[test]
     fn atoms_survive_edits_and_history_and_roundtrip() {
-        let mut d = Document::new("A /one/ and /two/.");
+        let mut d = Document::new(r"A \one\ and \two\.");
         let id = d.formulas[&2].id;
         d.move_to(0, false);
         d.replace("prefix ", true);
@@ -703,10 +714,10 @@ mod tests {
         d.move_to(12, false);
         assert!(d.reopen(9));
         d.replace("!", true);
-        d.replace("/", true);
+        d.replace(r"\", true);
         assert_eq!(d.formulas[&9].prompt.as_deref(), Some("one!"));
         d.undo(false);
-        assert!(d.text().contains("/one!/"));
+        assert!(d.text().contains(r"\one!\"));
         d.undo(true);
         assert_eq!(d.formulas[&9].prompt.as_deref(), Some("one!"));
         let saved = d.markdown();
@@ -776,12 +787,12 @@ mod tests {
         d.replace("$", true);
         assert_eq!(d.markdown(), "a\\\\\\$");
         assert_eq!(Document::new(&d.markdown()).text(), "a\\$");
-        let d = Document::new("x /cost \\$5/ y");
+        let d = Document::new(r"x \cost \$5\ y");
         assert_eq!(
             d.formulas.values().next().unwrap().prompt.as_deref(),
             Some("cost $5")
         );
-        assert_eq!(d.markdown(), "x /cost \\$5/ y");
+        assert_eq!(d.markdown(), r"x \cost \$5\ y");
         let reopened = Document::new(&d.markdown());
         assert_eq!(
             reopened.formulas.values().next().unwrap().prompt.as_deref(),
@@ -822,8 +833,8 @@ mod tests {
         assert_eq!(d.text(), format!("a \\{ATOM} b"));
         assert_eq!(d.markdown(), "a \\\\$x$ b");
         assert_round_trip(&d);
-        let d = Document::new("x /cost \\$5/ y");
-        assert_eq!(d.markdown(), "x /cost \\$5/ y");
+        let d = Document::new(r"x \cost \$5\ y");
+        assert_eq!(d.markdown(), r"x \cost \$5\ y");
         assert_round_trip(&d);
         assert_eq!(
             Document::new(&d.markdown())
@@ -835,6 +846,33 @@ mod tests {
                 .as_deref(),
             Some("cost $5")
         );
+    }
+    #[test]
+    fn backslash_prompts_round_trip() {
+        let mut d = Document::new("");
+        type_text(&mut d, r"\cost $5\ and a\b end");
+        assert_eq!(
+            d.formulas.values().next().unwrap().prompt.as_deref(),
+            Some("cost $5")
+        );
+        assert_round_trip(&d);
+        let mut d = Document::new("");
+        type_text(&mut d, r"a\\ \x\");
+        assert_eq!(d.text(), format!(r"a\\ {ATOM}"));
+        assert_round_trip(&d);
+        let mut d = Document::new("");
+        type_text(&mut d, r"\$5 and \x");
+        assert!(d.cancel());
+        assert_eq!(d.markdown(), r"<!--mathstral:literal-->\\\$5 and \x");
+        assert_round_trip(&d);
+        assert!(Document::new(&d.markdown()).formulas.is_empty());
+        let d = Document::new("/x/ and /y");
+        assert!(d.formulas.is_empty());
+        assert_eq!(d.text(), "/x/ and /y");
+        let mut d = Document::new("");
+        type_text(&mut d, "/x/");
+        assert!(d.formulas.is_empty());
+        assert_round_trip(&d);
     }
     #[test]
     fn paste_takes_text_literally() {

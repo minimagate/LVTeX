@@ -256,10 +256,10 @@ fn describe(
 ) -> Result<String, Error> {
     let response = request(
         &json!({"model":OLLAMA_MODEL,"stream":false,"keep_alive":KEEP_ALIVE,"options":{"temperature":0,"num_predict":512},
-        "messages":[{"role":"system","content":"Describe this mathematical expression as a concise, precise plain English math-writing prompt. Preserve every symbol, bound, index and equation. Output only the description, with no introduction, delimiters, slashes, backslashes, dollar signs or LaTeX commands. For example, \\frac{1}{3} becomes: 1 over 3."},{"role":"user","content":latex}]}),
+        "messages":[{"role":"system","content":"Describe this mathematical expression as a concise, precise plain English math-writing prompt. Preserve every symbol, bound, index and equation. Output only the description, with no introduction, delimiters, backslashes, dollar signs or LaTeX commands. For example, \\frac{1}{3} becomes: 1 over 3."},{"role":"user","content":latex}]}),
     )?;
     let prompt = response["message"]["content"].as_str().unwrap_or("").trim();
-    if prompt.is_empty() || prompt.contains(['\\', '$', '/', '`']) {
+    if prompt.is_empty() || prompt.contains(['\\', '$', '`']) {
         return Err("description was not plain text".to_owned().into());
     }
     Ok(prompt.to_owned())

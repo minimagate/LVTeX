@@ -87,7 +87,7 @@ mod tests {
     #[test]
     fn exports_typeset_pdf_with_prompts_and_escaped_prose() {
         let mut doc = Document::new(
-            "# Title\n\nA line with # * _ \\$ \\\\ @ < [ characters.\n\nInline $x^2$ here.\n\n$$\n\\int_0^1 x dx\n$$\n\n/half of x/",
+            "# Title\n\nA line with # * _ \\$ \\\\ @ < [ characters.\n\nInline $x^2$ here.\n\n$$\n\\int_0^1 x dx\n$$\n\n\\half of x\\",
         );
         assert_eq!(unrendered(&doc), 3);
         let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
@@ -104,7 +104,7 @@ mod tests {
             "A line with # * _ $ \\ @ < [ characters."
         )));
         assert!(source.contains("$ #eval("));
-        assert!(source.contains("\"/half of x/\""));
+        assert!(source.contains(&mathstral_latex::typst_string_literal("\\half of x\\")));
         assert_eq!(unrendered(&doc), 1);
         assert!(pdf(&doc).unwrap().starts_with(b"%PDF-"));
     }

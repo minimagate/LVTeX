@@ -67,16 +67,17 @@ File commands:
 - New, Open, Close Window and Quit ask "Save changes?" when the document has unsaved edits.
 - Export as PDF writes an A4 PDF typeset with Typst: black text on white, `# ` lines as italic
   headings, formulas as vector math. Prompts that have not rendered are exported as their
-  `/prompt/` text after a confirmation.
+  `\prompt\` text after a confirmation.
 
 ## Math prompts
 
-Type `/prompt/` to start a prompt.
+Type `\prompt\` to start a prompt.
 
-- Slashes open at a word start and close at punctuation, whitespace or the end of the text.
-- Internal slashes are text, not delimiters: `and/or`, URLs and `a/b/` do not start prompts.
-- When the next typed character continues a denominator, a just-closed `/1/` is reopened
-  as the still-open `/1/2`.
+- Backslashes open at a word start and close at punctuation, whitespace or the end of the text.
+- Internal backslashes are text, not delimiters: `C:\dir\file` and `a\b\` do not start prompts.
+- Earlier `/prompt/` text is plain text.
+- When the next typed character continues a denominator, a just-closed `\1\` is reopened
+  as the still-open `\1\2`.
 - An open prompt has a subtle green tint and underline.
 - A closed prompt is dim until the model returns a formula that renders successfully.
 - A prompt whose generation fails stays as text with a muted red underline. Enter retries it.
@@ -121,9 +122,9 @@ Type `/prompt/` to start a prompt.
 - Display math: `$$` on its own line, the body on the lines between, and `$$` on its own line.
 - Prompt source: a comment `<!--mathstral:BASE64URL-->` directly after the formula. The payload
   is the UTF-8 original prompt, encoded in base64url without padding. Markdown readers hide it.
-- Explicit cancellation: `<!--mathstral:literal-->` marks text that was cancelled with Escape,
-  so it is not parsed as a prompt again.
-- Pending prompts are saved as `/prompt/` and resume on open.
+- Explicit cancellation: `<!--mathstral:literal-->` marks a backslash that was cancelled with
+  Escape, so it is not parsed as a prompt again.
+- Pending prompts are saved as `\prompt\` and resume on open.
 - Literal `$` in prose is saved as `\$`. Reading `\$` produces `$`.
 
 ## Imported math
@@ -144,7 +145,7 @@ cargo test --release --locked --workspace
 
 The editor tests cover:
 
-- Unicode editing, slash ambiguity and cancellation.
+- Unicode editing, backslash ambiguity and cancellation.
 - Atom selection, copy and paste.
 - Undo and redo.
 - Late and deleted results.

@@ -1,4 +1,4 @@
-> Original design brief, kept for reference. The shipped alpha differs in places: math prompts are typed inline as `/…/` instead of ⌘1, and the editor font is Libertinus Serif. See [EDITOR.md](EDITOR.md) for current behavior.
+> Original design brief, kept for reference. The shipped alpha differs in places: math prompts are typed inline as `\…\` instead of ⌘1, and the editor font is Libertinus Serif. See [EDITOR.md](EDITOR.md) for current behavior.
 
 # Build "Mathstral" — a minimal native math writing app for macOS, in pure Rust
 
