@@ -1,0 +1,22 @@
+[package]
+name = "mathstral"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+winit = "=0.30.13"
+softbuffer = "=0.4.8"
+cosmic-text = "=0.19.0"
+ropey = "=1.6.1"
+unicode-segmentation = "=1.13.3"
+muda = { version = "=0.21.2", default-features = false }
+rfd = "=0.17.2"
+arboard = { version = "=3.7.0", default-features = false }
+latex-spike = { path = "../tools/latex-spike" }
+mathstral-render-spike = { path = ".." }
+serde_json = "=1.0.154"
+base64 = "=0.22.1"
+
+[dev-dependencies]
+tiny-skia = "=0.12.0"

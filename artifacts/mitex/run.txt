@@ -1,0 +1,15 @@
+mode=mitex
+arch=aarch64
+os=macos
+renderer_init_ms=9.801292
+font_size_pt=22
+scale=2
+repeats=21
+failed_cases=0
+binary_bytes=27956416
+
+Uncached = comemo::evict(0) before each sample; font/library initialization excluded.
+Warm = same formula again, Typst internal memoization retained; rasterization still runs.
+PNG encoding, output I/O and gallery assembly excluded. No application pixmap cache.
+First is per-case first after eviction; only the first case includes process-first glyph work.
+Typst-only uses manual Typst counterparts, not LaTeX conversion.

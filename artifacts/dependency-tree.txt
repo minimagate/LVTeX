@@ -1,0 +1,795 @@
+latex-spike v0.1.0 (/Users/michelangelogubinelli/Github/mathstral/tools/latex-spike)
+mathstral-render-spike v0.1.0 (/Users/michelangelogubinelli/Github/mathstral)
+tiny-skia v0.12.0
+arrayref v0.3.9
+arrayvec v0.7.8
+bytemuck v1.25.2
+bytemuck_derive v1.12.1 (proc-macro)
+proc-macro2 v1.0.107
+unicode-ident v1.0.27
+quote v1.0.47
+proc-macro2 v1.0.107 (*)
+syn v3.0.9
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+unicode-ident v1.0.27
+cfg-if v1.0.5
+log v0.4.34
+png v0.18.1
+bitflags v2.13.2
+serde_core v1.0.229
+crc32fast v1.5.2
+cfg-if v1.0.5
+fdeflate v0.3.7
+simd-adler32 v0.3.10
+flate2 v1.1.10
+crc32fast v1.5.2 (*)
+miniz_oxide v0.9.1
+adler2 v2.0.1
+simd-adler32 v0.3.10
+zlib-rs v0.6.8
+miniz_oxide v0.8.9
+adler2 v2.0.1
+simd-adler32 v0.3.10
+tiny-skia-path v0.12.0
+arrayref v0.3.9
+bytemuck v1.25.2 (*)
+strict-num v0.1.1
+float-cmp v0.9.0
+typst v0.15.1
+arrayvec v0.7.8
+comemo v0.5.1
+comemo-macros v0.5.1 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v2.0.119
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+unicode-ident v1.0.27
+parking_lot v0.12.5
+lock_api v0.4.14
+scopeguard v1.2.0
+parking_lot_core v0.9.12
+cfg-if v1.0.5
+libc v0.2.190
+smallvec v1.16.3
+rustc-hash v2.1.3
+siphasher v1.0.4
+slab v0.4.12
+ecow v0.2.6
+serde v1.0.229
+serde_core v1.0.229
+serde_derive v1.0.229 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v3.0.9 (*)
+rustc-hash v2.1.3
+typst-eval v0.15.1
+comemo v0.5.1 (*)
+ecow v0.2.6 (*)
+indexmap v2.14.2
+equivalent v1.0.3
+hashbrown v0.17.1
+foldhash v0.2.0
+rayon v1.12.0
+either v1.19.0
+rayon-core v1.13.0
+crossbeam-deque v0.8.8
+crossbeam-epoch v0.9.21
+crossbeam-utils v0.8.23
+crossbeam-utils v0.8.23
+crossbeam-utils v0.8.23
+serde_core v1.0.229
+rustc-hash v2.1.3
+stacker v0.1.25
+cfg-if v1.0.5
+libc v0.2.190
+psm v0.1.32
+toml v0.8.23
+serde v1.0.229 (*)
+serde_spanned v0.6.9
+serde v1.0.229 (*)
+toml_datetime v0.6.11
+serde v1.0.229 (*)
+toml_edit v0.22.27
+indexmap v2.14.2 (*)
+serde v1.0.229 (*)
+serde_spanned v0.6.9 (*)
+toml_datetime v0.6.11 (*)
+toml_write v0.1.2
+winnow v0.7.15
+typst-library v0.15.1
+arrayvec v0.7.8
+az v1.3.0
+bitflags v2.13.2 (*)
+bumpalo v3.20.3
+ciborium v0.2.2
+ciborium-io v0.2.2
+ciborium-ll v0.2.2
+ciborium-io v0.2.2
+half v2.7.1
+cfg-if v1.0.5
+zerocopy v0.8.63
+zerocopy-derive v0.8.63 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v2.0.119 (*)
+serde v1.0.229 (*)
+codex v0.3.0
+chinese-number v0.7.8
+chinese-variant v1.1.6
+enum-ordinalize v4.4.2
+enum-ordinalize-derive v4.4.2 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v3.0.9 (*)
+num-bigint v0.4.8
+num-integer v0.1.47
+num-traits v0.2.19
+num-traits v0.2.19
+num-traits v0.2.19
+comemo v0.5.1 (*)
+csv v1.4.0
+csv-core v0.1.13
+memchr v2.8.3
+itoa v1.0.18
+ryu v1.0.23
+serde_core v1.0.229
+ecow v0.2.6 (*)
+either v1.19.0
+flate2 v1.1.10 (*)
+fontdb v0.23.0
+log v0.4.34
+slotmap v1.1.1
+tinyvec v1.13.3
+ttf-parser v0.25.1
+core_maths v0.1.1
+libm v0.2.16
+glidesort v0.1.2
+hayagriva v0.10.1
+biblatex v0.12.0
+paste v1.0.15 (proc-macro)
+roman-numerals-rs v3.1.0
+strum v0.27.2
+strum_macros v0.27.2 (proc-macro)
+heck v0.5.0
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v2.0.119 (*)
+unic-langid v0.9.6
+unic-langid-impl v0.9.6
+serde v1.0.229 (*)
+tinystr v0.8.4
+displaydoc v0.2.7 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v3.0.9 (*)
+serde_core v1.0.229
+zerovec v0.11.8
+serde v1.0.229 (*)
+yoke v0.8.3
+stable_deref_trait v1.2.1
+yoke-derive v0.8.4 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v3.0.9 (*)
+synstructure v0.14.0
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v3.0.9 (*)
+zerofrom v0.1.8
+zerofrom-derive v0.1.8 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v3.0.9 (*)
+synstructure v0.14.0 (*)
+zerofrom v0.1.8 (*)
+zerovec-derive v0.11.6 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v3.0.9 (*)
+unic-langid-macros v0.9.6
+proc-macro-hack v0.5.20+deprecated (proc-macro)
+tinystr v0.8.4 (*)
+unic-langid-impl v0.9.6 (*)
+unic-langid-macros-impl v0.9.6 (proc-macro)
+proc-macro-hack v0.5.20+deprecated (proc-macro)
+quote v1.0.47 (*)
+syn v2.0.119 (*)
+unic-langid-impl v0.9.6
+tinystr v0.8.4
+displaydoc v0.2.7 (proc-macro) (*)
+unicode-normalization v0.1.25
+tinyvec v1.13.3
+unscanny v0.1.0
+ciborium v0.2.2 (*)
+citationberg v0.7.0
+quick-xml v0.38.4
+memchr v2.8.3
+serde v1.0.229 (*)
+serde v1.0.229 (*)
+serde_path_to_error v0.1.20
+itoa v1.0.18
+serde_core v1.0.229
+icu_collator v2.3.1
+icu_collator_data v2.3.0
+icu_collections v2.3.0
+displaydoc v0.2.7 (proc-macro) (*)
+potential_utf v0.1.6
+serde_core v1.0.229
+writeable v0.6.4
+zerovec v0.11.8 (*)
+serde v1.0.229 (*)
+utf8_iter v1.0.4
+yoke v0.8.3 (*)
+zerofrom v0.1.8 (*)
+zerovec v0.11.8 (*)
+icu_locale_core v2.3.0
+displaydoc v0.2.7 (proc-macro) (*)
+litemap v0.8.3
+serde_core v1.0.229
+serde v1.0.229 (*)
+tinystr v0.8.4 (*)
+writeable v0.6.4
+zerovec v0.11.8 (*)
+icu_locale_fallback v2.3.0
+icu_locale_core v2.3.0 (*)
+icu_locale_fallback_data v2.3.0
+icu_provider v2.3.1
+displaydoc v0.2.7 (proc-macro) (*)
+icu_locale_core v2.3.0 (*)
+postcard v1.1.3
+cobs v0.3.0
+thiserror v2.0.21
+thiserror-impl v2.0.21 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v3.0.9 (*)
+serde v1.0.229 (*)
+serde v1.0.229 (*)
+stable_deref_trait v1.2.1
+writeable v0.6.4
+yoke v0.8.3 (*)
+zerofrom v0.1.8 (*)
+zerotrie v0.2.5
+displaydoc v0.2.7 (proc-macro) (*)
+litemap v0.8.3 (*)
+serde_core v1.0.229
+yoke v0.8.3 (*)
+zerofrom v0.1.8 (*)
+zerovec v0.11.8 (*)
+zerovec v0.11.8 (*)
+potential_utf v0.1.6 (*)
+tinystr v0.8.4 (*)
+zerovec v0.11.8 (*)
+icu_normalizer v2.3.0
+icu_collections v2.3.0 (*)
+icu_normalizer_data v2.3.0
+icu_provider v2.3.1 (*)
+smallvec v1.16.3
+utf16_iter v1.0.5
+utf8_iter v1.0.4
+write16 v1.0.0
+zerovec v0.11.8 (*)
+icu_properties v2.3.0
+displaydoc v0.2.7 (proc-macro) (*)
+icu_collections v2.3.0 (*)
+icu_locale_core v2.3.0 (*)
+icu_properties_data v2.3.0
+icu_provider v2.3.1 (*)
+serde v1.0.229 (*)
+zerotrie v0.2.5 (*)
+zerovec v0.11.8 (*)
+icu_provider v2.3.1 (*)
+smallvec v1.16.3
+utf16_iter v1.0.5
+utf8_iter v1.0.4
+zerovec v0.11.8 (*)
+icu_locale v2.3.1
+icu_collections v2.3.0 (*)
+icu_locale_core v2.3.0 (*)
+icu_locale_data v2.3.0
+icu_locale_fallback v2.3.0 (*)
+icu_provider v2.3.1 (*)
+tinystr v0.8.4 (*)
+zerovec v0.11.8 (*)
+indexmap v2.14.2 (*)
+paste v1.0.15 (proc-macro)
+roman-numerals-rs v3.1.0
+serde v1.0.229 (*)
+serde_yaml v0.9.34+deprecated
+indexmap v2.14.2 (*)
+itoa v1.0.18
+ryu v1.0.23
+serde v1.0.229 (*)
+unsafe-libyaml v0.2.11
+thiserror v2.0.21 (*)
+unic-langid v0.9.6 (*)
+unicode-segmentation v1.13.3
+unscanny v0.1.0
+url v2.5.8
+form_urlencoded v1.2.2
+percent-encoding v2.3.2
+idna v1.1.0
+idna_adapter v1.2.2
+icu_normalizer v2.3.0 (*)
+icu_properties v2.3.0 (*)
+smallvec v1.16.3
+utf8_iter v1.0.4
+percent-encoding v2.3.2
+serde v1.0.229 (*)
+serde_derive v1.0.229 (proc-macro) (*)
+hayro-syntax v0.7.2
+flate2 v1.1.10 (*)
+hayro-ccitt v0.3.0
+hayro-jbig2 v0.3.0
+fearless_simd v0.4.1
+hayro-ccitt v0.3.0
+hayro-jpeg2000 v0.3.5
+fearless_simd v0.4.1
+memchr v2.8.3
+rustc-hash v2.1.3
+smallvec v1.16.3
+zune-jpeg v0.5.15
+zune-core v0.5.3
+icu_properties v2.3.0 (*)
+image v0.25.10
+bytemuck v1.25.2 (*)
+byteorder-lite v0.1.0
+color_quant v1.1.0
+gif v0.14.2
+color_quant v1.1.0
+weezl v0.1.12
+image-webp v0.2.4
+byteorder-lite v0.1.0
+quick-error v2.0.1
+moxcms v0.8.1
+num-traits v0.2.19
+pxfm v0.1.30
+num-traits v0.2.19
+png v0.18.1 (*)
+zune-core v0.5.3
+zune-jpeg v0.5.15 (*)
+indexmap v2.14.2 (*)
+kamadak-exif v0.6.1
+mutate_once v0.1.2
+kurbo v0.13.1
+arrayvec v0.7.8
+polycool v0.4.0
+arrayvec v0.7.8
+smallvec v1.16.3
+libm v0.2.16
+lipsum v0.9.1
+rand v0.8.8
+rand_core v0.6.4
+rand_chacha v0.3.1
+ppv-lite86 v0.2.21
+zerocopy v0.8.63 (*)
+rand_core v0.6.4
+memchr v2.8.3
+moxcms v0.8.1 (*)
+palette v0.7.7
+approx v0.5.1
+num-traits v0.2.19
+libm v0.2.16
+palette_derive v0.7.7 (proc-macro)
+by_address v1.2.1
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v2.0.119 (*)
+palette_math v0.7.7
+libm v0.2.16
+percent-encoding v2.3.2
+phf v0.13.1
+phf_macros v0.13.1 (proc-macro)
+phf_generator v0.13.1
+fastrand v2.5.0
+phf_shared v0.13.1
+siphasher v1.0.4
+phf_shared v0.13.1 (*)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v2.0.119 (*)
+phf_shared v0.13.1
+siphasher v1.0.4
+png v0.18.1 (*)
+rayon v1.12.0 (*)
+regex v1.13.1
+aho-corasick v1.1.5
+memchr v2.8.3
+memchr v2.8.3
+regex-automata v0.4.18
+aho-corasick v1.1.5 (*)
+memchr v2.8.3
+regex-syntax v0.8.11
+regex-syntax v0.8.11
+regex-syntax v0.8.11
+roxmltree v0.21.1
+memchr v2.8.3
+rust_decimal v1.43.0
+arrayvec v0.7.8
+num-traits v0.2.19
+rustc-hash v2.1.3
+rustybuzz v0.20.1
+bitflags v2.13.2 (*)
+bytemuck v1.25.2 (*)
+core_maths v0.1.1 (*)
+log v0.4.34
+smallvec v1.16.3
+ttf-parser v0.25.1 (*)
+unicode-bidi-mirroring v0.4.0
+unicode-ccc v0.4.0
+unicode-properties v0.1.4
+unicode-script v0.5.8
+serde v1.0.229 (*)
+serde_json v1.0.154
+itoa v1.0.18
+memchr v2.8.3
+serde_core v1.0.229
+zmij v1.0.23
+serde_yaml v0.9.34+deprecated (*)
+siphasher v1.0.4
+smallvec v1.16.3
+syntect v5.3.0
+bincode v1.3.3
+serde v1.0.229 (*)
+fancy-regex v0.16.2
+bit-set v0.8.0
+bit-vec v0.8.0
+regex-automata v0.4.18 (*)
+regex-syntax v0.8.11
+flate2 v1.1.10 (*)
+fnv v1.0.7
+once_cell v1.21.4
+plist v1.10.1
+base64 v0.23.1
+indexmap v2.14.2 (*)
+quick-xml v0.42.0
+memchr v2.8.3
+serde v1.0.229 (*)
+time v0.3.55
+deranged v0.5.8
+num-conv v0.2.2
+powerfmt v0.2.1
+time-core v0.1.9
+time-macros v0.2.32 (proc-macro)
+num-conv v0.2.2
+time-core v0.1.9
+regex-syntax v0.8.11
+serde v1.0.229 (*)
+serde_derive v1.0.229 (proc-macro) (*)
+serde_json v1.0.154 (*)
+thiserror v2.0.21 (*)
+walkdir v2.5.0
+same-file v1.0.6
+yaml-rust v0.4.5
+linked-hash-map v0.5.6
+time v0.3.55 (*)
+toml v0.8.23 (*)
+ttf-parser v0.25.1 (*)
+two-face v0.4.5
+serde v1.0.229 (*)
+serde_derive v1.0.229 (proc-macro) (*)
+syntect v5.3.0 (*)
+typed-arena v2.0.2
+typst-assets v0.15.1
+bitflags v2.13.2 (*)
+typst-macros v0.15.1 (proc-macro)
+heck v0.5.0
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v2.0.119 (*)
+typst-syntax v0.15.1
+ecow v0.2.6 (*)
+rustc-hash v2.1.3
+serde v1.0.229 (*)
+toml v0.8.23 (*)
+typst-timing v0.15.1
+parking_lot v0.12.5 (*)
+serde v1.0.229 (*)
+serde_json v1.0.154 (*)
+typst-utils v0.15.1
+libm v0.2.16
+once_cell v1.21.4
+portable-atomic v1.15.0
+rayon v1.12.0 (*)
+rustc-hash v2.1.3
+semver v1.0.28
+siphasher v1.0.4
+smallvec v1.16.3
+thin-vec v0.2.20
+unicode-math-class v0.1.0
+unicode-ident v1.0.27
+unicode-math-class v0.1.0
+unicode-script v0.5.8
+unicode-segmentation v1.13.3
+unscanny v0.1.0
+typst-timing v0.15.1 (*)
+typst-utils v0.15.1 (*)
+unicode-math-class v0.1.0
+unicode-normalization v0.1.25 (*)
+unicode-segmentation v1.13.3
+unscanny v0.1.0
+usvg v0.47.0
+base64 v0.22.1
+data-url v0.3.2
+flate2 v1.1.10 (*)
+fontdb v0.23.0 (*)
+imagesize v0.14.0
+kurbo v0.13.1 (*)
+log v0.4.34
+pico-args v0.5.0
+roxmltree v0.21.1 (*)
+rustybuzz v0.20.1 (*)
+simplecss v0.2.2
+log v0.4.34
+siphasher v1.0.4
+strict-num v0.1.1 (*)
+svgtypes v0.16.1
+kurbo v0.13.1 (*)
+siphasher v1.0.4
+tiny-skia-path v0.12.0 (*)
+ttf-parser v0.25.1 (*)
+unicode-bidi v0.3.18
+unicode-script v0.5.8
+unicode-vo v0.1.0
+xmlwriter v0.1.0
+utf8_iter v1.0.4
+wasmi v1.1.0
+spin v0.9.9
+wasmi_collections v1.1.0
+wasmi_core v1.1.0
+libm v0.2.16
+wasmi_ir v1.1.0
+wasmi_core v1.1.0 (*)
+wasmparser v0.239.0
+bitflags v2.13.2 (*)
+xmlwriter v0.1.0
+typst-macros v0.15.1 (proc-macro) (*)
+typst-syntax v0.15.1 (*)
+typst-timing v0.15.1 (*)
+typst-utils v0.15.1 (*)
+unicode-segmentation v1.13.3
+typst-html v0.15.1
+az v1.3.0
+bumpalo v3.20.3
+comemo v0.5.1 (*)
+ecow v0.2.6 (*)
+palette v0.7.7 (*)
+rustc-hash v2.1.3
+time v0.3.55 (*)
+typst-assets v0.15.1 (*)
+typst-library v0.15.1 (*)
+typst-macros v0.15.1 (proc-macro) (*)
+typst-svg v0.15.1
+base64 v0.22.1
+comemo v0.5.1 (*)
+ecow v0.2.6 (*)
+flate2 v1.1.10 (*)
+hayro v0.7.1
+bytemuck v1.25.2 (*)
+hayro-interpret v0.7.0
+bitflags v2.13.2 (*)
+hayro-cmap v0.1.0
+hayro-postscript v0.1.0
+hayro-syntax v0.7.2 (*)
+kurbo v0.13.1 (*)
+moxcms v0.8.1 (*)
+phf v0.13.1 (*)
+rustc-hash v2.1.3
+siphasher v1.0.4
+skrifa v0.42.1
+bytemuck v1.25.2 (*)
+read-fonts v0.39.2
+bytemuck v1.25.2 (*)
+font-types v0.11.3
+bytemuck v1.25.2 (*)
+smallvec v1.16.3
+yoke v0.8.3 (*)
+image v0.25.10 (*)
+kurbo v0.13.1 (*)
+pic-scale v0.7.12
+num-traits v0.2.19
+pxfm v0.1.30
+vello_cpu v0.0.8
+bytemuck v1.25.2 (*)
+hashbrown v0.17.1 (*)
+png v0.18.1 (*)
+vello_common v0.0.8
+bytemuck v1.25.2 (*)
+fearless_simd v0.4.1
+guillotiere v0.7.0
+euclid v0.22.14
+num-traits v0.2.19
+hashbrown v0.17.1 (*)
+log v0.4.34
+peniko v0.6.1
+bytemuck v1.25.2 (*)
+color v0.3.3
+bytemuck v1.25.2 (*)
+kurbo v0.13.1 (*)
+linebender_resource_handle v0.1.1
+smallvec v1.16.3
+png v0.18.1 (*)
+smallvec v1.16.3
+thiserror v2.0.21 (*)
+hayro-svg v0.7.0
+base64 v0.22.1
+hayro-interpret v0.7.0 (*)
+image v0.25.10 (*)
+kurbo v0.13.1 (*)
+siphasher v1.0.4
+xmlwriter v0.1.0
+image v0.25.10 (*)
+indexmap v2.14.2 (*)
+itoa v1.0.18
+rustc-hash v2.1.3
+ryu v1.0.23
+ttf-parser v0.25.1 (*)
+typst-assets v0.15.1 (*)
+typst-layout v0.15.1
+az v1.3.0
+bumpalo v3.20.3
+codex v0.3.0 (*)
+comemo v0.5.1 (*)
+ecow v0.2.6 (*)
+either v1.19.0
+hypher v0.1.8
+icu_properties v2.3.0 (*)
+icu_provider v2.3.1 (*)
+icu_provider_blob v2.3.0
+icu_provider v2.3.1 (*)
+postcard v1.1.3 (*)
+serde v1.0.229 (*)
+writeable v0.6.4
+zerotrie v0.2.5 (*)
+zerovec v0.11.8 (*)
+icu_segmenter v2.3.0
+core_maths v0.1.1 (*)
+icu_collections v2.3.0 (*)
+icu_locale_fallback v2.3.0 (*)
+icu_provider v2.3.1 (*)
+icu_segmenter_data v2.3.0
+potential_utf v0.1.6 (*)
+serde v1.0.229 (*)
+smallvec v1.16.3
+utf8_iter v1.0.4
+zerovec v0.11.8 (*)
+kurbo v0.13.1 (*)
+libm v0.2.16
+memchr v2.8.3
+rustc-hash v2.1.3
+rustybuzz v0.20.1 (*)
+smallvec v1.16.3
+ttf-parser v0.25.1 (*)
+typst-assets v0.15.1 (*)
+typst-library v0.15.1 (*)
+typst-macros v0.15.1 (proc-macro) (*)
+typst-syntax v0.15.1 (*)
+typst-timing v0.15.1 (*)
+typst-utils v0.15.1 (*)
+unicode-bidi v0.3.18
+unicode-math-class v0.1.0
+unicode-script v0.5.8
+unicode-segmentation v1.13.3
+typst-library v0.15.1 (*)
+typst-macros v0.15.1 (proc-macro) (*)
+typst-timing v0.15.1 (*)
+typst-utils v0.15.1 (*)
+xmlwriter v0.1.0
+typst-syntax v0.15.1 (*)
+typst-timing v0.15.1 (*)
+typst-utils v0.15.1 (*)
+unicode-math-class v0.1.0
+typst-layout v0.15.1 (*)
+typst-library v0.15.1 (*)
+typst-macros v0.15.1 (proc-macro) (*)
+typst-realize v0.15.1
+arrayvec v0.7.8
+bumpalo v3.20.3
+comemo v0.5.1 (*)
+ecow v0.2.6 (*)
+regex v1.13.1 (*)
+typst-html v0.15.1 (*)
+typst-library v0.15.1 (*)
+typst-macros v0.15.1 (proc-macro) (*)
+typst-syntax v0.15.1 (*)
+typst-timing v0.15.1 (*)
+typst-utils v0.15.1 (*)
+typst-syntax v0.15.1 (*)
+typst-timing v0.15.1 (*)
+typst-utils v0.15.1 (*)
+typst-layout v0.15.1 (*)
+typst-render v0.15.1
+bytemuck v1.25.2 (*)
+comemo v0.5.1 (*)
+hayro v0.7.1 (*)
+image v0.25.10 (*)
+libm v0.2.16
+pixglyph v0.6.1
+ttf-parser v0.25.1 (*)
+resvg v0.47.0
+gif v0.14.2 (*)
+image-webp v0.2.4 (*)
+log v0.4.34
+pico-args v0.5.0
+rgb v0.8.53
+bytemuck v1.25.2 (*)
+svgtypes v0.16.1 (*)
+tiny-skia v0.12.0 (*)
+usvg v0.47.0 (*)
+zune-jpeg v0.5.15 (*)
+tiny-skia v0.12.0 (*)
+ttf-parser v0.25.1 (*)
+typst-assets v0.15.1 (*)
+typst-layout v0.15.1 (*)
+typst-library v0.15.1 (*)
+typst-macros v0.15.1 (proc-macro) (*)
+typst-timing v0.15.1 (*)
+typst-utils v0.15.1 (*)
+mitex v0.2.4
+mitex-parser v0.2.4
+mitex-glob v0.2.4
+mitex-lexer v0.2.4
+ecow v0.2.6 (*)
+ena v0.14.4
+log v0.4.34
+fxhash v0.2.1
+byteorder v1.5.0
+logos v0.13.0
+logos-derive v0.13.0 (proc-macro)
+logos-codegen v0.13.0
+beef v0.5.2
+fnv v1.0.7
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+regex-syntax v0.6.29
+syn v2.0.119 (*)
+mitex-spec v0.2.4
+fxhash v0.2.1 (*)
+rkyv v0.7.46
+bytecheck v0.6.12
+bytecheck_derive v0.6.12 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v1.0.109
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+unicode-ident v1.0.27
+ptr_meta v0.1.4
+ptr_meta_derive v0.1.4 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v1.0.109 (*)
+simdutf8 v0.1.5
+hashbrown v0.12.3
+ahash v0.7.8
+getrandom v0.2.17
+cfg-if v1.0.5
+libc v0.2.190
+once_cell v1.21.4
+ptr_meta v0.1.4 (*)
+rend v0.4.2
+bytecheck v0.6.12 (*)
+rkyv_derive v0.7.46 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v1.0.109 (*)
+seahash v4.1.0
+serde v1.0.229 (*)
+serde_json v1.0.154 (*)
+once_cell v1.21.4
+mitex-spec v0.2.4 (*)
+rowan v0.15.19
+countme v3.0.1
+hashbrown v0.14.5
+memoffset v0.9.1
+rustc-hash v1.1.0
+text-size v1.1.1
+mitex-spec-gen v0.2.4
+mitex-spec v0.2.4 (*)
+once_cell v1.21.4
+rowan v0.15.19 (*)
+mitex-spec-gen v0.2.4 (*)
+
+mathstral-render-spike v0.1.0 (/Users/michelangelogubinelli/Github/mathstral) (*)

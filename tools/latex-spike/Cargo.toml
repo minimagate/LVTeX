@@ -1,0 +1,12 @@
+[package]
+name = "latex-spike"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+mathstral-render-spike = { path = "../.." }
+mitex = "=0.2.4"
+# Select the prebuilt specification in this existing transitive dependency.
+# This makes builds independent of any installed Typst CLI.
+mitex-spec-gen = { version = "=0.2.4", features = ["prebuilt"] }

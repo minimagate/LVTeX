@@ -1,0 +1,41 @@
+typst-only: renderer init 4.612 ms; 21 repeats; 22pt at 2x
+01 display Gaussian integral          376x128 uncached   0.409 ms; warm   0.046 ms
+01 inline  Gaussian integral          345x85  uncached   0.189 ms; warm   0.043 ms
+02 display Finite sum                 139x129 uncached   0.156 ms; warm   0.034 ms
+02 inline  Finite sum                 177x74  uncached   0.132 ms; warm   0.017 ms
+03 display Nested fractions           128x125 uncached   0.118 ms; warm   0.022 ms
+03 inline  Nested fractions            89x88  uncached   0.115 ms; warm   0.017 ms
+04 display Quadratic formula          412x119 uncached   0.158 ms; warm   0.023 ms
+04 inline  Quadratic formula          307x78  uncached   0.123 ms; warm   0.022 ms
+05 display Two by two matrix          150x121 uncached   0.073 ms; warm   0.014 ms
+05 inline  Two by two matrix          128x95  uncached   0.085 ms; warm   0.017 ms
+06 display Three by three matrix      185x180 uncached   0.091 ms; warm   0.023 ms
+06 inline  Three by three matrix      171x148 uncached   0.089 ms; warm   0.020 ms
+07 display Aligned equations          481x139 uncached   0.165 ms; warm   0.030 ms
+07 inline  Aligned equations          481x139 uncached   0.174 ms; warm   0.032 ms
+08 display Piecewise function         402x122 uncached   0.120 ms; warm   0.022 ms
+08 inline  Piecewise function         325x95  uncached   0.124 ms; warm   0.021 ms
+09 display Greek alphabet             521x57  uncached   0.094 ms; warm   0.017 ms
+09 inline  Greek alphabet             521x57  uncached   0.095 ms; warm   0.021 ms
+10 display Nested scripts             331x79  uncached   0.112 ms; warm   0.017 ms
+10 inline  Nested scripts             331x79  uncached   0.117 ms; warm   0.019 ms
+11 display Limit                      268x105 uncached   0.103 ms; warm   0.018 ms
+11 inline  Limit                      308x69  uncached   0.101 ms; warm   0.019 ms
+12 display Partial derivative         277x113 uncached   0.097 ms; warm   0.018 ms
+12 inline  Partial derivative         263x75  uncached   0.099 ms; warm   0.018 ms
+13 display Contour integral           253x124 uncached   0.094 ms; warm   0.020 ms
+13 inline  Contour integral           239x78  uncached   0.089 ms; warm   0.018 ms
+14 display Set notation               519x66  uncached   0.116 ms; warm   0.021 ms
+14 inline  Set notation               519x66  uncached   0.111 ms; warm   0.023 ms
+15 display Scalable delimiters        154x97  uncached   0.074 ms; warm   0.018 ms
+15 inline  Scalable delimiters        132x69  uncached   0.073 ms; warm   0.017 ms
+16 display Accents and vectors        344x56  uncached   0.096 ms; warm   0.019 ms
+16 inline  Accents and vectors        344x56  uncached   0.099 ms; warm   0.020 ms
+17 display Binomial coefficient       357x118 uncached   0.108 ms; warm   0.023 ms
+17 inline  Binomial coefficient       278x78  uncached   0.103 ms; warm   0.019 ms
+18 display Product                    231x134 uncached   0.090 ms; warm   0.018 ms
+18 inline  Product                    274x79  uncached   0.091 ms; warm   0.018 ms
+19 display Text in math               532x62  uncached   0.117 ms; warm   0.020 ms
+19 inline  Text in math               532x62  uncached   0.115 ms; warm   0.022 ms
+20 display Determinant                410x121 uncached   0.113 ms; warm   0.022 ms
+20 inline  Determinant                389x95  uncached   0.116 ms; warm   0.020 ms
