@@ -36,13 +36,29 @@ dragging anywhere in the window.
 
 - Text uses embedded Libertinus Serif at 19 px, with a line height of 1.6.
 - The column is 680 px wide and starts 76 px from the top. Long lines wrap greedily at word boundaries.
-- Lines beginning with `# ` use Libertinus Serif Italic at the same size and line height as body text.
-  The `# ` marker stays visible and editable. `##` and longer prefixes are plain text.
 - Colors: background `#151515`; text `#C8C6C3`; markers `#73716F`; selection `#343434`;
   pending text `#868583`; open prompt text `#C8CFCB` with a green tint `#3C5147`;
-  failed prompt underline `#70484A`; pending marker `#292B2A`.
+  failed prompt underline `#70484A`; pending marker `#292B2A`; inline code `#B9C3C6`;
+  links `#9FB6C9`.
 - The caret is solid `#FF0000`, with no blinking or fading.
 - Font family and sizes are set in `app/src/config.rs`.
+
+### Markdown
+
+The editor styles the Markdown source as you type. Markers stay visible and editable,
+drawn in the marker color; only the styling changes.
+
+- Headings: `#` is bold, `##` is italic, and `###` to `######` are bold italic, all at body size.
+- Bold (`**`), italic (`*` or `_`) and bold italic (`***`) use the Libertinus Serif faces.
+- Inline code (`` ` ``) uses DejaVu Sans Mono at 85% of body size, in `#B9C3C6`.
+- Strikethrough (`~~`) draws a 1 px line through the struck text.
+- Links `[text](url)` show the text in `#9FB6C9`; the brackets and URL stay dimmed.
+- Backslash escapes such as `\*` are dimmed markers.
+- Bullets (`-`, `*`, `+`), numbers (`1.` or `1)`) and tasks (`- [ ]`, `- [x]`) hang wrapped
+  rows under their content. Done tasks are dimmed.
+- Quotes (`>`) are italic.
+- A line of three or more `-`, `*` or `_`, with optional spaces, draws a 1 px rule across the column.
+- Nothing is styled inside an open math prompt. Fenced code blocks, tables and images are not styled.
 
 ## Basic editing
 

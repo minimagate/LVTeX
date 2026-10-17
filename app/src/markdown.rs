@@ -1,5 +1,4 @@
 //! Markdown line structure: block markers and inline styles, in byte ranges of one line.
-#![allow(dead_code)] // Used by layout and export in follow-up changes.
 use std::ops::Range;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

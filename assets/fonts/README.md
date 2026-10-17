@@ -7,7 +7,7 @@ Unmodified files copied from the `typst-assets` 0.15.1 package:
 - `LibertinusSerif-Regular.otf`: Libertinus Serif; SIL Open Font License 1.1.
   Embedded by the renderer and the editor.
 - `LibertinusSerif-Italic.otf`: Libertinus Serif Italic; SIL Open Font License 1.1.
-  Embedded by the editor for `# ` titles.
+  Embedded by the editor for headings, quotes and emphasis.
 - `LibertinusSerif-Bold.otf`: Libertinus Serif Bold; SIL Open Font License 1.1.
   Embedded by the editor for Markdown bold text.
 - `LibertinusSerif-BoldItalic.otf`: Libertinus Serif Bold Italic; SIL Open Font

@@ -55,7 +55,8 @@ Renderer benchmarks and their outputs are described in
 - Press **Enter** at the left edge of a formula, or **Backspace** just after it, to
   reopen its prompt and edit it.
 - Press **Escape** inside an open prompt to keep it as literal text.
-- A line starting with `# ` is a title.
+- Markdown styles as you type: headings, bold, italic, `code`, ~~strike~~, links, lists,
+  quotes and rules. The markers stay visible. See [docs/EDITOR.md](docs/EDITOR.md#markdown).
 - Standard macOS shortcuts work: **⌘N** new, **⌘O** open, **⌘S** save, **⇧⌘S** save
   as, **⌥⌘E** export PDF, **⌘Z** / **⇧⌘Z** undo and redo, **⌘X**, **⌘C**, **⌘V**, **⌘A**.
 - Move the window by dragging the top strip or holding **⌘** while dragging.
