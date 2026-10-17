@@ -6,14 +6,16 @@ Mathstral is a native macOS editor (Apple Silicon) for writing prose with inline
 
 ```text
 app/                   The `mathstral` binary (the macOS app)
-  src/app.rs           App state and the winit event loop
-  src/buffer.rs        Document model: text, formulas, prompt states, undo
-  src/layout.rs        Typesets prose and math into lines and marks
-  src/math.rs          Background worker: model requests and formula rendering
-  src/render.rs        Draws the layout into the window's pixel buffer
-  src/file.rs          Open, save (atomic), dialogs, saved settings
-  src/menu.rs          Native menu and its actions
+  src/main.rs          Entry point
+  src/app/             Window and event loop: mod (state, drawing), input, commands, math_session
+  src/document/        Document model: mod, codec (file format), cursor, history, manual, prompt, tests
+  src/math/            Formula tree, keys and background work: mod, bindings, input, parse, tree, model (Ollama), worker
+  src/view/            Drawing: mod, caret, layout (typesetting), render (pixel buffer)
   src/config.rs        Constants: typography, colors, model, Ollama address
+  src/export.rs        PDF export through Typst, formulas as vector math
+  src/file.rs          Open, save (atomic), dialogs, saved settings
+  src/markdown.rs      Markdown line structure: block markers and inline styles
+  src/menu.rs          Native menu and its actions
   src/verification.rs  cfg(test) checks of document and render behavior
 crates/render/         mathstral-render: Typst-based math renderer, benchmark binaries
 crates/latex/          mathstral-latex: LaTeX to Typst conversion through MiTeX
