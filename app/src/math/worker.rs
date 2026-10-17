@@ -732,7 +732,7 @@ mod tests {
         }
         let base_box = base.inline.caret.expect("base caret");
         let script_box = script.inline.caret.expect("script caret");
-        let prose = crate::layout::Typesetter::new()
+        let prose = crate::view::layout::Typesetter::new()
             .layout("A", 680.0)
             .caret_extent(0, 1)
             .1;

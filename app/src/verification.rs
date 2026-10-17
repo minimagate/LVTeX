@@ -1,10 +1,9 @@
 use crate::{
     document::{ATOM, Document},
-    layout::Typesetter,
     markdown, math,
     math::input::{MathInput, MathKey, Outcome},
     math::tree::MathTree,
-    render,
+    view::{layout::Typesetter, render},
 };
 use mathstral_render::math::Renderer;
 use std::{sync::Arc, time::Instant};

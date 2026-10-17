@@ -1,16 +1,18 @@
 use crate::{
     config::*,
     document::Document,
-    export, file,
-    layout::{Layout, Typesetter},
-    markdown,
+    export, file, markdown,
     math::input::{MathInput, MathKey, Outcome},
     math::{
         tree::MathTree,
         worker::{FormulaImage, Preview, Reply, Worker},
     },
     menu::{self, Action},
-    render,
+    view::{
+        caret,
+        layout::{Layout, Typesetter},
+        render,
+    },
 };
 use cosmic_text::SwashCache;
 use std::{
@@ -273,21 +275,21 @@ impl App {
         };
         pixels.copy_from_slice(&self.pixels);
         let style = if self.math.is_some() {
-            render::CaretStyle::Math
+            caret::CaretStyle::Math
         } else if self
             .doc
             .open_range()
             .is_some_and(|range| range.start <= self.doc.caret && self.doc.caret <= range.end)
         {
-            render::CaretStyle::Prompt
+            caret::CaretStyle::Prompt
         } else {
-            render::CaretStyle::Prose
+            caret::CaretStyle::Prose
         };
         let (layout_top, layout_height) = self.layout.caret_extent(row, self.doc.caret);
         let (caret_x, caret_top, caret_height) =
             manual_caret.unwrap_or((left + x, TOP + layout_top - self.scroll, layout_height));
         if self.focused && self.doc.selection().is_empty() {
-            render::caret(
+            caret::caret(
                 &mut pixels,
                 width,
                 height,
@@ -322,18 +324,7 @@ impl App {
             .math
             .iter()
             .find(|placed| Arc::ptr_eq(&placed.image, image))?;
-        let bitmap = if placed.display {
-            &image.display
-        } else {
-            &image.inline
-        };
-        let caret = bitmap.caret?;
-        // Same transform as `render::page`: image pt scale by the placed scale.
-        Some((
-            left + placed.x + caret.x * placed.scale,
-            TOP - self.scroll + placed.y + caret.top * placed.scale,
-            caret.height * placed.scale,
-        ))
+        caret::formula_caret(placed, image, left, TOP - self.scroll)
     }
     fn save(&mut self, save_as: bool) -> bool {
         self.doc.break_group();

@@ -4,13 +4,12 @@ mod config;
 mod document;
 mod export;
 mod file;
-mod layout;
 mod markdown;
 mod math;
 mod menu;
-mod render;
 #[cfg(test)]
 mod verification;
+mod view;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let event_loop = winit::event_loop::EventLoop::<menu::Action>::with_user_event().build()?;

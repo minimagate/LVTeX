@@ -242,20 +242,20 @@ impl Typesetter {
     pub fn new() -> Self {
         let mut fonts = FontSystem::new();
         fonts.db_mut().load_font_data(
-            include_bytes!("../../assets/fonts/LibertinusSerif-Regular.otf").to_vec(),
+            include_bytes!("../../../assets/fonts/LibertinusSerif-Regular.otf").to_vec(),
         );
         fonts.db_mut().load_font_data(
-            include_bytes!("../../assets/fonts/LibertinusSerif-Italic.otf").to_vec(),
+            include_bytes!("../../../assets/fonts/LibertinusSerif-Italic.otf").to_vec(),
+        );
+        fonts.db_mut().load_font_data(
+            include_bytes!("../../../assets/fonts/LibertinusSerif-Bold.otf").to_vec(),
+        );
+        fonts.db_mut().load_font_data(
+            include_bytes!("../../../assets/fonts/LibertinusSerif-BoldItalic.otf").to_vec(),
         );
         fonts
             .db_mut()
-            .load_font_data(include_bytes!("../../assets/fonts/LibertinusSerif-Bold.otf").to_vec());
-        fonts.db_mut().load_font_data(
-            include_bytes!("../../assets/fonts/LibertinusSerif-BoldItalic.otf").to_vec(),
-        );
-        fonts
-            .db_mut()
-            .load_font_data(include_bytes!("../../assets/fonts/DejaVuSansMono.ttf").to_vec());
+            .load_font_data(include_bytes!("../../../assets/fonts/DejaVuSansMono.ttf").to_vec());
         Self {
             fonts,
             swash: SwashCache::new(),

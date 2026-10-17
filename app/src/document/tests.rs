@@ -517,7 +517,7 @@ fn empty_manual_formula_has_an_empty_source_label() {
     let mut d = Document::new("");
     d.open_manual();
     assert_eq!(d.formulas[&0].label(), "");
-    let layout = crate::layout::Typesetter::new().document(&d, 680.0);
+    let layout = crate::view::layout::Typesetter::new().document(&d, 680.0);
     assert!(!layout.lines.is_empty());
     assert!(layout.caret_on_line(d.caret, None).1.is_finite());
 }

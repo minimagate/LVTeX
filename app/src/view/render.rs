@@ -1,6 +1,6 @@
 use crate::{
     config::*,
-    layout::{Layout, Typesetter},
+    view::layout::{Layout, Typesetter},
 };
 use cosmic_text::{Color, SwashCache};
 use std::ops::Range;
@@ -26,72 +26,6 @@ pub fn rect(
     for row in y0..y1 {
         pixels[row * width + x0..row * width + x1].fill(color);
     }
-}
-/// The caret's colour, per editing context. Every caret is the same I-beam; only the colour differs.
-#[derive(Clone, Copy)]
-pub enum CaretStyle {
-    Prose,
-    Math,
-    Prompt,
-}
-impl CaretStyle {
-    pub fn color(self) -> u32 {
-        match self {
-            Self::Prose => CARET_COLOR,
-            Self::Math => MATH_CARET_COLOR,
-            Self::Prompt => AI_CARET_COLOR,
-        }
-    }
-}
-
-// An I-beam caret: a stem centred on `x` with a serif at the top and at the bottom. `x`, `top`
-// and `h` are logical units.
-#[allow(clippy::too_many_arguments)] // mirrors `rect`, which it draws with
-pub fn caret(
-    pixels: &mut [u32],
-    width: usize,
-    height: usize,
-    x: f32,
-    top: f32,
-    h: f32,
-    scale: f32,
-    style: CaretStyle,
-) {
-    let color = style.color();
-    let thick = scale.max(1.0);
-    let stem = x * scale;
-    // Each serif is 1 logical pt thick and reaches 1.5 pt either side of the stem.
-    let (serif_x, serif_w) = (stem - 1.5 * scale, 3.0 * scale);
-    rect(
-        pixels,
-        width,
-        height,
-        serif_x,
-        top * scale,
-        serif_w,
-        thick,
-        color,
-    );
-    rect(
-        pixels,
-        width,
-        height,
-        serif_x,
-        (top + h) * scale - thick,
-        serif_w,
-        thick,
-        color,
-    );
-    rect(
-        pixels,
-        width,
-        height,
-        stem - thick / 2.0,
-        top * scale,
-        thick,
-        h * scale,
-        color,
-    );
 }
 #[allow(clippy::too_many_arguments)]
 pub fn page(
