@@ -1,7 +1,7 @@
 use crate::{
     buffer::{ATOM, Document},
     layout::Typesetter,
-    math, render,
+    markdown, math, render,
 };
 use mathstral_render::math::Renderer;
 use std::{sync::Arc, time::Instant};
@@ -181,4 +181,30 @@ fn ten_pending_prompts_do_not_block_typing() {
             assert!(timings[95].as_millis() < 16, "typing must fit in a frame");
         }
     }
+}
+
+/// Applies Enter the way the app's Enter branch does.
+fn press_enter(doc: &mut Document) {
+    match markdown::enter_edit(&doc.text(), doc.caret) {
+        Some((range, value)) if doc.selection().is_empty() => {
+            doc.anchor = range.start;
+            doc.caret = range.end;
+            doc.replace(&value, false);
+        }
+        _ => doc.replace("\n", false),
+    }
+}
+#[test]
+fn enter_continues_and_ends_list_items_as_undo_steps() {
+    let mut d = Document::new("");
+    for c in "- a".chars() {
+        d.replace(&c.to_string(), true);
+    }
+    press_enter(&mut d);
+    d.replace("b", true);
+    press_enter(&mut d);
+    press_enter(&mut d);
+    assert_eq!(d.text(), "- a\n- b\n");
+    d.undo(false);
+    assert_eq!(d.text(), "- a\n- b\n- ");
 }

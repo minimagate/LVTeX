@@ -69,6 +69,8 @@ drawn in the marker color; only the styling changes.
 - Backspace and Delete remove one character. ⌥ with either removes a word; ⌘ with either
   removes to the end of the visual line in that direction.
 - Tab inserts four spaces.
+- Enter in a list item, task or quote continues its marker (numbers increase, tasks restart
+  unchecked). Enter on an empty item removes the marker and ends the list.
 - Typing runs are grouped into one undo step. Losing window focus ends the current group.
 - Mouse: click places the caret, drag selects, Shift-click extends the selection, and the
   wheel or trackpad scrolls.

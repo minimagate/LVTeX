@@ -3,6 +3,7 @@ use crate::{
     config::*,
     export, file,
     layout::{Layout, Typesetter},
+    markdown,
     math::{FormulaImage, Job, Reply, Worker},
     menu::{self, Action},
     render,
@@ -583,7 +584,20 @@ impl App {
                     }
                     return;
                 }
-                self.doc.replace("\n", false);
+                match self
+                    .doc
+                    .selection()
+                    .is_empty()
+                    .then(|| markdown::enter_edit(&self.doc.text(), self.doc.caret))
+                    .flatten()
+                {
+                    Some((range, value)) => {
+                        self.doc.anchor = range.start;
+                        self.doc.caret = range.end;
+                        self.doc.replace(&value, false);
+                    }
+                    None => self.doc.replace("\n", false),
+                }
                 self.goal_x = None;
                 self.changed(true);
             }

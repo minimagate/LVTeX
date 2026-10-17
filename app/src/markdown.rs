@@ -118,6 +118,49 @@ fn ordered(rest: &str) -> Option<(Block, usize)> {
     }
 }
 
+/// What Enter does inside a block line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Enter {
+    /// Start the next line with this prefix.
+    Continue(String),
+    /// The item is empty: drop its marker and end the list.
+    End,
+}
+
+/// What Enter does at byte `caret` of `line` (no `\n` in `line`).
+fn enter(line: &str, caret: usize) -> Option<Enter> {
+    let l = self::line(line);
+    if caret < l.content() {
+        return None;
+    }
+    let indent = &line[..l.marker.start];
+    let marker = &line[l.marker.clone()];
+    let bullet = || char::from(line.as_bytes()[l.marker.start]);
+    let prefix = match l.block {
+        Block::Paragraph | Block::Heading(_) | Block::Rule => return None,
+        _ if line[l.content()..].trim().is_empty() => return Some(Enter::End),
+        Block::Bullet => format!("{indent}{} ", bullet()),
+        Block::Task(_) => format!("{indent}{} [ ] ", bullet()),
+        Block::Ordered(n) => {
+            let delimiter = char::from(marker.as_bytes()[marker.len() - 2]);
+            format!("{indent}{}{delimiter} ", n.saturating_add(1))
+        }
+        Block::Quote => format!("{indent}{marker}"),
+    };
+    Some(Enter::Continue(prefix))
+}
+
+/// The edit for Enter at byte `caret` of `text`: the byte range to replace and its replacement.
+/// `None` means a plain newline.
+pub fn enter_edit(text: &str, caret: usize) -> Option<(Range<usize>, String)> {
+    let start = text[..caret].rfind('\n').map_or(0, |i| i + 1);
+    let end = text[caret..].find('\n').map_or(text.len(), |i| caret + i);
+    match enter(&text[start..end], caret - start)? {
+        Enter::Continue(prefix) => Some((caret..caret, format!("\n{prefix}"))),
+        Enter::End => Some((start..end, String::new())),
+    }
+}
+
 /// Inline spans of one line's content. Pass the content slice (`&line[l.content()..]`); the
 /// returned ranges are byte offsets into `text`.
 pub fn inline(text: &str) -> Vec<Span> {
@@ -419,6 +462,61 @@ mod tests {
             assert_eq!(&text[l.marker.clone()], marker, "line({text:?}).marker");
             assert_eq!(l.content(), l.marker.end, "line({text:?}).content");
         }
+    }
+
+    #[test]
+    fn enter_at_line_end() {
+        use Enter::{Continue, End};
+        let cases: &[(&str, Option<Enter>)] = &[
+            ("- a", Some(Continue("- ".into()))),
+            ("* a", Some(Continue("* ".into()))),
+            ("+ a", Some(Continue("+ ".into()))),
+            ("  - nested", Some(Continue("  - ".into()))),
+            ("1. a", Some(Continue("2. ".into()))),
+            ("9) a", Some(Continue("10) ".into()))),
+            ("- [x] done", Some(Continue("- [ ] ".into()))),
+            ("- [ ] a", Some(Continue("- [ ] ".into()))),
+            ("> a", Some(Continue("> ".into()))),
+            (">a", Some(Continue(">".into()))),
+            ("- ", Some(End)),
+            ("1. ", Some(End)),
+            ("- [ ] ", Some(End)),
+            ("> ", Some(End)),
+            ("-   ", Some(End)),
+            ("  - ", Some(End)),
+            ("# Title", None),
+            ("plain", None),
+            ("---", None),
+        ];
+        for (text, want) in cases {
+            let at_end = enter(text, text.len());
+            assert_eq!(&at_end, want, "enter({text:?}, end)");
+        }
+        assert_eq!(enter("  - a", 1), None, "caret inside the indent");
+        assert_eq!(enter("- a", 1), None, "caret inside the marker");
+        assert_eq!(enter("1. a", 2), None, "caret inside the number");
+        assert_eq!(
+            enter("- ab", 3),
+            Some(Continue("- ".into())),
+            "caret in the middle of the content"
+        );
+    }
+
+    #[test]
+    fn enter_edit_ranges() {
+        let text = "x\n- a\ny";
+        assert_eq!(
+            enter_edit(text, 5),
+            Some((5..5, "\n- ".to_string())),
+            "continue at the end of the middle line"
+        );
+        assert_eq!(enter_edit(text, 0), None, "paragraph above the list");
+        let empty = "- a\n- \nz";
+        assert_eq!(
+            enter_edit(empty, 6),
+            Some((4..6, String::new())),
+            "end removes the empty item's whole line"
+        );
     }
 
     #[test]
