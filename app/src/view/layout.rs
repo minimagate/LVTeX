@@ -198,22 +198,20 @@ impl Para {
         (face, color, style.strike && !span.marker)
     }
 }
-// True when the open prompt starts in this paragraph and covers all of its non-whitespace text.
+// True when the open prompt is a single line alone on its line: it starts and ends inside this
+// paragraph (so no line break lies in it) and the paragraph's text outside it is whitespace.
+// A prompt spanning several lines is never centered; each of its lines stays inline.
 fn prompt_alone(paragraph: &str, offset: usize, open: Option<&Range<usize>>) -> bool {
     let Some(open) = open else {
         return false;
     };
-    let Some(start) = open
-        .start
-        .checked_sub(offset)
-        .filter(|&start| start <= paragraph.len())
+    let (Some(start), Some(end)) = (open.start.checked_sub(offset), open.end.checked_sub(offset))
     else {
         return false;
     };
-    let end = open
-        .end
-        .saturating_sub(offset)
-        .clamp(start, paragraph.len());
+    if start > end || end > paragraph.len() {
+        return false;
+    }
     paragraph[..start].trim().is_empty() && paragraph[end..].trim().is_empty()
 }
 pub struct Typesetter {
@@ -1076,6 +1074,20 @@ mod tests {
             "x {}",
             line.stops[0].1
         );
+    }
+
+    #[test]
+    fn open_prompt_spanning_two_lines_stays_inline_on_both() {
+        let mut t = Typesetter::new();
+        let mut doc = Document::new("a\nb");
+        doc.anchor = 0;
+        doc.caret = 3;
+        doc.open_ai_prompt();
+        let layout = t.document(&doc, 680.0);
+        assert!(layout.lines.len() >= 2, "lines {}", layout.lines.len());
+        for line in &layout.lines[..2] {
+            assert_eq!(line.stops.first().expect("stops").1, 0.0);
+        }
     }
 
     #[test]
