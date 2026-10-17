@@ -1,11 +1,10 @@
 //! Menu actions and file commands: save, export, and closing with unsaved changes.
 use super::App;
 use crate::{
-    config::MATH_CACHE_LIMIT,
     document::Document,
     export, file,
     math::input::{MathInput, MathKey},
-    math::{tree::MathTree, worker::Reply},
+    math::tree::MathTree,
     menu::Action,
 };
 use winit::event_loop::ActiveEventLoop;
@@ -94,40 +93,7 @@ impl App {
             }
         }
         match action {
-            Action::MathReady => {
-                let mut changed = false;
-                while let Ok(reply) = self.worker.rx.try_recv() {
-                    match reply {
-                        Reply::Connection(online) => {
-                            self.online = online;
-                            changed = true;
-                        }
-                        Reply::Done(id, result) => {
-                            if let Ok(image) = &result
-                                && let Some(prompt) = self
-                                    .doc
-                                    .formulas
-                                    .values()
-                                    .find(|f| f.id == id)
-                                    .and_then(|f| f.prompt.clone())
-                            {
-                                if self.math_cache.len() >= MATH_CACHE_LIMIT {
-                                    self.math_cache.clear();
-                                }
-                                self.math_cache.insert(prompt, image.clone());
-                            }
-                            changed |= self.doc.complete(id, result);
-                        }
-                        Reply::PreviewDone(id, revision, result) => {
-                            changed |= self.doc.complete_manual_preview(id, revision, result);
-                        }
-                    }
-                }
-                if changed {
-                    self.changed(true);
-                    self.reveal = false;
-                }
-            }
+            Action::MathReady => self.apply_math_replies(),
             Action::InsertFormula => {
                 let in_prompt = self
                     .doc

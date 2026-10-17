@@ -1,8 +1,9 @@
 //! The hand-written formula session: editing a formula, its keys, live preview and finish.
 use super::App;
 use crate::{
+    config::MATH_CACHE_LIMIT,
     math::input::{MathInput, MathKey, Outcome},
-    math::worker::Preview,
+    math::worker::{Preview, Reply},
 };
 impl App {
     pub(super) fn edit_math(&mut self, pos: usize) {
@@ -65,5 +66,40 @@ impl App {
         self.doc.update_manual(input.finish());
         self.doc.finish_manual();
         self.changed(true);
+    }
+    /// Applies the math worker's replies: connection state, finished formulas, the image cache and previews.
+    pub(super) fn apply_math_replies(&mut self) {
+        let mut changed = false;
+        while let Ok(reply) = self.worker.rx.try_recv() {
+            match reply {
+                Reply::Connection(online) => {
+                    self.online = online;
+                    changed = true;
+                }
+                Reply::Done(id, result) => {
+                    if let Ok(image) = &result
+                        && let Some(prompt) = self
+                            .doc
+                            .formulas
+                            .values()
+                            .find(|f| f.id == id)
+                            .and_then(|f| f.prompt.clone())
+                    {
+                        if self.math_cache.len() >= MATH_CACHE_LIMIT {
+                            self.math_cache.clear();
+                        }
+                        self.math_cache.insert(prompt, image.clone());
+                    }
+                    changed |= self.doc.complete(id, result);
+                }
+                Reply::PreviewDone(id, revision, result) => {
+                    changed |= self.doc.complete_manual_preview(id, revision, result);
+                }
+            }
+        }
+        if changed {
+            self.changed(true);
+            self.reveal = false;
+        }
     }
 }
