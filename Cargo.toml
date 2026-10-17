@@ -10,6 +10,10 @@ license = "Apache-2.0"
 repository = "https://github.com/minimagate/mathstral"
 authors = ["Michelangelo Gubinelli"]
 
+[workspace.dependencies]
+mathstral-latex = { path = "crates/latex" }
+mathstral-render = { path = "crates/render" }
+
 [profile.release]
 opt-level = "s"
 lto = "thin"

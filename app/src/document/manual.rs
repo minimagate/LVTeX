@@ -92,16 +92,6 @@ impl Document {
         }
         true
     }
-    #[cfg(test)]
-    pub fn set_manual(&mut self, latex: String, image: Option<Arc<FormulaImage>>) {
-        let Some((id, _)) = self.update_manual(latex) else {
-            return;
-        };
-        if let Some(formula) = self.formulas.values_mut().find(|formula| formula.id == id) {
-            formula.image = image;
-            formula.failed = false;
-        }
-    }
     pub fn finish_manual(&mut self) {
         let Some(edit) = self.manual.take() else {
             return;

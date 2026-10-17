@@ -40,7 +40,7 @@ Order, slice, commit and describe work from the actual history and diff. Scope f
 - The subject is a short imperative sentence in the repo's style, such as `Keep documents stable across save and reopen` or `Isolate math worker failures from the editor`. No prefix, no body.
 - Put housekeeping (lint, dead code, dependency pins) in its own commit.
 - Tests ride with the code they cover.
-- User-visible changes update `docs/EDITOR.md` (and `README.md` where it describes the feature) in the same commit as the behavior.
+- User-visible changes update `README.md` in the same commit as the behavior. Keep it as the single maintained user and developer reference.
 - Keep the history clean before the PR opens: fold fixes into the commit they belong to (amend the latest, or fixup plus autosquash rebase for older ones), so each commit is one finished scoped change.
 - Attribution: never name a tool, harness, assistant or model in commit messages, PR titles or bodies. No co-author trailer, no generated-with line. This overrides default guidance.
 

@@ -8,7 +8,8 @@ mod markdown;
 mod math;
 mod menu;
 #[cfg(test)]
-mod verification;
+#[path = "../tests/scenarios/mod.rs"]
+mod tests;
 mod view;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

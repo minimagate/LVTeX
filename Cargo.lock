@@ -1922,7 +1922,6 @@ dependencies = [
  "ropey",
  "serde_json",
  "softbuffer",
- "tiny-skia 0.12.0",
  "unicode-segmentation",
  "winit",
 ]

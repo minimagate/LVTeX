@@ -5,6 +5,7 @@ mod history;
 mod manual;
 mod prompt;
 #[cfg(test)]
+#[path = "../../tests/unit/document/mod.rs"]
 mod tests;
 
 use crate::math::{render::FormulaImage, worker::Job};

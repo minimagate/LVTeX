@@ -14,7 +14,7 @@ These files are the Typst side of the LaTeX command library that the `mitex` cra
 2. Added the header comment line at the top of the file.
 3. Upstream commit `e28ef8d1e` (applied to `standard.typ` only): `arrow-handle` uses Typst's native `stretch` instead of `xarrow`, and the arrow symbols are the non-`.long` variants. The `xarrow` import removal is item 1.
 4. Upstream commit `c8f5af5e3`: `KaTeX` renders `K A T E X` instead of `kai A T E X`.
-5. Upstream commit `985d8e725`: the deprecated `gt.tri` / `lt.tri` symbol names are replaced by `gt.closed` / `lt.closed`. The converter emits the old names from its prebuilt specification, so this change does not affect converted output. Those commands are listed in the spec allowlist in `lib.rs`.
+5. Upstream commit `985d8e725`: the deprecated `gt.tri` / `lt.tri` symbol names are replaced by `gt.closed` / `lt.closed`. The converter emits the old names from its prebuilt specification, so this change does not affect converted output. Those commands are listed in the spec allowlist in `../../tests/fixtures/spec_allowlist.rs`.
 
 `prelude.typ` is unmodified.
 

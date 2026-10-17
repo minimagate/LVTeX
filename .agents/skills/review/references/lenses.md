@@ -66,7 +66,7 @@ Look for:
 - Module layout and naming that differs from sibling modules without a reason.
 - A second way to do something the repo already does one way, such as a second error type, a second channel between threads, or a second way to write files.
 - Tests that contradict the repo's testing rules: location, style or forbidden patterns.
-- User-visible behavior changed without `docs/EDITOR.md` updated in the same diff.
+- User-visible behavior changed without `README.md` updated in the same diff.
 - New dependencies or a `Cargo.lock` change that the Principles section of `how-we-work` does not allow.
 
 Not a finding:

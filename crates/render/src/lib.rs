@@ -1,4 +1,2 @@
-//! Typst-based math renderer used by the Mathstral editor, plus the benchmark harness and fixtures.
-pub mod benchmark;
-pub mod fixtures;
+//! Typst-based math rendering and PDF compilation with embedded fonts.
 pub mod math;

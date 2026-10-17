@@ -9,7 +9,7 @@ Test behaviour at the narrowest public boundary, cover the edge inputs that brea
 
 ## Where a test lives
 
-- Unit tests for private logic go in a `#[cfg(test)] mod tests` at the bottom of the same file.
+- Unit tests for private logic live under the owning crate's `tests/unit/` directory, included from their module with `#[cfg(test)]` and `#[path = "…"] mod tests;`. Keep test bodies and test-only helpers out of production source files without widening visibility.
 - Integration tests for a library crate's public API go in `tests/`, one file per concept.
 - Doc tests only when the example is real documentation a reader should copy. They also run in CI, so keep them short.
 - Golden-file tests live next to the crate that owns the output, with fixtures in a named directory.

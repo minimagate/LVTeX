@@ -46,7 +46,6 @@ fn mixed_page_baselines_roundtrip_pixels_and_atomic_editing() {
     finish(&mut loaded, &mut renderer);
     assert_eq!(saved, loaded.markdown());
     assert!(!loaded.dirty());
-    let mut default_snapshot = None;
     for scale in [1.0_f32, 2.0] {
         for column_width in [280.0_f32, 680.0] {
             let layout = t.document(&doc, column_width);
@@ -116,9 +115,6 @@ fn mixed_page_baselines_roundtrip_pixels_and_atomic_editing() {
                 pixels, reloaded,
                 "saved/reopened page is pixel-identical at {column_width}px, scale {scale}"
             );
-            if scale == 2.0 && column_width == 680.0 {
-                default_snapshot = Some(pixels);
-            }
         }
     }
     let pos = *doc.formulas.keys().next().unwrap();
@@ -142,21 +138,6 @@ fn mixed_page_baselines_roundtrip_pixels_and_atomic_editing() {
     assert!(doc.submit_prompt());
     assert_eq!(doc.formulas[&pos].latex, latex);
     assert!(doc.jobs().is_empty());
-    if let Ok(path) = std::env::var("MATHSTRAL_SNAPSHOT") {
-        let pixels = default_snapshot.expect("default snapshot configuration was rendered");
-        let mut image = tiny_skia::Pixmap::new(1920, 1520).unwrap();
-        for (rgba, rgb) in image
-            .data_mut()
-            .as_chunks_mut::<4>()
-            .0
-            .iter_mut()
-            .zip(pixels)
-        {
-            rgba.copy_from_slice(&[(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8, 255]);
-        }
-        image.save_png(path).unwrap();
-        std::fs::write("../artifacts/math-demo.md", saved).unwrap();
-    }
 }
 #[test]
 fn late_results_deleted_atoms_and_undo_never_target_other_text() {

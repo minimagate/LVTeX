@@ -5,7 +5,7 @@ use crate::{
 use cosmic_text::{Color, SwashCache};
 use std::ops::Range;
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // explicit pixel buffer and rectangle geometry
 pub fn rect(
     pixels: &mut [u32],
     width: usize,
@@ -27,7 +27,7 @@ pub fn rect(
         pixels[row * width + x0..row * width + x1].fill(color);
     }
 }
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // viewport and selection belong to the frame, not persistent state
 pub fn page(
     layout: &Layout,
     typesetter: &mut Typesetter,

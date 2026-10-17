@@ -56,6 +56,8 @@ mkdir -p "$contents/Resources"
 cp LICENSE "$contents/Resources/"
 cp assets/fonts/README.md "$contents/Resources/FONTS.md"
 cp assets/fonts/UPSTREAM-NOTICE "$contents/Resources/FONTS-UPSTREAM-NOTICE"
+cp crates/latex/vendor/mitex/LICENSE "$contents/Resources/MITEX-LICENSE"
+cp crates/latex/vendor/mitex/README.md "$contents/Resources/MITEX-NOTICE.md"
 
 codesign --force --deep --sign - "$bundle"
 
