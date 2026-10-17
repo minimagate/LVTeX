@@ -1,0 +1,4 @@
+interface:
+  display_name: "How We Work"
+  short_description: "Entrypoint: roles, loop, principles, delegation and commits"
+  default_prompt: "Use $how-we-work to orient this session, apply the shared principles, and route the task through the plan, delegate, verify and review loop."

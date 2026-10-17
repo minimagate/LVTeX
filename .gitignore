@@ -1,6 +1,8 @@
 /target/
 /.cargo-home/
 /dist/
-/.claude/
+/tmp/
+/.claude/*
+!/.claude/skills
 .DS_Store
 __pycache__/

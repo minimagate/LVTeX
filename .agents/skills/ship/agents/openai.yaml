@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ship"
+  short_description: "Order, slice, commit and open PRs the way this repo does"
+  default_prompt: "Use $ship to order and slice this change, write its commits and PR title and description from the branch's commits and diff against the base."

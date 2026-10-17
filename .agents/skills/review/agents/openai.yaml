@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review"
+  short_description: "Adversarial multi-lens code review"
+  default_prompt: "Use $review to run an adversarial review of this change across the six lenses, with parallel reviewers."

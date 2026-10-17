@@ -1,0 +1,4 @@
+interface:
+  display_name: "Plan"
+  short_description: "Agree a plan before any edits; multi-agent planning for big features"
+  default_prompt: "Use $plan to analyze the code and agree the scope and changes with the user before writing any code. For a big feature, offer multi-agent planning and run it only after I confirm."
