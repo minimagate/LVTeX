@@ -4,8 +4,8 @@ pub type Row = Vec<Node>;
 /// The caret's way into a box: (node index in its row, argument index of that node).
 type Step = (usize, usize);
 
-const CARET: &str = r"\textcolor{red}{|}";
-const PLACEHOLDER: &str = r"\textcolor{gray}{\square}";
+const CARET: &str = r"\textcolor{#FF0000}{|}";
+const PLACEHOLDER: &str = r"\textcolor{#73716F}{\square}";
 const RIGHT: &str = r"\right";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -300,6 +300,40 @@ impl MathTree {
             | Node::Delimited { .. }
             | Node::Raw(_) => None,
         }
+    }
+
+    /// The keys of the symbols just before the caret, oldest first, at most `limit` of them. A
+    /// node without keys ends the run.
+    pub fn keys_before_caret(&self, limit: usize) -> Vec<String> {
+        let mut keys: Vec<String> = self.cur()[..self.pos]
+            .iter()
+            .rev()
+            .map_while(|node| match node {
+                Node::Symbol { keys, .. } if !keys.is_empty() => Some(keys.clone()),
+                _ => None,
+            })
+            .take(limit)
+            .collect();
+        keys.reverse();
+        keys
+    }
+
+    /// Replaces the `count` nodes before the caret with one symbol.
+    pub fn replace_before(&mut self, count: usize, latex: &str, keys: &str) {
+        let Some(start) = self.pos.checked_sub(count) else {
+            return;
+        };
+        let end = self.pos;
+        let row = self.cur_mut();
+        row.drain(start..end);
+        row.insert(
+            start,
+            Node::Symbol {
+                latex: latex.to_string(),
+                keys: keys.to_string(),
+            },
+        );
+        self.pos = start + 1;
     }
 
     /// Inserts a box at the caret and moves the caret into its first argument.
@@ -1246,7 +1280,7 @@ mod tests {
         });
         assert_eq!(
             frac.latex_with_caret(),
-            r"\frac{\textcolor{red}{|}\textcolor{gray}{\square}}{\textcolor{gray}{\square}}"
+            r"\frac{\textcolor{#FF0000}{|}\textcolor{#73716F}{\square}}{\textcolor{#73716F}{\square}}"
         );
         assert_eq!(frac.latex(), r"\frac{}{}");
         assert_eq!(MathTree::new().latex_with_caret(), CARET);
@@ -1255,7 +1289,7 @@ mod tests {
             t.make_script(true);
             sym(t, "2");
         });
-        assert_eq!(script.latex_with_caret(), r"x^{2\textcolor{red}{|}}");
+        assert_eq!(script.latex_with_caret(), r"x^{2\textcolor{#FF0000}{|}}");
     }
 
     #[test]
@@ -1268,6 +1302,21 @@ mod tests {
         assert!(matches!(&t.root[0], Node::Symbol { keys, .. } if keys == "a"));
         t.make_prime();
         assert!(t.last_symbol_mut().is_none());
+    }
+
+    #[test]
+    fn keys_before_caret_and_replace_before_work_on_the_run() {
+        let mut t = build(|t| {
+            t.insert_symbol("<", "<");
+            t.insert_symbol("=", "=");
+        });
+        assert_eq!(t.keys_before_caret(5), ["<", "="]);
+        assert_eq!(t.keys_before_caret(1), ["="]);
+        t.replace_before(2, r"\leqslant", "< =");
+        assert_eq!(t.latex(), r"\leqslant");
+        assert_eq!(t.keys_before_caret(5), ["< ="]);
+        t.make_prime();
+        assert!(t.keys_before_caret(5).is_empty());
     }
 
     #[test]

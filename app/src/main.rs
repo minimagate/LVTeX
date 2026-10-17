@@ -4,6 +4,8 @@ mod buffer;
 mod config;
 mod export;
 mod file;
+#[cfg_attr(not(test), allow(dead_code))] // not wired into the app until the manual-math input slice
+mod keymap;
 mod layout;
 mod markdown;
 mod math;
