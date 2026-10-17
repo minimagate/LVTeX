@@ -9,11 +9,12 @@ Unmodified files copied from the `typst-assets` 0.15.1 package:
 - `LibertinusSerif-Italic.otf`: Libertinus Serif Italic; SIL Open Font License 1.1.
   Embedded by the editor for headings, quotes and emphasis.
 - `LibertinusSerif-Bold.otf`: Libertinus Serif Bold; SIL Open Font License 1.1.
-  Embedded by the editor for Markdown bold text.
+  Embedded by the editor and the renderer (PDF export) for Markdown bold text.
 - `LibertinusSerif-BoldItalic.otf`: Libertinus Serif Bold Italic; SIL Open Font
-  License 1.1. Embedded by the editor for bold italic text.
+  License 1.1. Embedded by the editor and the renderer (PDF export) for bold italic text.
 - `DejaVuSansMono.ttf`: DejaVu Sans Mono; Bitstream Vera licence with DejaVu
-  changes in the public domain. Embedded by the editor for inline code.
+  changes in the public domain. Embedded by the editor and the renderer (PDF export)
+  for inline code.
 
 `UPSTREAM-NOTICE` is the complete unmodified notice from that package. Its first
 three sections cover these fonts: the SIL Open Font License (Libertinus), the

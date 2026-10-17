@@ -35,6 +35,9 @@ impl Renderer {
             include_bytes!("../../../assets/fonts/NewCMMath-Regular.otf").as_slice(),
             include_bytes!("../../../assets/fonts/LibertinusSerif-Regular.otf").as_slice(),
             include_bytes!("../../../assets/fonts/LibertinusSerif-Italic.otf").as_slice(),
+            include_bytes!("../../../assets/fonts/LibertinusSerif-Bold.otf").as_slice(),
+            include_bytes!("../../../assets/fonts/LibertinusSerif-BoldItalic.otf").as_slice(),
+            include_bytes!("../../../assets/fonts/DejaVuSansMono.ttf").as_slice(),
         ]
         .into_iter()
         .map(|data| Font::new(Bytes::new(data), 0).expect("bundled font is valid"))

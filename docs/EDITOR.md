@@ -83,9 +83,10 @@ File commands:
 - Save writes to a temporary file in the same folder, copies the file permissions, and
   renames it over the target. Symbolic links are resolved first.
 - New, Open, Close Window and Quit ask "Save changes?" when the document has unsaved edits.
-- Export as PDF writes an A4 PDF typeset with Typst: black text on white, `# ` lines as italic
-  headings, formulas as vector math. Prompts that have not rendered are exported as their
-  `\prompt\` text after a confirmation.
+- Export as PDF writes an A4 PDF typeset with Typst: black text on white, formulas as vector
+  math. The PDF typesets the Markdown styles the editor shows (headings, bold, italic, code,
+  strikethrough, links, lists, tasks, quotes and rules) with the markers left out. Prompts that
+  have not rendered are exported as their `\prompt\` text after a confirmation.
 
 ## Math prompts
 
