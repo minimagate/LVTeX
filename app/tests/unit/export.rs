@@ -65,3 +65,20 @@ fn exports_markdown_styles_as_typst() {
     }
     assert!(pdf(&doc).unwrap().starts_with(b"%PDF-"));
 }
+
+#[test]
+fn exports_headings_and_quotes_in_standard_style() {
+    let doc = Document::new("# One\n\n## Two\n\n### Three\n\n> quoted");
+    let source = typst_source(&doc);
+    let wants = [
+        "#show heading: set text(size: 11pt, weight: \"bold\", style: \"normal\")",
+        "#show heading.where(level: 1): set text(size: 17.6pt)",
+        "#show heading.where(level: 2): set text(size: 14.85pt)",
+        "#show heading.where(level: 3): set text(size: 12.65pt)",
+        "#show quote.where(block: true): set text(fill: luma(40%))",
+    ];
+    for want in wants {
+        assert!(source.contains(want), "missing {want:?} in:\n{source}");
+    }
+    assert!(pdf(&doc).unwrap().starts_with(b"%PDF-"));
+}
