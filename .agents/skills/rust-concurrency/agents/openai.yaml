@@ -1,0 +1,4 @@
+interface:
+  display_name: "Rust Concurrency"
+  short_description: "Workers, channels, cancellation and a responsive UI thread"
+  default_prompt: "Use $rust-concurrency to move this work off the UI thread with message passing and stale-result rejection."

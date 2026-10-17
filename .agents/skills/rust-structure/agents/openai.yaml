@@ -1,0 +1,4 @@
+interface:
+  display_name: "Rust Structure"
+  short_description: "Crate, module, visibility and naming guidance for Rust"
+  default_prompt: "Use $rust-structure to place this Rust code in the right crate and module with clear visibility and names."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Rust Tests"
+  short_description: "Deterministic Rust tests with edge cases and round trips"
+  default_prompt: "Use $rust-tests to add focused, deterministic Rust tests covering edge inputs and round trips."

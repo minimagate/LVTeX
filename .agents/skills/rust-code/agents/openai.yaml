@@ -1,0 +1,4 @@
+interface:
+  display_name: "Rust Code"
+  short_description: "Idiomatic Rust: types, errors, borrowing and lints"
+  default_prompt: "Use $rust-code to write this Rust change with typed errors, borrowed parameters and clippy-clean code."

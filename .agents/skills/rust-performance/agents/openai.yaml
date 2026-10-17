@@ -1,0 +1,4 @@
+interface:
+  display_name: "Rust Performance"
+  short_description: "Measure-first performance for interactive Rust code"
+  default_prompt: "Use $rust-performance to measure and speed up this hot path without recomputing the whole document."
