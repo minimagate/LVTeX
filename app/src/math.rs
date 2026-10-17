@@ -496,7 +496,7 @@ mod tests {
             }
         }
         assert!(connected);
-        assert_eq!(ids, (0..10).collect());
+        assert_eq!(ids, (0..10).collect::<std::collections::BTreeSet<u64>>());
     }
     #[test]
     fn imported_edit_descriptions_cannot_expose_latex() {

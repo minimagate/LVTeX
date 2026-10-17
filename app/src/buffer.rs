@@ -248,15 +248,16 @@ impl Document {
         self.redo.clear();
         // A slash at EOF closes immediately, but a subsequently typed denominator
         // reinterprets it as an internal slash, even if rendering already finished.
-        if range.is_empty() && value.chars().next().is_some_and(|c| !closing_boundary(c)) {
-            if let Some((&pos, f)) = self.formulas.range(..self.caret).next_back() {
-                if pos + ATOM.len() == self.caret && f.provisional {
-                    let label = f.label();
-                    self.splice(pos..pos + ATOM.len(), &label);
-                    self.caret = pos + label.len();
-                    self.anchor = self.caret;
-                }
-            }
+        if range.is_empty()
+            && value.chars().next().is_some_and(|c| !closing_boundary(c))
+            && let Some((&pos, f)) = self.formulas.range(..self.caret).next_back()
+            && pos + ATOM.len() == self.caret
+            && f.provisional
+        {
+            let label = f.label();
+            self.splice(pos..pos + ATOM.len(), &label);
+            self.caret = pos + label.len();
+            self.anchor = self.caret;
         }
         for f in self.formulas.values_mut() {
             f.provisional = false;
@@ -472,10 +473,10 @@ impl Document {
     }
     pub fn move_to(&mut self, position: usize, extend: bool) {
         self.caret = position.min(self.rope.len_bytes());
-        if let Some((&start, _)) = self.formulas.range(..self.caret).next_back() {
-            if self.caret < start + ATOM.len() {
-                self.caret = start;
-            }
+        if let Some((&start, _)) = self.formulas.range(..self.caret).next_back()
+            && self.caret < start + ATOM.len()
+        {
+            self.caret = start;
         }
         if !extend {
             self.anchor = self.caret;
@@ -595,16 +596,14 @@ fn decode(source: &str) -> (String, BTreeMap<usize, Formula>, BTreeSet<usize>) {
                 i = end + delimiter.len();
                 let mut prompt = None;
                 let prefix = "<!--mathstral:";
-                if source[i..].starts_with(prefix) {
-                    if let Some(end) = source[i + prefix.len()..].find("-->") {
-                        let encoded = &source[i + prefix.len()..i + prefix.len() + end];
-                        if let Ok(bytes) = URL_SAFE_NO_PAD.decode(encoded) {
-                            if let Ok(p) = String::from_utf8(bytes) {
-                                prompt = Some(p);
-                                i += prefix.len() + end + 3;
-                            }
-                        }
-                    }
+                if source[i..].starts_with(prefix)
+                    && let Some(end) = source[i + prefix.len()..].find("-->")
+                    && let encoded = &source[i + prefix.len()..i + prefix.len() + end]
+                    && let Ok(bytes) = URL_SAFE_NO_PAD.decode(encoded)
+                    && let Ok(p) = String::from_utf8(bytes)
+                {
+                    prompt = Some(p);
+                    i += prefix.len() + end + 3;
                 }
                 formulas.insert(text.len(), Formula::new(prompt, Some(latex)));
                 text.push_str(ATOM);

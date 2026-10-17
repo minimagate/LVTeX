@@ -340,19 +340,18 @@ impl App {
                             changed = true;
                         }
                         Reply::Done(id, result) => {
-                            if let Ok(image) = &result {
-                                if let Some(prompt) = self
+                            if let Ok(image) = &result
+                                && let Some(prompt) = self
                                     .doc
                                     .formulas
                                     .values()
                                     .find(|f| f.id == id)
                                     .and_then(|f| f.prompt.clone())
-                                {
-                                    if self.math_cache.len() >= 512 {
-                                        self.math_cache.clear();
-                                    }
-                                    self.math_cache.insert(prompt, image.clone());
+                            {
+                                if self.math_cache.len() >= 512 {
+                                    self.math_cache.clear();
                                 }
+                                self.math_cache.insert(prompt, image.clone());
                             }
                             changed |= self.doc.complete(id, result);
                         }
@@ -531,11 +530,13 @@ impl App {
                 }
             }
             Key::Named(key @ (NamedKey::Backspace | NamedKey::Delete)) => {
-                if key == NamedKey::Backspace && !command && !option {
-                    if let Some(pos) = self.doc.formula_at_caret(true) {
-                        self.edit_math(pos);
-                        return;
-                    }
+                if key == NamedKey::Backspace
+                    && !command
+                    && !option
+                    && let Some(pos) = self.doc.formula_at_caret(true)
+                {
+                    self.edit_math(pos);
+                    return;
                 }
                 if self.doc.selection().is_empty() {
                     let forward = key == NamedKey::Delete;

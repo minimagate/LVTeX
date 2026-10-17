@@ -5,6 +5,7 @@ use crate::{
 use cosmic_text::{Color, SwashCache};
 use std::ops::Range;
 
+#[allow(clippy::too_many_arguments)]
 pub fn rect(
     pixels: &mut [u32],
     width: usize,

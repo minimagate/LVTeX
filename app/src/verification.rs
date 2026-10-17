@@ -112,7 +112,13 @@ fn mixed_page_baselines_roundtrip_pixels_and_atomic_editing() {
     assert!(doc.jobs().is_empty());
     if let Ok(path) = std::env::var("MATHSTRAL_SNAPSHOT") {
         let mut image = tiny_skia::Pixmap::new(1920, 1520).unwrap();
-        for (rgba, rgb) in image.data_mut().chunks_exact_mut(4).zip(pixels) {
+        for (rgba, rgb) in image
+            .data_mut()
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(pixels)
+        {
             rgba.copy_from_slice(&[(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8, 255]);
         }
         image.save_png(path).unwrap();
