@@ -72,7 +72,15 @@ pub struct MathInput {
 }
 
 impl MathInput {
-    pub fn new(tree: MathTree) -> Self {
+    pub fn new(mut tree: MathTree) -> Self {
+        // A parsed symbol has no typed keys, so give it the keys that would have typed it.
+        tree.symbols_mut(|latex, keys| {
+            if keys.is_empty()
+                && let Some(found) = keys_for(latex)
+            {
+                *keys = found;
+            }
+        });
         Self {
             tree,
             command: None,
@@ -323,6 +331,23 @@ fn plain(c: char) -> String {
         '~' => r"\sim".to_string(),
         _ => c.to_string(),
     }
+}
+
+/// The keys that type a symbol with this LaTeX, for a symbol read from a file. A single
+/// printable ASCII character types itself; otherwise the binding with the fewest keys wins,
+/// ties going to the first in the table.
+fn keys_for(latex: &str) -> Option<String> {
+    let mut chars = latex.chars();
+    if let (Some(c), None) = (chars.next(), chars.next())
+        && c.is_ascii_graphic()
+    {
+        return Some(c.to_string());
+    }
+    BINDINGS
+        .iter()
+        .filter(|(_, bound)| *bound == latex)
+        .min_by_key(|(keys, _)| keys.split(' ').count())
+        .map(|(keys, _)| keys.to_string())
 }
 
 // BEGIN BINDINGS
@@ -935,6 +960,50 @@ mod tests {
         let mut input = MathInput::new(MathTree::new());
         feed(&mut input, script);
         input
+    }
+
+    fn parsed(latex: &str) -> MathInput {
+        MathInput::new(MathTree::parse(latex))
+    }
+
+    #[test]
+    fn parsed_letter_takes_its_tab_variant() {
+        let mut input = parsed("a");
+        assert_eq!(input.key(MathKey::Tab), Outcome::Edited);
+        assert_eq!(input.latex(), r"\alpha");
+    }
+
+    #[test]
+    fn parsed_variant_has_no_further_tab_and_shift_tab_steps_back() {
+        let mut input = parsed(r"\alpha");
+        assert_eq!(input.key(MathKey::Tab), Outcome::Ignored);
+        assert_eq!(input.key(MathKey::ShiftTab), Outcome::Edited);
+        assert_eq!(input.latex(), "a");
+    }
+
+    #[test]
+    fn parsed_relation_combines_like_typed_keys() {
+        let mut input = parsed("<");
+        input.key(MathKey::Text('='));
+        assert_eq!(input.latex(), r"\leqslant");
+        assert_eq!(input.latex(), typed("<=").latex());
+    }
+
+    #[test]
+    fn parsed_comma_keeps_its_typed_key_not_a_variant() {
+        let mut input = parsed(",");
+        feed(&mut input, ",");
+        assert_eq!(input.latex(), r",\ldots,");
+    }
+
+    #[test]
+    fn symbol_inside_a_parsed_fraction_takes_keys() {
+        let mut input = parsed(r"\frac{a}{b}");
+        for _ in 0..3 {
+            input.key(MathKey::Left);
+        }
+        assert_eq!(input.key(MathKey::Tab), Outcome::Edited);
+        assert_eq!(input.latex(), r"\frac{\alpha}{b}");
     }
 
     #[test]

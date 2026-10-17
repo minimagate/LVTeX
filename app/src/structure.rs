@@ -284,6 +284,24 @@ impl MathTree {
         });
     }
 
+    /// Calls `f` with the LaTeX and keys of every symbol in the tree, including symbols inside
+    /// boxes.
+    pub fn symbols_mut(&mut self, mut f: impl FnMut(&str, &mut String)) {
+        fn visit(row: &mut Row, f: &mut impl FnMut(&str, &mut String)) {
+            for node in row {
+                if let Node::Symbol { latex, keys } = node {
+                    f(latex, keys);
+                }
+                for k in 0..node.arg_count() {
+                    if let Some(arg) = node.arg_mut(k) {
+                        visit(arg, f);
+                    }
+                }
+            }
+        }
+        visit(&mut self.root, &mut f);
+    }
+
     /// The keys of the symbols just before the caret, oldest first, at most `limit` of them. A
     /// node without keys ends the run.
     pub fn keys_before_caret(&self, limit: usize) -> Vec<String> {
@@ -1414,6 +1432,21 @@ mod tests {
             assert_eq!(parsed.latex(), expected, "parse of {expected}");
             assert_eq!(MathTree::parse(&tree.latex()).latex(), tree.latex());
         }
+    }
+
+    #[test]
+    fn symbols_mut_visits_symbols_inside_boxes() {
+        let mut tree = MathTree::parse(r"a\frac{b}{c^d}");
+        let mut seen = Vec::new();
+        tree.symbols_mut(|latex, keys| {
+            seen.push(latex.to_string());
+            keys.push('!');
+        });
+        assert_eq!(seen, ["a", "b", "c", "d"]);
+        let mut keys = Vec::new();
+        tree.symbols_mut(|_, k| keys.push(k.clone()));
+        assert_eq!(keys, ["!", "!", "!", "!"]);
+        assert_eq!(tree.latex(), r"a\frac{b}{c^{d}}");
     }
 
     #[test]
