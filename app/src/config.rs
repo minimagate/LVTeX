@@ -1,5 +1,6 @@
 // Typography and page layout.
 pub const FONT_FAMILY: &str = "Libertinus Serif";
+pub const MONO_FONT_FAMILY: &str = "DejaVu Sans Mono";
 pub const FONT_SIZE: f32 = 19.0;
 pub const LINE_HEIGHT: f32 = FONT_SIZE * 1.6;
 pub const COLUMN_WIDTH: f32 = 680.0;

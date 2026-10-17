@@ -64,9 +64,19 @@ struct BoxItem {
     color: u32,
     mark: Option<u32>,
 }
+// Each face selects one embedded font file.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[allow(dead_code)] // Bold, BoldItalic and Mono wait for the Markdown styling that uses them.
+enum Face {
+    Regular,
+    Italic,
+    Bold,
+    BoldItalic,
+    Mono,
+}
 pub struct Typesetter {
     pub fonts: FontSystem,
-    cache: HashMap<(String, bool), Word>,
+    cache: HashMap<(String, Face), Word>,
 }
 impl Typesetter {
     pub fn new() -> Self {
@@ -77,25 +87,41 @@ impl Typesetter {
         fonts.db_mut().load_font_data(
             include_bytes!("../../assets/fonts/LibertinusSerif-Italic.otf").to_vec(),
         );
+        fonts
+            .db_mut()
+            .load_font_data(include_bytes!("../../assets/fonts/LibertinusSerif-Bold.otf").to_vec());
+        fonts.db_mut().load_font_data(
+            include_bytes!("../../assets/fonts/LibertinusSerif-BoldItalic.otf").to_vec(),
+        );
+        fonts
+            .db_mut()
+            .load_font_data(include_bytes!("../../assets/fonts/DejaVuSansMono.ttf").to_vec());
         Self {
             fonts,
             cache: HashMap::new(),
         }
     }
-    fn word(&mut self, text: &str, italic: bool) -> Word {
-        let key = (text.to_owned(), italic);
+    fn word(&mut self, text: &str, face: Face) -> Word {
+        let key = (text.to_owned(), face);
         if let Some(word) = self.cache.get(&key) {
             return word.clone();
         }
+        let (family, weight, style) = match face {
+            Face::Regular => (FONT_FAMILY, Weight::NORMAL, Style::Normal),
+            Face::Italic => (FONT_FAMILY, Weight::NORMAL, Style::Italic),
+            Face::Bold => (FONT_FAMILY, Weight::BOLD, Style::Normal),
+            Face::BoldItalic => (FONT_FAMILY, Weight::BOLD, Style::Italic),
+            Face::Mono => (MONO_FONT_FAMILY, Weight::NORMAL, Style::Normal),
+        };
         let mut b = Buffer::new(&mut self.fonts, Metrics::new(FONT_SIZE, LINE_HEIGHT));
         b.set_wrap(Wrap::None);
         b.set_size(None, None);
         b.set_text(
             text,
             &Attrs::new()
-                .family(Family::Name(FONT_FAMILY))
-                .weight(Weight::NORMAL)
-                .style(if italic { Style::Italic } else { Style::Normal }),
+                .family(Family::Name(family))
+                .weight(weight)
+                .style(style),
             Shaping::Advanced,
             None,
         );
@@ -145,7 +171,7 @@ impl Typesetter {
         let text = doc.text();
         let open = doc.open_range();
         let mut out = Layout::default();
-        let normal_baseline = self.word("M", false).baseline;
+        let normal_baseline = self.word("M", Face::Regular).baseline;
         let mut offset = 0;
         for paragraph in text.split('\n') {
             let (level, marker_end) = heading(paragraph);
@@ -177,7 +203,7 @@ impl Typesetter {
                         });
                     } else {
                         let label = formula.label().replace('\n', " ");
-                        let word = self.word(&label, false);
+                        let word = self.word(&label, Face::Regular);
                         // Pending prompts remain readable and wrap as text inside a single atom.
                         let pending = if word.width > width {
                             Some(self.layout_plain_label(&label, width))
@@ -246,14 +272,19 @@ impl Typesetter {
                     continue;
                 }
                 for (i, token) in rest[..end].split_word_bound_indices() {
-                    let word = self.word(token, level == 1);
+                    let face = if level == 1 {
+                        Face::Italic
+                    } else {
+                        Face::Regular
+                    };
+                    let word = self.word(token, face);
                     let parts: Vec<_> = if word.width > width {
                         token.grapheme_indices(true).collect()
                     } else {
                         vec![(0, token)]
                     };
                     for (gi, piece) in parts {
-                        let word = self.word(piece, level == 1);
+                        let word = self.word(piece, face);
                         let byte = pos + i + gi;
                         let active = open.as_ref().is_some_and(|r| r.contains(&byte));
                         boxes.push(BoxItem {
@@ -310,9 +341,9 @@ impl Typesetter {
         let mut out = Layout::default();
         let mut row = Vec::new();
         let mut x = 0.0;
-        let baseline = self.word("M", false).baseline;
+        let baseline = self.word("M", Face::Regular).baseline;
         for (start, part) in label.split_word_bound_indices() {
-            let word = self.word(part, false);
+            let word = self.word(part, Face::Regular);
             if x > 0.0 && x + word.width > width {
                 Self::line(
                     &mut out,
@@ -500,8 +531,8 @@ mod tests {
                 .iter()
                 .all(|placed| placed.glyph.font_size == FONT_SIZE)
         );
-        let regular = t.word("Title", false);
-        let italic = t.word("Title", true);
+        let regular = t.word("Title", Face::Regular);
+        let italic = t.word("Title", Face::Italic);
         assert_ne!(regular.glyphs[0].font_id, italic.glyphs[0].font_id);
         assert_eq!(layout.glyphs[0].glyph.font_id, italic.glyphs[0].font_id);
         let subtitle = t.layout("## Subtitle", 300.0);
@@ -535,6 +566,28 @@ mod tests {
         assert_eq!(heading("## Subtitle"), (0, 0));
         assert_eq!(heading("####### Title"), (0, 0));
         assert_eq!(heading("a # title"), (0, 0));
+    }
+    #[test]
+    fn every_face_loads_its_own_font() {
+        let mut t = Typesetter::new();
+        let faces = [
+            Face::Regular,
+            Face::Italic,
+            Face::Bold,
+            Face::BoldItalic,
+            Face::Mono,
+        ];
+        let ids: Vec<_> = faces
+            .iter()
+            .map(|&face| t.word("Title", face).glyphs[0].font_id)
+            .collect();
+        for (i, id) in ids.iter().enumerate() {
+            assert!(
+                !ids[..i].contains(id),
+                "{:?} reuses another face's font",
+                faces[i]
+            );
+        }
     }
     #[test]
     fn wraps_and_hits_unicode_without_splitting_clusters() {
