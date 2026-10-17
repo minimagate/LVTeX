@@ -38,59 +38,86 @@ fn mixed_page_baselines_roundtrip_pixels_and_atomic_editing() {
     let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
     finish(&mut doc, &mut renderer);
     let mut t = Typesetter::new();
-    let layout = t.document(&doc, 680.0);
-    assert_eq!(layout.math.len(), 6);
-    for placed in &layout.math {
-        let im = if placed.display {
-            &placed.image.display
-        } else {
-            &placed.image.inline
-        };
-        let line = &layout.lines[layout.row_at(placed.y)];
-        assert!(
-            placed.y >= line.top
-                && placed.y + im.height() * placed.scale <= line.top + line.height + 0.01
-        );
-        if placed.display {
-            assert!((placed.x + im.width() * placed.scale / 2.0 - 340.0).abs() < 0.01);
-        } else {
-            let glyph = layout
-                .glyphs
-                .iter()
-                .find(|g| g.baseline >= line.top && g.baseline <= line.top + line.height)
-                .unwrap();
-            assert!((glyph.baseline - (placed.y + im.baseline * placed.scale)).abs() < 0.01);
-        }
-    }
-    let pixels = render::page(
-        &layout,
-        &mut t,
-        &mut cosmic_text::SwashCache::new(),
-        1920,
-        1520,
-        2.0,
-        140.0,
-        0.0,
-        0..0,
-    );
     let saved = doc.markdown();
     let mut loaded = Document::new(&saved);
     finish(&mut loaded, &mut renderer);
     assert_eq!(saved, loaded.markdown());
     assert!(!loaded.dirty());
-    let after = t.document(&loaded, 680.0);
-    let reloaded = render::page(
-        &after,
-        &mut t,
-        &mut cosmic_text::SwashCache::new(),
-        1920,
-        1520,
-        2.0,
-        140.0,
-        0.0,
-        0..0,
-    );
-    assert_eq!(pixels, reloaded, "saved/reopened page is pixel-identical");
+    let mut default_snapshot = None;
+    for scale in [1.0_f32, 2.0] {
+        for column_width in [280.0_f32, 680.0] {
+            let layout = t.document(&doc, column_width);
+            assert_eq!(layout.math.len(), 6);
+            for placed in &layout.math {
+                let im = if placed.display {
+                    &placed.image.display
+                } else {
+                    &placed.image.inline
+                };
+                let line = &layout.lines[layout.row_at(placed.y)];
+                assert!(
+                    placed.y >= line.top
+                        && placed.y + im.height() * placed.scale <= line.top + line.height + 0.01,
+                    "math stays within its line at {column_width}px, scale {scale}"
+                );
+                assert!(
+                    placed.x >= 0.0 && placed.x + im.width() * placed.scale <= column_width + 0.01,
+                    "math stays within its {column_width}px column, scale {scale}"
+                );
+                if placed.display {
+                    assert!(
+                        (placed.x + im.width() * placed.scale / 2.0 - column_width / 2.0).abs()
+                            < 0.01,
+                        "display math stays centered in its {column_width}px column"
+                    );
+                } else {
+                    let glyph = layout
+                        .glyphs
+                        .iter()
+                        .find(|g| g.baseline >= line.top && g.baseline <= line.top + line.height)
+                        .unwrap();
+                    assert!(
+                        (glyph.baseline - (placed.y + im.baseline * placed.scale)).abs() < 0.01,
+                        "inline baseline aligns at {column_width}px, scale {scale}"
+                    );
+                }
+            }
+            let viewport_width = if column_width == 280.0 { 344.0 } else { 960.0 };
+            let width = (viewport_width * scale) as usize;
+            let height = (760.0 * scale) as usize;
+            let left = (viewport_width - column_width) / 2.0;
+            let pixels = render::page(
+                &layout,
+                &mut t,
+                &mut cosmic_text::SwashCache::new(),
+                width,
+                height,
+                scale,
+                left,
+                0.0,
+                0..0,
+            );
+            let after = t.document(&loaded, column_width);
+            let reloaded = render::page(
+                &after,
+                &mut t,
+                &mut cosmic_text::SwashCache::new(),
+                width,
+                height,
+                scale,
+                left,
+                0.0,
+                0..0,
+            );
+            assert_eq!(
+                pixels, reloaded,
+                "saved/reopened page is pixel-identical at {column_width}px, scale {scale}"
+            );
+            if scale == 2.0 && column_width == 680.0 {
+                default_snapshot = Some(pixels);
+            }
+        }
+    }
     let pos = *doc.formulas.keys().next().unwrap();
     let latex = doc.formulas[&pos].latex.clone();
     doc.move_to(pos, false);
@@ -113,6 +140,7 @@ fn mixed_page_baselines_roundtrip_pixels_and_atomic_editing() {
     assert_eq!(doc.formulas[&pos].latex, latex);
     assert!(doc.jobs().is_empty());
     if let Ok(path) = std::env::var("MATHSTRAL_SNAPSHOT") {
+        let pixels = default_snapshot.expect("default snapshot configuration was rendered");
         let mut image = tiny_skia::Pixmap::new(1920, 1520).unwrap();
         for (rgba, rgb) in image
             .data_mut()
