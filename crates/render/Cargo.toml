@@ -16,6 +16,7 @@ path = "src/lib.rs"
 [dependencies]
 typst = "=0.15.1"
 typst-layout = "=0.15.1"
+typst-pdf = "=0.15.1"
 typst-render = "=0.15.1"
 tiny-skia = "=0.12.0"
 
