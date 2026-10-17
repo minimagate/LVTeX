@@ -37,10 +37,10 @@ dragging anywhere in the window.
 - Text uses embedded Libertinus Serif at 19 px, with a line height of 1.6.
 - The column is 680 px wide and starts 76 px from the top. Long lines wrap greedily at word boundaries.
 - Colors: background `#151515`; text `#C8C6C3`; markers `#73716F`; selection `#343434`;
-  pending text `#868583`; open prompt text `#C8CFCB` with a green tint `#3C5147`;
-  failed prompt underline `#70484A`; pending marker `#292B2A`; inline code `#B9C3C6`;
-  links `#9FB6C9`.
-- The caret is solid `#FF0000`, with no blinking or fading.
+  pending text `#868583`; failed prompt underline `#70484A`; pending marker `#292B2A`;
+  inline code `#B9C3C6`; links `#9FB6C9`.
+- The caret is solid `#FF0000` in prose, sky blue `#87CEEB` in hand-written math, and green
+  `#78C995` in an AI prompt. It does not blink or fade.
 - Font family and sizes are set in `app/src/config.rs`.
 
 ### Markdown
@@ -86,18 +86,20 @@ File commands:
 - New, Open, Close Window and Quit ask "Save changes?" when the document has unsaved edits.
 - Export as PDF writes an A4 PDF typeset with Typst: black text on white, formulas as vector
   math. The PDF typesets the Markdown styles the editor shows (headings, bold, italic, code,
-  strikethrough, links, lists, tasks, quotes and rules) with the markers left out. Prompts that
-  have not rendered are exported as their `\prompt\` text after a confirmation.
+  strikethrough, links, lists, tasks, quotes and rules) with the markers left out. Unrendered
+  prompts are exported as plain prompt text after a confirmation.
 
 ## AI formula prompts
 
 Choose Edit → Ask AI for Formula (⇧⌘1) to open an AI prompt. Selected text becomes the
 initial prompt; with no selection, the prompt starts empty. At a position inside a word,
 the editor adds a space around the prompt so the saved `\prompt\` form remains readable.
+The prompt is edited as ordinary text without visible delimiters; saved pending prompts retain
+the `\prompt\` format for compatibility.
 
 - Press Enter to submit the prompt. Escape leaves the prompt text as literal text.
 - Existing `\prompt\` files and copied prompts remain supported.
-- An open prompt has a subtle green tint and underline.
+- An open prompt uses ordinary prose styling; the green caret marks prompt editing.
 - A closed prompt is dim until the model returns a formula that renders successfully.
 - A prompt whose generation fails stays as text with a muted red underline. Enter retries it.
 - Inline formulas share the text baseline. A formula alone on its line is centered with
@@ -106,7 +108,7 @@ the editor adds a space around the prompt so the saved `\prompt\` form remains r
   hand-written or imported formula opens in the hand-written editor.
 - Enter at the left edge of a formula reopens it, or retries a failed prompt. Enter after a formula starts a new line.
 - Closing an edit whose text is unchanged reuses the existing rendered result without a model request.
-- Escape inside an open prompt cancels it and keeps the text as literal characters.
+- Escape inside an open prompt cancels it and keeps only the entered text as literal characters.
 - Formulas are atoms for caret movement and selection. Copy and paste carry the portable file encoding.
 
 ## Hand-written math
@@ -114,7 +116,8 @@ the editor adds a space around the prompt so the saved `\prompt\` form remains r
 Typing `\` starts a named command in a new formula. For example, `\alpha` then Enter
 inserts α; press Enter again to close the formula. Pressing ⌘1 (Edit → Insert Formula)
 opens a blank formula for ordinary TeXmacs-style keys such as `x` `^` `2`. The formula previews as
-you type on the local render worker; key handling never waits for typesetting. Keys follow
+you type on the local render worker; its caret is sky blue, while AI prompt editing uses a green
+caret. Key handling never waits for typesetting. Keys follow
 TeXmacs's `math-kbd.scm`.
 
 - Enter closes the formula. With a `\command` pending, Enter confirms the command instead;

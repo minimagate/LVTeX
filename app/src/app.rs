@@ -276,6 +276,17 @@ impl App {
                 .find(|formula| formula.id == id)
                 .is_some_and(|formula| formula.image.is_some())
         });
+        let caret_color = if self.math.is_some() {
+            MATH_CARET_COLOR
+        } else if self
+            .doc
+            .open_range()
+            .is_some_and(|range| range.start <= self.doc.caret && self.doc.caret <= range.end)
+        {
+            AI_CARET_COLOR
+        } else {
+            CARET_COLOR
+        };
         if self.focused
             && self.doc.selection().is_empty()
             && (self.math.is_none() || !manual_preview_has_caret)
@@ -288,7 +299,7 @@ impl App {
                 (TOP + line_top + 4.0 - self.scroll) * scale,
                 scale.max(1.0),
                 (line_height - 8.0) * scale,
-                CARET_COLOR,
+                caret_color,
             );
         }
         if let Err(error) = pixels.present() {
@@ -586,9 +597,13 @@ impl App {
                 }
             }
             Key::Named(key @ (NamedKey::Backspace | NamedKey::Delete)) => {
+                let in_prompt = self.doc.open_range().is_some_and(|range| {
+                    range.start <= self.doc.caret && self.doc.caret <= range.end
+                });
                 if key == NamedKey::Backspace
                     && !command
                     && !option
+                    && !in_prompt
                     && let Some(pos) = self.doc.formula_at_caret(true)
                 {
                     self.edit_math(pos);
@@ -611,6 +626,10 @@ impl App {
                 self.changed(true);
             }
             Key::Named(NamedKey::Enter) if !command => {
+                if self.doc.submit_prompt() {
+                    self.changed(true);
+                    return;
+                }
                 if let Some(pos) = self.doc.formula_at_caret(false) {
                     let formula = &self.doc.formulas[&pos];
                     if formula.prompt.is_some() && formula.failed && formula.image.is_none() {
@@ -619,10 +638,6 @@ impl App {
                     } else {
                         self.edit_math(pos);
                     }
-                    return;
-                }
-                if self.doc.submit_prompt() {
-                    self.changed(true);
                     return;
                 }
                 match self
@@ -669,11 +684,13 @@ impl App {
             self.math_input(text.chars().map(MathKey::Text));
             return;
         }
-        if self
-            .doc
-            .open_range()
-            .is_some_and(|range| range.start <= self.doc.caret && self.doc.caret <= range.end)
-        {
+        let selection = self.doc.selection();
+        if self.doc.open_range().is_some_and(|range| {
+            range.start <= selection.start
+                && selection.end <= range.end
+                && range.start <= self.doc.caret
+                && self.doc.caret <= range.end
+        }) {
             self.doc.replace(&text, true);
             self.goal_x = None;
             self.changed(true);

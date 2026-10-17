@@ -36,7 +36,7 @@ impl Formula {
     }
     pub fn label(&self) -> String {
         if let Some(prompt) = &self.prompt {
-            format!("\\{prompt}\\")
+            prompt.clone()
         } else {
             self.latex.as_deref().unwrap_or("math…").to_owned()
         }
@@ -121,8 +121,36 @@ impl Document {
     fn encode(&self, range: Range<usize>, escape: bool) -> String {
         let text = self.text();
         let mut result = String::new();
+        let active_edit = self
+            .editing
+            .as_ref()
+            .filter(|edit| escape && range.start <= edit.start && edit.end <= range.end);
+        let editing = active_edit.filter(|edit| {
+            text[edit.start..edit.end]
+                .chars()
+                .any(|character| !character.is_whitespace())
+        });
+        let empty_edit = active_edit.filter(|edit| edit.start == edit.end);
         let mut pos = range.start;
         while pos < range.end {
+            if let Some(edit) = empty_edit {
+                if edit.prefix_space && pos + 1 == edit.start && text[pos..].starts_with(' ') {
+                    pos += 1;
+                    continue;
+                }
+                if edit.suffix_space && pos == edit.end && text[pos..].starts_with(' ') {
+                    pos += 1;
+                    continue;
+                }
+            }
+            if let Some(edit) = editing {
+                if pos == edit.start {
+                    result.push('\\');
+                }
+                if pos == edit.end {
+                    result.push('\\');
+                }
+            }
             if let Some(f) = self.formulas.get(&pos) {
                 let display = Self::is_display_in(&text, pos);
                 if let Some(latex) = &f.latex {
@@ -151,11 +179,8 @@ impl Document {
                 pos += ATOM.len();
             } else {
                 let c = text[pos..].chars().next().unwrap();
-                let literal_prompt_slash = c == '\\'
-                    && self
-                        .editing
-                        .as_ref()
-                        .is_some_and(|edit| edit.start < pos && pos < edit.end - 1);
+                let literal_prompt_slash =
+                    c == '\\' && editing.is_some_and(|edit| edit.start <= pos && pos < edit.end);
                 let literal = c == '\\' && (self.cancelled.contains(&pos) || literal_prompt_slash);
                 if literal {
                     result.push_str(LITERAL_BACKSLASH);
@@ -175,6 +200,14 @@ impl Document {
                     result.push(c);
                 }
                 pos = next;
+            }
+        }
+        if let Some(edit) = editing {
+            if edit.start == range.end {
+                result.push('\\');
+            }
+            if edit.end == range.end {
+                result.push('\\');
             }
         }
         result
@@ -244,11 +277,15 @@ impl Document {
             })
             .collect();
         if let Some(edit) = &mut self.editing {
-            if range.end <= edit.start {
+            if range.is_empty() && edit.start <= range.start && range.start <= edit.end {
+                edit.end = edit.end.wrapping_add_signed(delta);
+            } else if range.end <= edit.start {
                 edit.start = edit.start.wrapping_add_signed(delta);
                 edit.end = edit.end.wrapping_add_signed(delta);
-            } else if range.start > edit.start && range.end < edit.end {
+            } else if range.start >= edit.start && range.end <= edit.end {
                 edit.end = edit.end.wrapping_add_signed(delta);
+            } else if range.start >= edit.end {
+                // Edits after the active prompt do not change its text.
             } else {
                 self.editing = None;
             }
@@ -300,6 +337,16 @@ impl Document {
         };
     }
     pub fn paste(&mut self, text: &str) {
+        let selection = self.selection();
+        if self.editing.as_ref().is_some_and(|edit| {
+            edit.start <= selection.start
+                && selection.end <= edit.end
+                && edit.start <= self.caret
+                && self.caret <= edit.end
+        }) {
+            self.replace(text, false);
+            return;
+        }
         self.record();
         let imported = Document::parse(text, false);
         let range = self.selection();
@@ -327,6 +374,13 @@ impl Document {
                     continue;
                 }
                 if c != '\\' {
+                    continue;
+                }
+                if self
+                    .editing
+                    .as_ref()
+                    .is_some_and(|edit| edit.start <= i && i < edit.end)
+                {
                     continue;
                 }
                 if self.cancelled.contains(&i) {
@@ -381,7 +435,35 @@ impl Document {
             .filter(|r| r.start <= self.caret && self.caret <= r.end)
         {
             self.record();
-            self.cancelled.insert(range.start);
+            let edit = self.editing.clone();
+            if let Some(edit) = edit.as_ref().filter(|edit| edit.start == edit.end) {
+                let text = self.text();
+                let start = edit.start
+                    - usize::from(
+                        edit.prefix_space
+                            && edit.start > 0
+                            && text.as_bytes()[edit.start - 1] == b' ',
+                    );
+                let end = edit.end
+                    + usize::from(
+                        edit.suffix_space && text.as_bytes().get(edit.end) == Some(&b' '),
+                    );
+                self.editing = None;
+                self.splice(start..end, "");
+                self.caret = start;
+                self.anchor = start;
+                return true;
+            }
+            if let Some(edit) = edit {
+                let text = self.text();
+                self.cancelled.extend(
+                    text[edit.start..edit.end]
+                        .char_indices()
+                        .filter_map(|(offset, c)| (c == '\\').then_some(edit.start + offset)),
+                );
+            } else {
+                self.cancelled.insert(range.start);
+            }
             self.editing = None;
             return true;
         }
@@ -411,7 +493,7 @@ impl Document {
         self.record();
         let label = f.label();
         self.splice(pos..pos + ATOM.len(), &label);
-        self.caret = pos + label.len() - 1;
+        self.caret = pos + label.len();
         self.anchor = self.caret;
         self.editing = Some(Editing {
             start: pos,
@@ -442,9 +524,9 @@ impl Document {
         } else {
             ""
         };
-        let label = format!("{prefix}\\{prompt}\\{suffix}");
+        let label = format!("{prefix}{prompt}{suffix}");
         let start = range.start + prefix.len();
-        let end = start + prompt.len() + 2;
+        let end = start + prompt.len();
         let original = Formula::new(Some(prompt), None);
         self.splice(range, &label);
         self.editing = Some(Editing {
@@ -454,7 +536,7 @@ impl Document {
             prefix_space: !prefix.is_empty(),
             suffix_space: !suffix.is_empty(),
         });
-        self.caret = end - 1;
+        self.caret = end;
         self.anchor = self.caret;
     }
     /// Submits the prompt currently being edited, or a legacy open prompt at the caret.
@@ -465,44 +547,46 @@ impl Document {
             return false;
         }
         let text = self.text();
-        let (range, prompt, original, prefix_space, suffix_space) = if let Some(edit) =
-            self.editing.clone()
-        {
-            let Some(label) = text.get(edit.start..edit.end) else {
-                return false;
+        let (range, prompt, original, prefix_space, suffix_space) =
+            if let Some(edit) = self.editing.clone() {
+                let Some(label) = text.get(edit.start..edit.end) else {
+                    return false;
+                };
+                let prompt = label;
+                (
+                    edit.start..edit.end,
+                    prompt.to_owned(),
+                    Some(edit.original),
+                    edit.prefix_space,
+                    edit.suffix_space,
+                )
+            } else {
+                let Some(open) = self
+                    .open_range()
+                    .filter(|r| r.start < self.caret && self.caret <= r.end)
+                else {
+                    return false;
+                };
+                let mut end = self.caret;
+                if text[..end].ends_with('\\') && end > open.start + 1 {
+                    end -= 1;
+                }
+                let Some(prompt) = text.get(open.start + 1..end) else {
+                    return false;
+                };
+                (open.start..end, prompt.to_owned(), None, false, false)
             };
-            let Some(prompt) = label.strip_prefix('\\').and_then(|s| s.strip_suffix('\\')) else {
-                return false;
-            };
-            (
-                edit.start..edit.end,
-                prompt.to_owned(),
-                Some(edit.original),
-                edit.prefix_space,
-                edit.suffix_space,
-            )
-        } else {
-            let Some(open) = self
-                .open_range()
-                .filter(|r| r.start < self.caret && self.caret <= r.end)
-            else {
-                return false;
-            };
-            let mut end = self.caret;
-            if text[..end].ends_with('\\') && end > open.start + 1 {
-                end -= 1;
-            }
-            let Some(prompt) = text.get(open.start + 1..end) else {
-                return false;
-            };
-            (open.start..end, prompt.to_owned(), None, false, false)
-        };
 
         self.record();
         self.editing = None;
         if prompt.trim().is_empty() {
-            let start = range.start - usize::from(prefix_space);
-            let end = range.end + usize::from(suffix_space);
+            let text = self.text();
+            let start = range.start
+                - usize::from(
+                    prefix_space && range.start > 0 && text.as_bytes()[range.start - 1] == b' ',
+                );
+            let end = range.end
+                + usize::from(suffix_space && text.as_bytes().get(range.end) == Some(&b' '));
             self.splice(start..end, "");
             self.caret = start;
         } else {
@@ -937,7 +1021,7 @@ mod tests {
         assert!(d.submit_prompt());
         assert_eq!(d.formulas[&9].prompt.as_deref(), Some("one!"));
         d.undo(false);
-        assert!(d.text().contains(r"\one!\"));
+        assert!(d.text().contains("one!"));
         d.undo(true);
         assert_eq!(d.formulas[&9].prompt.as_deref(), Some("one!"));
         let saved = d.markdown();
@@ -1107,6 +1191,7 @@ mod tests {
             let mut editing = Document::new("");
             editing.open_ai_prompt();
             type_text(&mut editing, prompt);
+            assert_eq!(editing.text(), prompt);
 
             let editing_saved = editing.markdown();
             assert_eq!(
@@ -1432,6 +1517,15 @@ mod tests {
     fn empty_and_unfocused_ai_prompts_do_not_submit() {
         let mut empty = Document::new("word");
         empty.open_ai_prompt();
+        assert_eq!(empty.text(), " word");
+        assert_eq!(empty.open_range(), Some(0..0));
+        assert_eq!(empty.markdown(), "word");
+        assert_eq!(Document::new(&empty.markdown()).text(), "word");
+        assert!(empty.cancel());
+        assert_eq!(empty.text(), "word");
+        assert_eq!(empty.markdown(), "word");
+        empty.undo(false);
+        assert_eq!(empty.text(), " word");
         assert!(empty.submit_prompt());
         assert!(empty.formulas.is_empty());
         assert_eq!(empty.text(), "word");
@@ -1453,12 +1547,58 @@ mod tests {
         assert!(redo.redo.is_empty());
     }
     #[test]
+    fn pasted_dollar_math_stays_literal_inside_ai_prompt() {
+        let mut doc = Document::new("");
+        doc.open_ai_prompt();
+        doc.paste("solve $x=1$");
+        assert_eq!(doc.text(), "solve $x=1$");
+        assert!(doc.formulas.is_empty());
+        assert!(doc.submit_prompt());
+        assert_eq!(doc.formulas[&0].prompt.as_deref(), Some("solve $x=1$"));
+    }
+    #[test]
+    fn replacing_full_ai_prompt_selection_keeps_the_edit_range() {
+        let mut doc = Document::new("");
+        doc.open_ai_prompt();
+        type_text(&mut doc, "draft");
+        doc.move_to(0, false);
+        doc.move_to(5, true);
+        doc.replace("solve $x=1$", false);
+        assert_eq!(doc.text(), "solve $x=1$");
+        assert!(doc.formulas.is_empty());
+        assert!(doc.submit_prompt());
+        assert_eq!(doc.formulas[&0].prompt.as_deref(), Some("solve $x=1$"));
+    }
+    #[test]
+    fn empty_ai_prompt_submission_handles_deleted_boundary_spaces() {
+        let mut prefix = Document::new("ab");
+        prefix.move_to(1, false);
+        prefix.open_ai_prompt();
+        prefix.anchor = 0;
+        prefix.caret = 2;
+        prefix.replace("", false);
+        assert_eq!(prefix.text(), " b");
+        assert!(prefix.submit_prompt());
+        assert_eq!(prefix.text(), "b");
+
+        let mut suffix = Document::new("ab");
+        suffix.move_to(1, false);
+        suffix.open_ai_prompt();
+        suffix.anchor = 2;
+        suffix.caret = 4;
+        suffix.replace("", false);
+        assert_eq!(suffix.text(), "a ");
+        assert!(suffix.submit_prompt());
+        assert_eq!(suffix.text(), "a");
+    }
+    #[test]
     fn cancelling_ai_prompt_keeps_literal_text_and_undo_restores_edit() {
         let mut doc = Document::new("word");
         doc.move_to(2, false);
         doc.open_ai_prompt();
         type_text(&mut doc, "fraction");
         assert!(doc.cancel());
+        assert_eq!(doc.text(), "wo fraction rd");
         let saved = doc.markdown();
         let reopened = Document::new(&saved);
         assert_eq!(reopened.markdown(), saved);
@@ -1470,5 +1610,15 @@ mod tests {
             doc.formulas.values().next().unwrap().prompt.as_deref(),
             Some("fraction")
         );
+    }
+    #[test]
+    fn reopening_prompt_edits_plain_text_and_saves_legacy_delimiters() {
+        let mut doc = Document::new(r"before \sum_{i=1}^n i\ after");
+        assert_eq!(doc.formulas[&7].label(), r"sum_{i=1}^n i");
+        assert!(doc.reopen(7));
+        assert_eq!(doc.text(), "before sum_{i=1}^n i after");
+        assert_eq!(doc.markdown(), r"before \sum_{i=1}^n i\ after");
+        assert!(doc.submit_prompt());
+        assert_eq!(doc.formulas[&7].prompt.as_deref(), Some("sum_{i=1}^n i"));
     }
 }

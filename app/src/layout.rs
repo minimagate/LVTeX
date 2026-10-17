@@ -155,7 +155,7 @@ impl Para {
     // Face, color and strikethrough for the bytes that start at `at`.
     fn look(&self, at: usize) -> (Face, u32, bool) {
         if self.open.as_ref().is_some_and(|r| r.contains(&at)) {
-            return (Face::Regular, PENDING_COLOR, false);
+            return (Face::Regular, TEXT_COLOR, false);
         }
         let base = face_of(self.bold, self.italic);
         if at < self.marker {

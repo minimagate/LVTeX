@@ -219,7 +219,8 @@ mod tests {
             "A line with # * _ $ \\ @ < [ characters."
         )));
         assert!(source.contains("$ #eval("));
-        assert!(source.contains(&mathstral_latex::typst_string_literal("\\half of x\\")));
+        assert!(source.contains(&mathstral_latex::typst_string_literal("half of x")));
+        assert!(!source.contains(&mathstral_latex::typst_string_literal("\\half of x\\")));
         assert_eq!(unrendered(&doc), 1);
         assert!(pdf(&doc).unwrap().starts_with(b"%PDF-"));
     }

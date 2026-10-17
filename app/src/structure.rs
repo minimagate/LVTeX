@@ -1,10 +1,12 @@
+use crate::config::MATH_CARET_COLOR;
+use std::fmt::Write as _;
+
 /// A sequence of sibling nodes. Every argument of a box is one row.
 pub type Row = Vec<Node>;
 
 /// The caret's way into a box: (node index in its row, argument index of that node).
 type Step = (usize, usize);
 
-const CARET: &str = r"\textcolor{#FF0000}{|}";
 const PLACEHOLDER: &str = r"\textcolor{#73716F}{\square}";
 const RIGHT: &str = r"\right";
 const MAX_PARSE_DEPTH: usize = 64;
@@ -171,12 +173,12 @@ impl MathTree {
         let here = show && self.path == *path;
         for (i, node) in row.iter().enumerate() {
             if here && self.pos == i {
-                push_text(out, CARET);
+                push_caret(out);
             }
             self.write_node(node, row[..i].last(), i, path, show, out);
         }
         if here && self.pos == row.len() {
-            push_text(out, CARET);
+            push_caret(out);
         }
         if show && !root && row.is_empty() {
             push_text(out, PLACEHOLDER);
@@ -653,6 +655,11 @@ fn push_text(out: &mut String, text: &str) {
         out.push(' ');
     }
     out.push_str(text);
+}
+
+fn push_caret(out: &mut String) {
+    write!(out, r"\textcolor{{#{MATH_CARET_COLOR:06X}}}{{|}}")
+        .expect("writing caret markup to a String cannot fail");
 }
 
 #[derive(Clone, Copy)]
@@ -1358,16 +1365,19 @@ mod tests {
         });
         assert_eq!(
             frac.latex_with_caret(),
-            r"\frac{\textcolor{#FF0000}{|}\textcolor{#73716F}{\square}}{\textcolor{#73716F}{\square}}"
+            r"\frac{\textcolor{#87CEEB}{|}\textcolor{#73716F}{\square}}{\textcolor{#73716F}{\square}}"
         );
         assert_eq!(frac.latex(), r"\frac{}{}");
-        assert_eq!(MathTree::new().latex_with_caret(), CARET);
+        assert_eq!(
+            MathTree::new().latex_with_caret(),
+            r"\textcolor{#87CEEB}{|}"
+        );
         let script = build(|t| {
             sym(t, "x");
             t.make_script(true);
             sym(t, "2");
         });
-        assert_eq!(script.latex_with_caret(), r"x^{2\textcolor{#FF0000}{|}}");
+        assert_eq!(script.latex_with_caret(), r"x^{2\textcolor{#87CEEB}{|}}");
     }
 
     #[test]
@@ -1653,6 +1663,7 @@ mod tests {
             ("|", "|"),
             (r"\langle", r"\rangle"),
         ];
+        let caret = format!(r"\textcolor{{#{MATH_CARET_COLOR:06X}}}{{|}}");
         for seed in 1..=30 {
             let mut rng = Lcg(seed);
             let mut t = MathTree::new();
@@ -1694,7 +1705,7 @@ mod tests {
                     "seed {seed} step {step}"
                 );
                 assert_eq!(
-                    t.latex_with_caret().matches(CARET).count(),
+                    t.latex_with_caret().matches(&caret).count(),
                     1,
                     "seed {seed} step {step}"
                 );
