@@ -1,3 +1,4 @@
+//! Mathstral: a native macOS editor for prose with inline math.
 mod app;
 mod buffer;
 mod config;

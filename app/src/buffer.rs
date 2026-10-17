@@ -117,7 +117,7 @@ impl Document {
         let mut pos = range.start;
         while pos < range.end {
             if let Some(f) = self.formulas.get(&pos) {
-                let display = self.is_display(pos);
+                let display = Self::is_display_in(&text, pos);
                 if let Some(latex) = &f.latex {
                     if display {
                         result.push_str(&format!("$$\n{latex}\n$$"));
@@ -158,8 +158,7 @@ impl Document {
         }
         result
     }
-    pub fn is_display(&self, pos: usize) -> bool {
-        let text = self.text();
+    pub fn is_display_in(text: &str, pos: usize) -> bool {
         let start = text[..pos].rfind('\n').map_or(0, |i| i + 1);
         let end = text[pos..].find('\n').map_or(text.len(), |i| pos + i);
         text[start..pos].trim().is_empty() && text[pos + ATOM.len()..end].trim().is_empty()

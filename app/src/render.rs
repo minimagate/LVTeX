@@ -71,7 +71,7 @@ pub fn page(
                     y * scale,
                     (x1 - x0) * scale,
                     line.height * scale,
-                    0x343434,
+                    SELECTION_COLOR,
                 );
             }
         }

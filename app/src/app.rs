@@ -3,15 +3,17 @@ use crate::{
     config::*,
     file,
     layout::{Layout, Typesetter},
-    math::{Job, Reply, Worker},
+    math::{FormulaImage, Job, Reply, Worker},
     menu::{self, Action},
     render,
 };
 use cosmic_text::SwashCache;
 use std::{
+    collections::{HashMap, HashSet},
     num::NonZeroU32,
     path::PathBuf,
     rc::Rc,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use winit::{
@@ -51,10 +53,10 @@ pub struct App {
     window_geometry: file::WindowGeometry,
     size_save_at: Option<Instant>,
     worker: Worker,
-    submitted: std::collections::HashSet<u64>,
+    submitted: HashSet<u64>,
     online: bool,
     describing: Option<u64>,
-    math_cache: std::collections::HashMap<String, std::sync::Arc<crate::math::FormulaImage>>,
+    math_cache: HashMap<String, Arc<FormulaImage>>,
 }
 impl App {
     pub fn new(proxy: EventLoopProxy<Action>) -> Self {
@@ -349,7 +351,7 @@ impl App {
                                     .find(|f| f.id == id)
                                     .and_then(|f| f.prompt.clone())
                             {
-                                if self.math_cache.len() >= 512 {
+                                if self.math_cache.len() >= MATH_CACHE_LIMIT {
                                     self.math_cache.clear();
                                 }
                                 self.math_cache.insert(prompt, image.clone());

@@ -154,7 +154,7 @@ impl Typesetter {
             while local < paragraph.len() {
                 let pos = offset + local;
                 if let Some(formula) = doc.formulas.get(&pos) {
-                    let display = doc.is_display(pos);
+                    let display = Document::is_display_in(&text, pos);
                     if let Some(image) = &formula.image {
                         let bitmap = if display {
                             &image.display
@@ -197,7 +197,11 @@ impl Typesetter {
                                 scale: 1.0,
                                 display,
                                 color: PENDING_COLOR,
-                                mark: Some(if formula.failed { 0x70484A } else { 0x292B2A }),
+                                mark: Some(if formula.failed {
+                                    FAILED_MARK_COLOR
+                                } else {
+                                    PENDING_MARK_COLOR
+                                }),
                             });
                             // Reuse the word container for wrapped glyphs with a measured baseline.
                             let item = boxes.last_mut().unwrap();
@@ -232,7 +236,7 @@ impl Typesetter {
                                 scale: 1.0,
                                 display,
                                 color: PENDING_COLOR,
-                                mark: formula.failed.then_some(0x70484A),
+                                mark: formula.failed.then_some(FAILED_MARK_COLOR),
                             });
                         }
                     }
@@ -273,7 +277,7 @@ impl Typesetter {
                             } else {
                                 TEXT_COLOR
                             },
-                            mark: active.then_some(0x3C5147),
+                            mark: active.then_some(PROMPT_MARK_COLOR),
                         });
                     }
                 }

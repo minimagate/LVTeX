@@ -234,7 +234,7 @@ fn resolve_with(
         match render(renderer, &latex) {
             Ok(image) => {
                 let image = Arc::new(image);
-                if cache.len() >= 512 {
+                if cache.len() >= MATH_CACHE_LIMIT {
                     cache.clear();
                 }
                 cache.insert(prompt.to_owned(), image.clone());
