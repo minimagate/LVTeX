@@ -1,16 +1,16 @@
 //! The Ollama model: system prompt, examples, requests, and cleaning and checking its replies.
 
 use crate::config::*;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
     time::Duration,
 };
 
-pub const SYSTEM: &str = r#"Convert the user's mathematical description to LaTeX. Output ONLY the LaTeX math body. No dollar signs, delimiters, Markdown fences, explanations, labels, or prose. Use standard amsmath commands. If input is already LaTeX, clean it up. Preserve the intended mathematics; do not evaluate unless asked. Use aligned (not align) for multiple equations. Never include document commands or packages. Follow the examples."#;
+const SYSTEM: &str = r#"Convert the user's mathematical description to LaTeX. Output ONLY the LaTeX math body. No dollar signs, delimiters, Markdown fences, explanations, labels, or prose. Use standard amsmath commands. If input is already LaTeX, clean it up. Preserve the intended mathematics; do not evaluate unless asked. Use aligned (not align) for multiple equations. Never include document commands or packages. Follow the examples."#;
 
-pub(super) const EXAMPLES: &[(&str, &str)] = &[
+const EXAMPLES: &[(&str, &str)] = &[
     ("integral from 0 to 1 of x^2 dx", r"\int_0^1 x^2\,dx"),
     (
         "sum n squared for n from 1 to infinity",
@@ -92,6 +92,40 @@ pub fn clean(raw: &str) -> String {
         })
         .collect();
     lines.join("\n").trim().to_owned()
+}
+
+/// The empty chat that loads the model without generating text.
+pub(super) fn warm_up_request() -> Value {
+    json!({"model": OLLAMA_MODEL, "messages": [], "stream": false,
+    "keep_alive": KEEP_ALIVE, "options": {"temperature": 0}})
+}
+
+/// The system prompt, the worked examples, then the user's prompt.
+pub(super) fn conversation(prompt: &str) -> Vec<Value> {
+    let mut messages = vec![json!({"role":"system", "content":SYSTEM})];
+    for (input, output) in EXAMPLES {
+        messages.push(json!({"role":"user", "content":input}));
+        messages.push(json!({"role":"assistant", "content":output}));
+    }
+    messages.push(json!({"role":"user", "content":prompt}));
+    messages
+}
+
+/// The generation request for a conversation, with deterministic options.
+pub(super) fn chat_request(messages: &[Value]) -> Value {
+    json!({"model": OLLAMA_MODEL, "stream": false, "keep_alive": KEEP_ALIVE,
+    "options": {"temperature":0, "num_predict":2048}, "messages":messages})
+}
+
+/// The text of the model's reply, or empty when the reply has none.
+pub(super) fn reply_text(response: &Value) -> &str {
+    response["message"]["content"].as_str().unwrap_or("")
+}
+
+/// Appends the model's rejected reply and the rendering error, asking for a correction.
+pub(super) fn push_retry(messages: &mut Vec<Value>, raw: &str, error: &str) {
+    messages.push(json!({"role":"assistant", "content":raw}));
+    messages.push(json!({"role":"user", "content":format!("Rendering failed: {error}. Correct the expression. Return only the LaTeX math body, without prose or delimiters.")}));
 }
 
 pub(super) fn reject_prose(latex: &str) -> Result<(), String> {
@@ -236,5 +270,16 @@ mod tests {
     fn rendered_latex_cannot_be_prose() {
         assert!(reject_prose("The answer is x squared").is_err());
         assert!(reject_prose(r"\text{otherwise} + \operatorname{variance}(X)").is_ok());
+    }
+
+    #[test]
+    fn requests_carry_model_prompt_and_stream_flag() {
+        let request = chat_request(&conversation("x"));
+        assert_eq!(request["model"], OLLAMA_MODEL);
+        assert_eq!(request["stream"], false);
+        let messages = request["messages"].as_array().unwrap();
+        assert_eq!(messages[0]["content"], SYSTEM);
+        assert_eq!(messages.last().unwrap()["content"], "x");
+        assert!(warm_up_request()["messages"].as_array().unwrap().is_empty());
     }
 }

@@ -1,10 +1,13 @@
 //! Background worker: the model thread, the local render thread and their job queues. Nothing here runs on a key event.
 
-use super::model::{EXAMPLES, Error, SYSTEM, chat, clean, reject_prose};
+use super::model::{
+    Error, chat, chat_request, clean, conversation, push_retry, reject_prose, reply_text,
+    warm_up_request,
+};
 use super::render::{FormulaImage, render, render_preview};
 use crate::config::*;
 use mathstral_render::math::Renderer;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::{
     collections::HashMap,
     panic::{self, AssertUnwindSafe},
@@ -68,9 +71,7 @@ impl Worker {
                     let _ = replies.send(reply);
                     wake();
                 };
-                // An empty chat loads the model without generating text.
-                let warm = json!({"model": OLLAMA_MODEL, "messages": [], "stream": false,
-                "keep_alive": KEEP_ALIVE, "options": {"temperature": 0}});
+                let warm = warm_up_request();
                 let mut online = warm_up(&mut request, &warm);
                 send(Reply::Connection(online));
                 let mut pending = std::collections::VecDeque::new();
@@ -287,19 +288,11 @@ fn resolve_with(
     if let Some(image) = cache.get(prompt) {
         return Ok(image.clone());
     }
-    let mut messages = vec![json!({"role":"system", "content":SYSTEM})];
-    for (input, output) in EXAMPLES {
-        messages.push(json!({"role":"user", "content":input}));
-        messages.push(json!({"role":"assistant", "content":output}));
-    }
-    messages.push(json!({"role":"user", "content":prompt}));
+    let mut messages = conversation(prompt);
     let mut last = String::new();
     for _ in 0..3 {
-        let response = request(
-            &json!({"model": OLLAMA_MODEL, "stream": false, "keep_alive": KEEP_ALIVE,
-            "options": {"temperature":0, "num_predict":2048}, "messages":messages}),
-        )?;
-        let raw = response["message"]["content"].as_str().unwrap_or("");
+        let response = request(&chat_request(&messages))?;
+        let raw = reply_text(&response);
         let latex = clean(raw);
         match reject_prose(&latex).and_then(|()| render(renderer, &latex)) {
             Ok(image) => {
@@ -311,9 +304,8 @@ fn resolve_with(
                 return Ok(image);
             }
             Err(error) => {
+                push_retry(&mut messages, raw, &error);
                 last = error;
-                messages.push(json!({"role":"assistant", "content":raw}));
-                messages.push(json!({"role":"user", "content":format!("Rendering failed: {last}. Correct the expression. Return only the LaTeX math body, without prose or delimiters.")}));
             }
         }
     }
@@ -323,6 +315,7 @@ fn resolve_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn offline_queue_recovers_and_renders_all_pending_jobs() {
