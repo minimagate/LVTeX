@@ -2,7 +2,7 @@
 
 use crate::{
     config::*,
-    math::worker::FormulaImage,
+    math::render::FormulaImage,
     view::{layout::PlacedMath, render::rect},
 };
 

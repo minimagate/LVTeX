@@ -4,5 +4,6 @@ mod bindings;
 pub mod input;
 mod model;
 mod parse;
+pub mod render;
 pub mod tree;
 pub mod worker;

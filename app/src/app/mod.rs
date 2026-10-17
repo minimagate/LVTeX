@@ -8,7 +8,7 @@ use crate::{
     document::Document,
     file,
     math::input::MathInput,
-    math::worker::{FormulaImage, Worker},
+    math::{render::FormulaImage, worker::Worker},
     menu::{self, Action},
     view::{
         caret,

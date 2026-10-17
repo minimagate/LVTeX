@@ -7,7 +7,7 @@ mod prompt;
 #[cfg(test)]
 mod tests;
 
-use crate::math::worker::{FormulaImage, Job};
+use crate::math::{render::FormulaImage, worker::Job};
 use codec::{decode, unescape_literal_markers};
 use history::Snapshot;
 use manual::Manual;

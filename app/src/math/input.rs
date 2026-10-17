@@ -466,7 +466,7 @@ mod tests {
         let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
         let failed: Vec<String> = BINDINGS
             .iter()
-            .filter(|(_, latex)| crate::math::worker::render(&mut renderer, latex).is_err())
+            .filter(|(_, latex)| crate::math::render::render(&mut renderer, latex).is_err())
             .map(|(keys, latex)| format!("{keys} -> {latex}"))
             .collect();
         assert!(
@@ -500,7 +500,7 @@ mod tests {
         for input in states {
             let latex = input.display_latex();
             assert!(
-                crate::math::worker::render(&mut renderer, &latex).is_ok(),
+                crate::math::render::render(&mut renderer, &latex).is_ok(),
                 "display {latex}"
             );
         }

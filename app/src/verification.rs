@@ -30,7 +30,7 @@ fn finish(doc: &mut Document, renderer: &mut Renderer) {
             });
         doc.complete(
             job.id,
-            Ok(Arc::new(math::worker::render(renderer, latex).unwrap())),
+            Ok(Arc::new(math::render::render(renderer, latex).unwrap())),
         );
     }
 }
@@ -163,7 +163,7 @@ fn late_results_deleted_atoms_and_undo_never_target_other_text() {
     let mut d = Document::new(r"\first\ \second\");
     let jobs = d.jobs();
     let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
-    let image = Arc::new(math::worker::render(&mut renderer, "x^2").unwrap());
+    let image = Arc::new(math::render::render(&mut renderer, "x^2").unwrap());
     d.move_to(0, false);
     d.replace("prefix ", false);
     assert!(d.complete(jobs[1].id, Ok(image.clone())));
@@ -299,7 +299,7 @@ fn manual_preview_latency() {
                     let latex = input.display_latex();
                     preparation_timings.push(key_start.elapsed());
                     let render_start = Instant::now();
-                    math::worker::render(&mut renderer, &latex)
+                    math::render::render(&mut renderer, &latex)
                         .unwrap_or_else(|error| panic!("{name} preview {latex:?}: {error}"));
                     let elapsed = render_start.elapsed();
                     cold.get_or_insert((name, elapsed));

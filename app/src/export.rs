@@ -201,7 +201,7 @@ mod tests {
             let Some(latex) = job.latex.as_deref() else {
                 continue;
             };
-            let image = math::worker::render(&mut renderer, latex).unwrap();
+            let image = math::render::render(&mut renderer, latex).unwrap();
             doc.complete(job.id, Ok(Arc::new(image)));
         }
     }
