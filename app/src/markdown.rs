@@ -236,10 +236,6 @@ fn scan(text: &str, scope: Range<usize>, out: &mut Intervals) {
     let mut i = scope.start;
     while i < scope.end {
         match bytes[i] {
-            b'\\' if i + 1 < scope.end && bytes[i + 1].is_ascii_punctuation() => {
-                out.push((i..i + 1, flags(Style::default(), true)));
-                i += 2;
-            }
             b'`' => {
                 let n = run_len(bytes, i, scope.end, b'`');
                 if let Some(close) = closing_run(bytes, i + n, scope.end, n) {
@@ -338,7 +334,6 @@ fn link_end(bytes: &[u8], open: usize, end: usize) -> Option<(usize, usize)> {
     let mut j = open + 1;
     while j < end {
         match bytes[j] {
-            b'\\' if j + 1 < end && bytes[j + 1].is_ascii_punctuation() => j += 2,
             b']' => {
                 if j + 1 >= end || bytes[j + 1] != b'(' {
                     return None;
@@ -558,8 +553,8 @@ mod tests {
             ),
             ("``a`b``", &[("``", "cm"), ("a`b", "c"), ("``", "cm")]),
             (
-                "\\*literal\\*",
-                &[("\\", "m"), ("*literal", ""), ("\\", "m"), ("*", "")],
+                "a\\b *it*",
+                &[("a\\b ", ""), ("*", "im"), ("it", "i"), ("*", "im")],
             ),
             ("C:\\path", &[("C:\\path", "")]),
             ("~~gone~~", &[("~~", "sm"), ("gone", "s"), ("~~", "sm")]),

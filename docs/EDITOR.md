@@ -53,12 +53,13 @@ drawn in the marker color; only the styling changes.
 - Inline code (`` ` ``) uses DejaVu Sans Mono at 85% of body size, in `#B9C3C6`.
 - Strikethrough (`~~`) draws a 1 px line through the struck text.
 - Links `[text](url)` show the text in `#9FB6C9`; the brackets and URL stay dimmed.
-- Backslash escapes such as `\*` are dimmed markers.
 - Bullets (`-`, `*`, `+`), numbers (`1.` or `1)`) and tasks (`- [ ]`, `- [x]`) hang wrapped
   rows under their content. Done tasks are dimmed.
 - Quotes (`>`) are italic.
 - A line of three or more `-`, `*` or `_`, with optional spaces, draws a 1 px rule across the column.
 - Nothing is styled inside an open math prompt. Fenced code blocks, tables and images are not styled.
+- Backslash escapes are not supported: `\` starts a math prompt, so it is always plain text here.
+  A literal `*` or `_` that cannot open emphasis, such as in `2 * 3`, stays plain.
 
 ## Basic editing
 

@@ -868,7 +868,7 @@ mod tests {
     #[test]
     fn mixed_markdown_keeps_line_heights_and_editable_stops() {
         let mut t = Typesetter::new();
-        let source = "# Title\n## Sub\n### Deep\nSome **bold** *it* ***both*** `code` ~~gone~~ [link](url) and a paragraph that wraps over several rows\n- item with words that wrap around the column\n- [x] done task\n1. first\n> quoted text that also wraps around\n---\n\\*escaped\\* \\$5 end";
+        let source = "# Title\n## Sub\n### Deep\nSome **bold** *it* ***both*** `code` ~~gone~~ [link](url) and a paragraph that wraps over several rows\n- item with words that wrap around the column\n- [x] done task\n1. first\n> quoted text that also wraps around\n---\nplain \\$5 end";
         let doc = Document::new(source);
         let text = doc.text();
         let layout = t.document(&doc, 160.0);

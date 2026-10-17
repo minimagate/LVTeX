@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn exports_markdown_styles_as_typst() {
         let mut doc = Document::new(
-            "# Heading one\n## Heading two\n### Heading three\n\n**b** *i* ***bi*** `c` ~~s~~ [l](https://x.y) \\\\*\n\n- outer\n  - nested\n- second\n\n1. first\n7. seventh\n\n- [ ] open\n- [x] done\n\n> quoted\n\n---\n\n**area $x^2$ here**",
+            "# Heading one\n## Heading two\n### Heading three\n\n**b** *i* ***bi*** `c` ~~s~~ [l](https://x.y) 2 * 3\n\n- outer\n  - nested\n- second\n\n1. first\n7. seventh\n\n- [ ] open\n- [x] done\n\n> quoted\n\n---\n\n**area $x^2$ here**",
         );
         render_formulas(&mut doc);
         assert_eq!(unrendered(&doc), 0);
@@ -245,7 +245,7 @@ mod tests {
             "#raw(\"c\")",
             "#strike[#\"s\"]",
             "#link(\"https://x.y\")[#\"l\"]",
-            "#\"*\"",
+            "2 * 3\"",
             "- #\"outer\"\n  - #\"nested\"\n- #\"second\"",
             "1. #\"first\"\n7. #\"seventh\"",
             &format!("- {unchecked} #\"open\"\n- {checked} #text(fill: gray)[#\"done\"]"),
