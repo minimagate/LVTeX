@@ -18,6 +18,7 @@ pub enum Action {
     Paste,
     SelectAll,
     InsertFormula,
+    AskAiFormula,
     Quit,
 }
 pub fn install(proxy: EventLoopProxy<Action>) -> Menu {
@@ -86,6 +87,13 @@ pub fn install(proxy: EventLoopProxy<Action>) -> Menu {
             Code::Digit1,
             Modifiers::META,
             Action::InsertFormula,
+        ),
+        (
+            &edit,
+            "Ask AI for Formula",
+            Code::Digit1,
+            Modifiers::META | Modifiers::SHIFT,
+            Action::AskAiFormula,
         ),
     ] {
         let item = MenuItem::new(label, true, Some(Accelerator::new(modifiers, key)));

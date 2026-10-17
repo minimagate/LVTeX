@@ -14,6 +14,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 pub const ATOM: &str = "\u{fffc}";
 const ATOM_CHAR: char = '\u{fffc}';
+const LITERAL_BACKSLASH: &str = "<!--mathstral:literal-->";
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone)]
 pub struct Formula {
@@ -34,10 +35,11 @@ impl Formula {
         }
     }
     pub fn label(&self) -> String {
-        self.prompt
-            .as_ref()
-            .map(|p| format!("\\{p}\\"))
-            .unwrap_or_else(|| "math…".into())
+        if let Some(prompt) = &self.prompt {
+            format!("\\{prompt}\\")
+        } else {
+            self.latex.as_deref().unwrap_or("math…").to_owned()
+        }
     }
 }
 #[derive(Clone)]
@@ -45,10 +47,13 @@ struct Editing {
     start: usize,
     end: usize,
     original: Formula,
+    prefix_space: bool,
+    suffix_space: bool,
 }
 #[derive(Clone)]
 struct Manual {
     id: u64,
+    revision: u64,
     original: Option<Formula>,
 }
 #[derive(Clone)]
@@ -136,18 +141,29 @@ impl Document {
                         }
                     }
                 } else {
-                    let label = f.label();
-                    result.push_str(&if escape { escape_label(&label) } else { label });
+                    if let Some(prompt) = &f.prompt {
+                        push_prompt_label(&mut result, prompt, escape);
+                    } else {
+                        let label = f.label();
+                        result.push_str(&if escape { escape_label(&label) } else { label });
+                    }
                 }
                 pos += ATOM.len();
             } else {
                 let c = text[pos..].chars().next().unwrap();
-                // Explicit cancellation survives a save/reopen without activating math.
-                if c == '\\' && self.cancelled.contains(&pos) {
-                    result.push_str("<!--mathstral:literal-->");
+                let literal_prompt_slash = c == '\\'
+                    && self
+                        .editing
+                        .as_ref()
+                        .is_some_and(|edit| edit.start < pos && pos < edit.end - 1);
+                let literal = c == '\\' && (self.cancelled.contains(&pos) || literal_prompt_slash);
+                if literal {
+                    result.push_str(LITERAL_BACKSLASH);
                 }
                 let next = pos + c.len_utf8();
-                if c == '$' && escape {
+                if literal {
+                    result.push_str(if escape { r"\\" } else { r"\" });
+                } else if c == '$' && escape {
                     result.push_str("\\$");
                 } else if c == '\\'
                     && escape
@@ -272,40 +288,11 @@ impl Document {
             self.undo.push(self.snapshot());
         }
         self.redo.clear();
-        let mut range = self.selection();
-        let text_before = self.text();
-        let completes_edit = value == "\\"
-            && self.editing.as_ref().is_some_and(|e| {
-                self.caret == e.end - 1
-                    || text_before[self.caret..]
-                        .chars()
-                        .next()
-                        .is_none_or(closing_boundary)
-            });
-        let original = if completes_edit {
-            if let Some(edit) = self.editing.take() {
-                if self.caret == edit.end - 1 && range.is_empty() {
-                    range.end += 1;
-                }
-                Some(edit.original)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let range = self.selection();
         self.splice(range.clone(), value);
         self.caret = range.start + value.len();
         self.anchor = self.caret;
         self.close_prompts();
-        if let Some(old) = original {
-            for f in self.formulas.values_mut() {
-                if f.prompt == old.prompt && f.image.is_none() {
-                    f.latex = old.latex.clone();
-                    f.image = old.image.clone();
-                }
-            }
-        }
         self.typing = if typing && !structural {
             Some(now)
         } else {
@@ -340,6 +327,9 @@ impl Document {
                     continue;
                 }
                 if c != '\\' {
+                    continue;
+                }
+                if self.cancelled.contains(&i) {
                     continue;
                 }
                 if let Some(start) = open {
@@ -427,7 +417,106 @@ impl Document {
             start: pos,
             end: pos + label.len(),
             original: f,
+            prefix_space: false,
+            suffix_space: false,
         });
+        true
+    }
+    /// Starts an AI prompt edit, using the current selection as its initial prompt.
+    pub fn open_ai_prompt(&mut self) {
+        self.record();
+        let range = self.selection();
+        let text = self.text();
+        let prompt = self.encode(range.clone(), false);
+        let prefix = if opening_boundary(&text, range.start) {
+            ""
+        } else {
+            " "
+        };
+        let suffix = if text[range.end..]
+            .chars()
+            .next()
+            .is_some_and(|c| !closing_boundary(c))
+        {
+            " "
+        } else {
+            ""
+        };
+        let label = format!("{prefix}\\{prompt}\\{suffix}");
+        let start = range.start + prefix.len();
+        let end = start + prompt.len() + 2;
+        let original = Formula::new(Some(prompt), None);
+        self.splice(range, &label);
+        self.editing = Some(Editing {
+            start,
+            end,
+            original,
+            prefix_space: !prefix.is_empty(),
+            suffix_space: !suffix.is_empty(),
+        });
+        self.caret = end - 1;
+        self.anchor = self.caret;
+    }
+    /// Submits the prompt currently being edited, or a legacy open prompt at the caret.
+    pub fn submit_prompt(&mut self) -> bool {
+        if let Some(edit) = &self.editing
+            && !(edit.start <= self.caret && self.caret <= edit.end)
+        {
+            return false;
+        }
+        let text = self.text();
+        let (range, prompt, original, prefix_space, suffix_space) = if let Some(edit) =
+            self.editing.clone()
+        {
+            let Some(label) = text.get(edit.start..edit.end) else {
+                return false;
+            };
+            let Some(prompt) = label.strip_prefix('\\').and_then(|s| s.strip_suffix('\\')) else {
+                return false;
+            };
+            (
+                edit.start..edit.end,
+                prompt.to_owned(),
+                Some(edit.original),
+                edit.prefix_space,
+                edit.suffix_space,
+            )
+        } else {
+            let Some(open) = self
+                .open_range()
+                .filter(|r| r.start < self.caret && self.caret <= r.end)
+            else {
+                return false;
+            };
+            let mut end = self.caret;
+            if text[..end].ends_with('\\') && end > open.start + 1 {
+                end -= 1;
+            }
+            let Some(prompt) = text.get(open.start + 1..end) else {
+                return false;
+            };
+            (open.start..end, prompt.to_owned(), None, false, false)
+        };
+
+        self.record();
+        self.editing = None;
+        if prompt.trim().is_empty() {
+            let start = range.start - usize::from(prefix_space);
+            let end = range.end + usize::from(suffix_space);
+            self.splice(start..end, "");
+            self.caret = start;
+        } else {
+            self.splice(range.clone(), ATOM);
+            let formula = original
+                .filter(|formula| formula.prompt.as_deref() == Some(prompt.as_str()))
+                .unwrap_or_else(|| Formula::new(Some(prompt), None));
+            self.formulas.insert(range.start, formula);
+            self.caret = range.start + ATOM.len();
+        }
+        self.anchor = self.caret;
+        self.editing = None;
+        self.close_prompts();
+        self.break_group();
         true
     }
     // The session's one undo step is recorded at open. Redo is left alone until finish,
@@ -442,7 +531,11 @@ impl Document {
         self.formulas.insert(range.start, formula);
         self.caret = range.start + ATOM.len();
         self.anchor = self.caret;
-        self.manual = Some(Manual { id, original: None });
+        self.manual = Some(Manual {
+            id,
+            revision: 0,
+            original: None,
+        });
         id
     }
     pub fn reopen_manual(&mut self, pos: usize) -> Option<String> {
@@ -459,6 +552,7 @@ impl Document {
         edited.id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         self.manual = Some(Manual {
             id: edited.id,
+            revision: 0,
             original: Some(original),
         });
         self.formulas.insert(pos, edited);
@@ -469,13 +563,51 @@ impl Document {
     pub fn manual_id(&self) -> Option<u64> {
         self.manual.as_ref().map(|m| m.id)
     }
+    pub fn update_manual(&mut self, latex: String) -> Option<(u64, u64)> {
+        let manual = self.manual.as_mut()?;
+        manual.revision = manual.revision.wrapping_add(1);
+        let (id, revision) = (manual.id, manual.revision);
+        let formula = self.formulas.values_mut().find(|f| f.id == id)?;
+        formula.latex = Some(latex);
+        formula.failed = false;
+        Some((id, revision))
+    }
+    pub fn complete_manual_preview(
+        &mut self,
+        id: u64,
+        revision: u64,
+        result: Result<Arc<FormulaImage>, String>,
+    ) -> bool {
+        if !self
+            .manual
+            .as_ref()
+            .is_some_and(|manual| manual.id == id && manual.revision == revision)
+        {
+            return false;
+        }
+        let Some(formula) = self.formulas.values_mut().find(|formula| formula.id == id) else {
+            return false;
+        };
+        match result {
+            Ok(image) => {
+                formula.image = Some(image);
+                formula.failed = false;
+            }
+            Err(_) => {
+                formula.image = None;
+                formula.failed = true;
+            }
+        }
+        true
+    }
+    #[cfg(test)]
     pub fn set_manual(&mut self, latex: String, image: Option<Arc<FormulaImage>>) {
-        let Some(id) = self.manual_id() else {
+        let Some((id, _)) = self.update_manual(latex) else {
             return;
         };
-        if let Some(f) = self.formulas.values_mut().find(|f| f.id == id) {
-            f.latex = Some(latex);
-            f.image = image;
+        if let Some(formula) = self.formulas.values_mut().find(|formula| formula.id == id) {
+            formula.image = image;
+            formula.failed = false;
         }
     }
     pub fn finish_manual(&mut self) {
@@ -502,11 +634,6 @@ impl Document {
         } else {
             // Changed source is re-rendered; the session's undo step is the one recorded at open.
             self.redo.clear();
-            let formula = Formula {
-                image: None,
-                failed: false,
-                ..formula
-            };
             self.formulas.insert(pos, formula);
             self.caret = pos + ATOM.len();
         }
@@ -529,7 +656,13 @@ impl Document {
     pub fn jobs(&self) -> Vec<Job> {
         self.formulas
             .values()
-            .filter(|f| f.image.is_none() && !f.failed && self.manual_id() != Some(f.id))
+            .filter(|f| {
+                !f.failed
+                    && self.manual_id() != Some(f.id)
+                    && f.image
+                        .as_ref()
+                        .is_none_or(|image| f.latex.as_deref() != Some(image.latex.as_str()))
+            })
             .map(|f| Job {
                 id: f.id,
                 prompt: f.prompt.clone(),
@@ -545,7 +678,10 @@ impl Document {
                     f.image = Some(image.clone());
                     f.failed = false;
                 }
-                Err(_) => f.failed = true,
+                Err(_) => {
+                    f.image = None;
+                    f.failed = true;
+                }
             }
         }
         let mut changed = false;
@@ -675,16 +811,33 @@ fn escape_label(label: &str) -> String {
     out
 }
 
+fn push_prompt_label(out: &mut String, prompt: &str, escape: bool) {
+    out.push('\\');
+    for c in prompt.chars() {
+        if c == '\\' {
+            out.push_str(LITERAL_BACKSLASH);
+            out.push_str(if escape { r"\\" } else { r"\" });
+        } else if c == '$' && escape {
+            out.push_str("\\$");
+        } else if c == '$' {
+            out.push_str(LITERAL_BACKSLASH);
+            out.push('$');
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\\');
+}
+
 // Files use `unescape`; pasted text is taken literally, as before escapes existed.
 fn decode(source: &str, unescape: bool) -> (String, BTreeMap<usize, Formula>, BTreeSet<usize>) {
     let mut text = String::new();
     let mut formulas = BTreeMap::new();
     let mut cancelled = BTreeSet::new();
     let mut i = 0;
-    let literal = "<!--mathstral:literal-->";
     while i < source.len() {
-        if source[i..].starts_with(literal) {
-            i += literal.len();
+        if source[i..].starts_with(LITERAL_BACKSLASH) {
+            i += LITERAL_BACKSLASH.len();
             cancelled.insert(text.len());
             continue;
         }
@@ -700,7 +853,9 @@ fn decode(source: &str, unescape: bool) -> (String, BTreeMap<usize, Formula>, BT
                 continue;
             }
         }
-        if source.as_bytes()[i] == b'$' && (unescape || i == 0 || source.as_bytes()[i - 1] != b'\\')
+        if source.as_bytes()[i] == b'$'
+            && !cancelled.contains(&text.len())
+            && (unescape || i == 0 || source.as_bytes()[i - 1] != b'\\')
         {
             let display = source[i..].starts_with("$$");
             let delimiter = if display { "$$" } else { "$" };
@@ -779,7 +934,7 @@ mod tests {
         d.move_to(12, false);
         assert!(d.reopen(9));
         d.replace("!", true);
-        d.replace(r"\", true);
+        assert!(d.submit_prompt());
         assert_eq!(d.formulas[&9].prompt.as_deref(), Some("one!"));
         d.undo(false);
         assert!(d.text().contains(r"\one!\"));
@@ -940,6 +1095,66 @@ mod tests {
         assert_round_trip(&d);
     }
     #[test]
+    fn prompt_backslashes_survive_save_edit_and_copy_round_trips() {
+        for prompt in [
+            "a \\ b",
+            "a \\\\ b",
+            r"\alpha",
+            "a \\ $5",
+            "solve $x=1$",
+            "trailing\\",
+        ] {
+            let mut editing = Document::new("");
+            editing.open_ai_prompt();
+            type_text(&mut editing, prompt);
+
+            let editing_saved = editing.markdown();
+            assert_eq!(
+                editing_saved.contains(LITERAL_BACKSLASH),
+                prompt.contains('\\'),
+                "{prompt:?}: {editing_saved:?}"
+            );
+            let editing_reopened = Document::new(&editing_saved);
+            assert_eq!(
+                editing_reopened
+                    .formulas
+                    .values()
+                    .next()
+                    .unwrap()
+                    .prompt
+                    .as_deref(),
+                Some(prompt),
+                "editing prompt {prompt:?}"
+            );
+
+            assert!(editing.submit_prompt());
+            let saved = editing.markdown();
+            assert_eq!(saved.contains(LITERAL_BACKSLASH), prompt.contains('\\'));
+            let reopened = Document::new(&saved);
+            assert_eq!(
+                reopened.formulas.values().next().unwrap().prompt.as_deref(),
+                Some(prompt),
+                "submitted prompt {prompt:?}"
+            );
+
+            editing.move_to(0, false);
+            editing.move_to(ATOM.len(), true);
+            let copied = editing.selected();
+            assert_eq!(
+                copied.contains(LITERAL_BACKSLASH),
+                prompt.contains('\\') || prompt.contains('$'),
+                "{prompt:?}"
+            );
+            let mut pasted = Document::new("");
+            pasted.paste(&copied);
+            assert_eq!(
+                pasted.formulas.values().next().unwrap().prompt.as_deref(),
+                Some(prompt),
+                "copied prompt {prompt:?}"
+            );
+        }
+    }
+    #[test]
     fn paste_takes_text_literally() {
         let mut d = Document::new("");
         d.paste("\\$5 and $x$");
@@ -996,6 +1211,87 @@ mod tests {
         assert!(d.jobs().is_empty());
         d.finish_manual();
         assert_eq!(d.jobs().len(), 1);
+    }
+    #[test]
+    fn empty_manual_formula_has_an_empty_source_label() {
+        let mut d = Document::new("");
+        d.open_manual();
+        assert_eq!(d.formulas[&0].label(), "");
+        let layout = crate::layout::Typesetter::new().document(&d, 680.0);
+        assert!(!layout.lines.is_empty());
+        assert!(layout.caret_on_line(d.caret, None).1.is_finite());
+    }
+    #[test]
+    fn finishing_manual_edit_keeps_preview_until_final_render() {
+        let mut d = Document::new("");
+        d.open_manual();
+        let (id, revision) = d.update_manual("x^2".into()).unwrap();
+        let preview = image("x^2 with caret");
+        assert!(d.complete_manual_preview(id, revision, Ok(preview.clone())));
+
+        d.finish_manual();
+
+        let formula = &d.formulas[&0];
+        assert!(Arc::ptr_eq(formula.image.as_ref().unwrap(), &preview));
+        assert_eq!(formula.label(), "x^2");
+        let jobs = d.jobs();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].id, id);
+        assert_eq!(jobs[0].latex.as_deref(), Some("x^2"));
+
+        let final_image = image("x^2");
+        assert!(d.complete(id, Ok(final_image.clone())));
+        assert!(Arc::ptr_eq(
+            d.formulas[&0].image.as_ref().unwrap(),
+            &final_image
+        ));
+        assert!(d.jobs().is_empty());
+    }
+    #[test]
+    fn failed_final_manual_render_clears_preview_and_shows_source() {
+        let mut d = Document::new("");
+        d.open_manual();
+        let (id, revision) = d.update_manual("x^2".into()).unwrap();
+        assert!(d.complete_manual_preview(id, revision, Ok(image("x^2 with caret"))));
+        d.finish_manual();
+
+        assert!(d.complete(id, Err("cannot render final source".into())));
+
+        let formula = &d.formulas[&0];
+        assert!(formula.image.is_none());
+        assert!(formula.failed);
+        assert_eq!(formula.label(), "x^2");
+        assert!(d.jobs().is_empty());
+    }
+    #[test]
+    fn manual_preview_keeps_source_rejects_stale_results_and_shows_failures() {
+        let mut d = Document::new("");
+        d.open_manual();
+        let (id, first) = d.update_manual("abcd".into()).unwrap();
+        assert!(d.complete_manual_preview(id, first, Ok(image("caret markup"))));
+        assert_eq!(d.formulas[&0].latex.as_deref(), Some("abcd"));
+        let (id, second) = d.update_manual("abcd+e".into()).unwrap();
+        assert_eq!(d.formulas[&0].image.as_ref().unwrap().latex, "caret markup");
+        assert!(!d.complete_manual_preview(id, first, Err("stale".into())));
+        assert!(d.complete_manual_preview(id, second, Err("cannot render".into())));
+        let formula = &d.formulas[&0];
+        assert_eq!(formula.latex.as_deref(), Some("abcd+e"));
+        assert!(formula.image.is_none());
+        assert!(formula.failed);
+        assert_eq!(formula.label(), "abcd+e");
+    }
+    #[test]
+    fn manual_preview_results_are_ignored_after_finish_or_cancel() {
+        let mut d = Document::new("");
+        d.open_manual();
+        let (id, revision) = d.update_manual("x".into()).unwrap();
+        d.finish_manual();
+        assert!(!d.complete_manual_preview(id, revision, Ok(image("late"))));
+
+        d.open_manual();
+        let (id, revision) = d.update_manual("y".into()).unwrap();
+        d.cancel_manual();
+        assert!(!d.complete_manual_preview(id, revision, Ok(image("late"))));
     }
     #[test]
     fn finishing_an_empty_manual_formula_removes_it() {
@@ -1096,5 +1392,83 @@ mod tests {
         assert_eq!(d.undo.len(), undo);
         assert!(d.manual_id().is_none());
         assert_eq!(d.formulas[&2].prompt.as_deref(), Some("one"));
+    }
+    #[test]
+    fn ai_prompt_submits_from_document_edges_and_selection() {
+        let cases = [
+            ("", 0, 0, "integral", 0),
+            ("left right", 4, 4, "sum", 5),
+            ("word", 2, 2, "fraction", 3),
+            ("tail", 4, 4, "root", 5),
+            ("please integrate now", 0, 16, "please integrate", 0),
+        ];
+
+        for (source, start, end, prompt, formula_pos) in cases {
+            let mut doc = Document::new(source);
+            doc.anchor = start;
+            doc.caret = end;
+            doc.open_ai_prompt();
+            if start == end {
+                type_text(&mut doc, prompt);
+            }
+            assert!(doc.submit_prompt(), "source {source:?}");
+            assert_eq!(doc.formulas[&formula_pos].prompt.as_deref(), Some(prompt));
+            let saved = doc.markdown();
+            let reopened = Document::new(&saved);
+            assert_eq!(reopened.markdown(), saved, "source {source:?}");
+            assert_eq!(
+                reopened.formulas[&formula_pos].prompt.as_deref(),
+                Some(prompt),
+                "source {source:?}"
+            );
+            doc.undo(false);
+            assert!(doc.formulas.is_empty(), "undo submission for {source:?}");
+            assert!(doc.open_range().is_some(), "undo submission for {source:?}");
+            doc.undo(true);
+            assert_eq!(doc.markdown(), saved, "redo submission for {source:?}");
+        }
+    }
+    #[test]
+    fn empty_and_unfocused_ai_prompts_do_not_submit() {
+        let mut empty = Document::new("word");
+        empty.open_ai_prompt();
+        assert!(empty.submit_prompt());
+        assert!(empty.formulas.is_empty());
+        assert_eq!(empty.text(), "word");
+
+        let mut elsewhere = Document::new("before after");
+        elsewhere.move_to(0, false);
+        elsewhere.open_ai_prompt();
+        elsewhere.move_to(elsewhere.rope.len_bytes(), false);
+        let open = elsewhere.text();
+        assert!(!elsewhere.submit_prompt());
+        assert_eq!(elsewhere.text(), open);
+        assert!(elsewhere.formulas.is_empty());
+
+        let mut redo = Document::new("a");
+        redo.replace("b", false);
+        redo.undo(false);
+        assert!(!redo.redo.is_empty());
+        redo.open_ai_prompt();
+        assert!(redo.redo.is_empty());
+    }
+    #[test]
+    fn cancelling_ai_prompt_keeps_literal_text_and_undo_restores_edit() {
+        let mut doc = Document::new("word");
+        doc.move_to(2, false);
+        doc.open_ai_prompt();
+        type_text(&mut doc, "fraction");
+        assert!(doc.cancel());
+        let saved = doc.markdown();
+        let reopened = Document::new(&saved);
+        assert_eq!(reopened.markdown(), saved);
+        assert!(reopened.formulas.is_empty());
+        doc.undo(false);
+        assert!(doc.open_range().is_some());
+        assert!(doc.submit_prompt());
+        assert_eq!(
+            doc.formulas.values().next().unwrap().prompt.as_deref(),
+            Some("fraction")
+        );
     }
 }

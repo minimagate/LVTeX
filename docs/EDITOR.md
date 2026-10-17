@@ -24,7 +24,7 @@ Menus:
 | --- | --- |
 | Mathstral | Hide, Hide Others, Show All, Quit Mathstral (⌘Q) |
 | File | New (⌘N), Open… (⌘O), Close Window (⌘W), Save (⌘S), Save As… (⇧⌘S), Export as PDF… (⌥⌘E) |
-| Edit | Undo (⌘Z), Redo (⇧⌘Z), Cut (⌘X), Copy (⌘C), Paste (⌘V), Select All (⌘A), Insert Formula (⌘1) |
+| Edit | Undo (⌘Z), Redo (⇧⌘Z), Cut (⌘X), Copy (⌘C), Paste (⌘V), Select All (⌘A), Insert Formula (⌘1), Ask AI for Formula (⇧⌘1) |
 | Window | Minimize, Zoom, Enter Full Screen |
 
 Close Window (⌘W) quits the application, the same as Quit.
@@ -58,7 +58,7 @@ drawn in the marker color; only the styling changes.
 - Quotes (`>`) are italic.
 - A line of three or more `-`, `*` or `_`, with optional spaces, draws a 1 px rule across the column.
 - Nothing is styled inside an open math prompt. Fenced code blocks, tables and images are not styled.
-- Backslash escapes are not supported: `\` starts a math prompt, so it is always plain text here.
+- Backslash escapes are not supported. Typing `\` opens the hand-written math editor; use Ask AI for Formula for a natural-language prompt.
   A literal `*` or `_` that cannot open emphasis, such as in `2 * 3`, stays plain.
 
 ## Basic editing
@@ -89,13 +89,14 @@ File commands:
   strikethrough, links, lists, tasks, quotes and rules) with the markers left out. Prompts that
   have not rendered are exported as their `\prompt\` text after a confirmation.
 
-## Math prompts
+## AI formula prompts
 
-Type `\prompt\` to start a prompt.
+Choose Edit → Ask AI for Formula (⇧⌘1) to open an AI prompt. Selected text becomes the
+initial prompt; with no selection, the prompt starts empty. At a position inside a word,
+the editor adds a space around the prompt so the saved `\prompt\` form remains readable.
 
-- Backslashes open at a word start and close at punctuation, whitespace or the end of the text.
-- Internal backslashes are text, not delimiters: `C:\dir\file` and `a\b\` do not start prompts.
-- Earlier `/prompt/` text is plain text.
+- Press Enter to submit the prompt. Escape leaves the prompt text as literal text.
+- Existing `\prompt\` files and copied prompts remain supported.
 - An open prompt has a subtle green tint and underline.
 - A closed prompt is dim until the model returns a formula that renders successfully.
 - A prompt whose generation fails stays as text with a muted red underline. Enter retries it.
@@ -110,10 +111,14 @@ Type `\prompt\` to start a prompt.
 
 ## Hand-written math
 
-⌘1 (Edit → Insert Formula) opens an empty formula at the caret. The formula previews as
-you type. Keys follow TeXmacs's `math-kbd.scm`.
+Typing `\` starts a named command in a new formula. For example, `\alpha` then Enter
+inserts α; press Enter again to close the formula. Pressing ⌘1 (Edit → Insert Formula)
+opens a blank formula for ordinary TeXmacs-style keys such as `x` `^` `2`. The formula previews as
+you type on the local render worker; key handling never waits for typesetting. Keys follow
+TeXmacs's `math-kbd.scm`.
 
-- Enter closes the formula. With a `\command` pending, Enter confirms the command instead.
+- Enter closes the formula. With a `\command` pending, Enter confirms the command instead;
+  press Enter again to close. Closing by click or a file command also confirms a pending command.
 - Escape cancels a pending `\command`. Otherwise it abandons the edit: a new formula is
   removed, and a reopened formula returns to its previous source.
 - A click in the text, Save, Open, New, Export as PDF or Quit closes the formula first.
@@ -155,6 +160,12 @@ you type. Keys follow TeXmacs's `math-kbd.scm`.
 - A status line reading "Ollama unavailable · math will resume when it connects" is shown
   while Ollama is unreachable.
 - One worker serializes model requests. Editing continues while requests are pending.
+- Local formula renders use a separate worker, so saved math and live previews continue while
+  Ollama is slow or unavailable. Live previews keep only the newest queued edit; older results
+  are discarded. The current LaTeX source stays visible while its preview is pending or fails.
+  A native caret is shown until the first preview bitmap arrives; preview bitmaps contain their
+  own math caret. After closing an edit, its last preview stays visible until the final render
+  replaces it.
 - The system prompt and few-shot examples are in `app/src/math.rs`. They cover integrals,
   sums, fractions, matrices, cases, aligned equations, sets and Greek letters.
 - Responses are cleaned of fences, delimiters and surrounding prose. Output containing
@@ -179,16 +190,18 @@ you type. Keys follow TeXmacs's `math-kbd.scm`.
 - Display math: `$$` on its own line, the body on the lines between, and `$$` on its own line.
 - Prompt source: a comment `<!--mathstral:BASE64URL-->` directly after the formula. The payload
   is the UTF-8 original prompt, encoded in base64url without padding. Markdown readers hide it.
-- Explicit cancellation: `<!--mathstral:literal-->` marks a backslash that was cancelled with
-  Escape, so it is not parsed as a prompt again.
-- Pending prompts are saved as `\prompt\` and resume on open.
+- The reserved `<!--mathstral:literal-->` comment protects literal backslashes inside prompts,
+  backslashes cancelled with Escape, and dollar signs in copied prompts from delimiter parsing.
+- Pending AI prompts are saved as `\prompt\` and resume on open.
 - Literal `$` in prose is saved as `\$`. Reading `\$` produces `$`.
 
 ## Imported math
 
 - A formula in a file with no prompt comment renders directly from its LaTeX source.
 - Backspace just after it, or Enter at its left edge, opens it in the hand-written editor.
-  Its LaTeX is parsed into the editor. Syntax the editor does not model stays as typed.
+  Its LaTeX is parsed into the editor. Syntax the editor does not model, including standalone
+  brace groups, stays as typed. Reopening it without changing its structure preserves its
+  original source form. Input nested more than 64 levels remains raw.
 - Imported math is never sent to the model. Renders of imported math and cached prompts work
   without Ollama.
 

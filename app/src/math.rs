@@ -7,7 +7,7 @@ use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
     panic::{self, AssertUnwindSafe},
-    sync::{Arc, mpsc},
+    sync::{Arc, Condvar, Mutex, mpsc},
     thread,
     time::Duration,
 };
@@ -39,13 +39,30 @@ pub struct Job {
     pub prompt: Option<String>,
     pub latex: Option<String>,
 }
+#[derive(Clone)]
+pub struct Preview {
+    pub id: u64,
+    pub revision: u64,
+    pub display_latex: String,
+}
 pub enum Reply {
     Connection(bool),
     Done(u64, Result<Arc<FormulaImage>, String>),
+    PreviewDone(u64, u64, Result<Arc<FormulaImage>, String>),
 }
 pub struct Worker {
     tx: mpsc::Sender<Job>,
+    local: LocalWorker,
     pub rx: mpsc::Receiver<Reply>,
+}
+
+struct LocalPending {
+    jobs: std::collections::VecDeque<Job>,
+    preview: Option<Preview>,
+    shutdown: bool,
+}
+struct LocalWorker {
+    pending: Arc<(Mutex<LocalPending>, Condvar)>,
 }
 
 pub const SYSTEM: &str = r#"Convert the user's mathematical description to LaTeX. Output ONLY the LaTeX math body. No dollar signs, delimiters, Markdown fences, explanations, labels, or prose. Use standard amsmath commands. If input is already LaTeX, clean it up. Preserve the intended mathematics; do not evaluate unless asked. Use aligned (not align) for multiple equations. Never include document commands or packages. Follow the examples."#;
@@ -76,16 +93,18 @@ const EXAMPLES: &[(&str, &str)] = &[
 ];
 
 impl Worker {
-    pub fn new(wake: impl Fn() + Send + 'static) -> Self {
+    pub fn new(wake: impl Fn() + Send + Sync + 'static) -> Self {
         Self::with_backend(wake, chat, Duration::from_secs(2))
     }
     fn with_backend(
-        wake: impl Fn() + Send + 'static,
+        wake: impl Fn() + Send + Sync + 'static,
         mut request: impl FnMut(&Value) -> Result<Value, Error> + Send + 'static,
         retry_delay: Duration,
     ) -> Self {
         let (tx, jobs) = mpsc::channel::<Job>();
         let (replies, rx) = mpsc::channel();
+        let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(wake);
+        let local = LocalWorker::new(replies.clone(), wake.clone());
         thread::Builder::new()
             .name("mathstral-math".into())
             .stack_size(32 * 1024 * 1024)
@@ -113,12 +132,10 @@ impl Worker {
                             Err(_) => {}
                         }
                         if !online {
-                            // Imported formulas and cache hits can render without Ollama.
+                            // Cached prompts can render without Ollama.
                             let mut rest = std::collections::VecDeque::new();
                             while let Some(job) = pending.pop_front() {
-                                if job.latex.is_some()
-                                    || job.prompt.as_ref().is_some_and(|p| cache.contains_key(p))
-                                {
+                                if job.prompt.as_ref().is_some_and(|p| cache.contains_key(p)) {
                                     let result = guarded(&mut renderer, |renderer| {
                                         resolve_with(&job, renderer, &mut cache, &mut request)
                                     });
@@ -152,10 +169,136 @@ impl Worker {
                 }
             })
             .expect("math worker");
-        Self { tx, rx }
+        Self { tx, local, rx }
     }
     pub fn submit(&self, job: Job) {
-        let _ = self.tx.send(job);
+        if job.latex.is_some() {
+            self.local.submit(job);
+        } else {
+            let _ = self.tx.send(job);
+        }
+    }
+    pub fn preview(&self, preview: Preview) {
+        self.local.preview(preview);
+    }
+    pub fn cancel_preview(&self, id: u64) {
+        self.local.cancel_preview(id);
+    }
+}
+impl LocalWorker {
+    fn new(replies: mpsc::Sender<Reply>, wake: Arc<dyn Fn() + Send + Sync>) -> Self {
+        let pending = Arc::new((
+            Mutex::new(LocalPending {
+                jobs: std::collections::VecDeque::new(),
+                preview: None,
+                shutdown: false,
+            }),
+            Condvar::new(),
+        ));
+        let worker_pending = pending.clone();
+        thread::Builder::new()
+            .name("mathstral-render".into())
+            .stack_size(32 * 1024 * 1024)
+            .spawn(move || {
+                let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
+                let mut prefer_preview = true;
+                loop {
+                    let task = {
+                        let (lock, ready) = &*worker_pending;
+                        let mut pending = lock.lock().expect("local render queue");
+                        while pending.jobs.is_empty()
+                            && pending.preview.is_none()
+                            && !pending.shutdown
+                        {
+                            pending = ready.wait(pending).expect("local render queue");
+                        }
+                        if pending.shutdown {
+                            break;
+                        }
+                        pending.take_next(&mut prefer_preview)
+                    };
+                    let Some(task) = task else {
+                        continue;
+                    };
+                    let reply = match task {
+                        LocalTask::Job(job) => {
+                            let result = guarded(&mut renderer, |renderer| {
+                                render(renderer, job.latex.as_deref().unwrap_or(""))
+                                    .map(Arc::new)
+                                    .map_err(Into::into)
+                            })
+                            .map_err(|error| error.message);
+                            Reply::Done(job.id, result)
+                        }
+                        LocalTask::Preview(preview) => {
+                            let result = guarded(&mut renderer, |renderer| {
+                                render(renderer, &preview.display_latex)
+                                    .map(Arc::new)
+                                    .map_err(Into::into)
+                            })
+                            .map_err(|error| error.message);
+                            Reply::PreviewDone(preview.id, preview.revision, result)
+                        }
+                    };
+                    let _ = replies.send(reply);
+                    wake();
+                }
+            })
+            .expect("math render worker");
+        Self { pending }
+    }
+
+    fn submit(&self, job: Job) {
+        let (lock, ready) = &*self.pending;
+        lock.lock().expect("local render queue").jobs.push_back(job);
+        ready.notify_one();
+    }
+
+    fn preview(&self, preview: Preview) {
+        let (lock, ready) = &*self.pending;
+        lock.lock().expect("local render queue").preview = Some(preview);
+        ready.notify_one();
+    }
+
+    fn cancel_preview(&self, id: u64) {
+        let (lock, _) = &*self.pending;
+        let mut pending = lock.lock().expect("local render queue");
+        if pending
+            .preview
+            .as_ref()
+            .is_some_and(|preview| preview.id == id)
+        {
+            pending.preview = None;
+        }
+    }
+}
+
+enum LocalTask {
+    Job(Job),
+    Preview(Preview),
+}
+impl LocalPending {
+    fn take_next(&mut self, prefer_preview: &mut bool) -> Option<LocalTask> {
+        let task = if *prefer_preview {
+            self.preview
+                .take()
+                .map(LocalTask::Preview)
+                .or_else(|| self.jobs.pop_front().map(LocalTask::Job))
+        } else {
+            self.jobs
+                .pop_front()
+                .map(LocalTask::Job)
+                .or_else(|| self.preview.take().map(LocalTask::Preview))
+        };
+        *prefer_preview = !matches!(task, Some(LocalTask::Preview(_)));
+        task
+    }
+}
+impl Drop for LocalWorker {
+    fn drop(&mut self) {
+        let (lock, ready) = &*self.pending;
+        lock.lock().expect("local render queue").shutdown = true;
+        ready.notify_one();
     }
 }
 struct Error {
@@ -212,7 +355,7 @@ fn resolve_with(
         )?;
         let raw = response["message"]["content"].as_str().unwrap_or("");
         let latex = clean(raw);
-        match render(renderer, &latex) {
+        match reject_prose(&latex).and_then(|()| render(renderer, &latex)) {
             Ok(image) => {
                 let image = Arc::new(image);
                 if cache.len() >= MATH_CACHE_LIMIT {
@@ -279,7 +422,6 @@ pub fn render(renderer: &mut Renderer, latex: &str) -> Result<FormulaImage, Stri
     if latex.is_empty() || latex.len() > 16384 {
         return Err("empty or oversized expression".into());
     }
-    reject_prose(latex)?;
     let body = mathstral_latex::convert(latex)?;
     let mut image = |display| {
         let equation = if display {
@@ -526,6 +668,138 @@ mod tests {
     fn rendered_latex_cannot_be_prose() {
         assert!(reject_prose("The answer is x squared").is_err());
         assert!(reject_prose(r"\text{otherwise} + \operatorname{variance}(X)").is_ok());
+    }
+    #[test]
+    fn local_preview_slot_keeps_only_the_newest_revision() {
+        let local = LocalWorker {
+            pending: Arc::new((
+                Mutex::new(LocalPending {
+                    jobs: std::collections::VecDeque::new(),
+                    preview: None,
+                    shutdown: false,
+                }),
+                Condvar::new(),
+            )),
+        };
+        local.preview(Preview {
+            id: 4,
+            revision: 1,
+            display_latex: "x".into(),
+        });
+        local.preview(Preview {
+            id: 4,
+            revision: 2,
+            display_latex: "x^2".into(),
+        });
+        local.submit(Job {
+            id: 5,
+            prompt: None,
+            latex: Some("y".into()),
+        });
+        let mut prefer_preview = true;
+        {
+            let (lock, _) = &*local.pending;
+            let mut pending = lock.lock().unwrap();
+            let Some(LocalTask::Preview(preview)) = pending.take_next(&mut prefer_preview) else {
+                panic!("latest preview should be selected first")
+            };
+            assert_eq!(preview.revision, 2);
+            assert_eq!(preview.display_latex, "x^2");
+            assert!(pending.preview.is_none());
+            assert!(matches!(
+                pending.take_next(&mut prefer_preview),
+                Some(LocalTask::Job(_))
+            ));
+        }
+        local.preview(Preview {
+            id: 4,
+            revision: 3,
+            display_latex: "x^3".into(),
+        });
+        local.cancel_preview(4);
+        let (lock, _) = &*local.pending;
+        assert!(lock.lock().unwrap().preview.is_none());
+    }
+    #[test]
+    fn local_formulas_and_previews_render_while_model_backend_is_blocked() {
+        let (started, wait_started) = mpsc::channel();
+        let (release, wait_release) = mpsc::channel();
+        let worker = Worker::with_backend(
+            || {},
+            move |request| {
+                if request["messages"].as_array().unwrap().is_empty() {
+                    return Ok(json!({"done":true}));
+                }
+                started.send(()).unwrap();
+                wait_release.recv().unwrap();
+                Ok(json!({"message":{"content":"x^2"}}))
+            },
+            Duration::from_millis(5),
+        );
+        worker.submit(Job {
+            id: 1,
+            prompt: Some("square x".into()),
+            latex: None,
+        });
+        wait_started.recv_timeout(Duration::from_secs(5)).unwrap();
+        worker.submit(Job {
+            id: 2,
+            prompt: None,
+            latex: Some("abcd".into()),
+        });
+        worker.preview(Preview {
+            id: 3,
+            revision: 7,
+            display_latex: "x^2".into(),
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let mut formula = false;
+        let mut preview = false;
+        while !(formula && preview) {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let reply = worker.rx.recv_timeout(remaining).unwrap();
+            match reply {
+                Reply::Done(2, Ok(image)) => {
+                    assert_eq!(image.latex, "abcd");
+                    formula = true;
+                }
+                Reply::PreviewDone(3, 7, Ok(image)) => {
+                    assert_eq!(image.latex, "x^2");
+                    preview = true;
+                }
+                Reply::Connection(_) => {}
+                _ => panic!("unexpected local reply"),
+            }
+        }
+        release.send(()).unwrap();
+    }
+    #[test]
+    fn prose_is_rejected_for_generated_math_but_words_render_as_user_math() {
+        let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
+        for source in ["spa", "span", "spanning", "abcd", r"v_1+v_2\in span"] {
+            assert_eq!(
+                render(&mut renderer, source).unwrap().latex,
+                source,
+                "user math {source:?}"
+            );
+        }
+        let mut calls = 0;
+        let job = Job {
+            id: 1,
+            prompt: Some("some math".into()),
+            latex: None,
+        };
+        let image = resolve_with(&job, &mut renderer, &mut HashMap::new(), |_| {
+            calls += 1;
+            if calls == 1 {
+                Ok(json!({"message":{"content":"The answer is x"}}))
+            } else {
+                Ok(json!({"message":{"content":"x"}}))
+            }
+        })
+        .unwrap_or_else(|error| panic!("{}", error.message));
+        assert_eq!(calls, 2);
+        assert_eq!(image.latex, "x");
     }
     #[test]
     fn cleanup_and_rendered_repair_then_cache() {

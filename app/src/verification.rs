@@ -109,7 +109,7 @@ fn mixed_page_baselines_roundtrip_pixels_and_atomic_editing() {
         "Enter after a formula must make a newline"
     );
     assert!(doc.reopen(pos));
-    doc.replace("\\", true);
+    assert!(doc.submit_prompt());
     assert_eq!(doc.formulas[&pos].latex, latex);
     assert!(doc.jobs().is_empty());
     if let Ok(path) = std::env::var("MATHSTRAL_SNAPSHOT") {
@@ -226,4 +226,77 @@ fn hand_written_formula_saves_as_plain_math() {
     assert_eq!(doc.markdown(), "a $x^{2}$");
     let reopened = Document::new(&doc.markdown());
     assert_eq!(reopened.markdown(), "a $x^{2}$");
+}
+
+/// Run with `cargo test --release --locked -p mathstral manual_preview_latency -- --ignored --nocapture`.
+#[test]
+#[ignore = "manual release timing benchmark; run with the command in the test doc comment"]
+fn manual_preview_latency() {
+    let scripts = [
+        ("simple", "x^2⤴+1←←→"),
+        ("fraction", r"\frac↵1↓2←→"),
+        ("nested fraction", r"\frac↵1↓\frac↵x↓y←→"),
+        ("sum", "⇧S_i=1⤴^n⤴i^2←←→"),
+    ];
+    let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
+    let mut preparation_timings = Vec::new();
+    let mut render_timings = Vec::new();
+    let mut cold = None;
+
+    for _ in 0..25 {
+        for (name, script) in scripts {
+            let mut input = MathInput::new(MathTree::new());
+            for c in script.chars() {
+                let key_start = Instant::now();
+                let key = match c {
+                    '⇥' => MathKey::Tab,
+                    '⇤' => MathKey::ShiftTab,
+                    '↵' => MathKey::Return,
+                    '⌫' => MathKey::Backspace,
+                    '⌦' => MathKey::Delete,
+                    '←' => MathKey::Left,
+                    '→' => MathKey::Right,
+                    '↑' => MathKey::Up,
+                    '↓' => MathKey::Down,
+                    '⇧' => MathKey::SymbolPrefix,
+                    '⤴' => MathKey::ExitRight,
+                    _ => MathKey::Text(c),
+                };
+                let outcome = input.key(key);
+                if matches!(outcome, Outcome::Edited | Outcome::Moved) {
+                    let _source_latex = input.latex();
+                    let latex = input.display_latex();
+                    preparation_timings.push(key_start.elapsed());
+                    let render_start = Instant::now();
+                    math::render(&mut renderer, &latex)
+                        .unwrap_or_else(|error| panic!("{name} preview {latex:?}: {error}"));
+                    let elapsed = render_start.elapsed();
+                    cold.get_or_insert((name, elapsed));
+                    render_timings.push(elapsed);
+                }
+            }
+        }
+    }
+
+    assert!(
+        render_timings.len() >= 100,
+        "expected about 100 rendered edits, got {}",
+        render_timings.len()
+    );
+    preparation_timings.sort_unstable();
+    render_timings.sort_unstable();
+    let preparation_median = preparation_timings[preparation_timings.len() / 2];
+    let preparation_p95 = preparation_timings[preparation_timings.len() * 95 / 100];
+    let render_median = render_timings[render_timings.len() / 2];
+    let render_p95 = render_timings[render_timings.len() * 95 / 100];
+    let (cold_name, cold_time) = cold.unwrap();
+    eprintln!(
+        "manual formula preview: {} edited/moved outcomes; input preparation median {:?}, p95 {:?}; cold first render ({cold_name}) {:?}, render median {:?}, p95 {:?}",
+        render_timings.len(),
+        preparation_median,
+        preparation_p95,
+        cold_time,
+        render_median,
+        render_p95
+    );
 }

@@ -63,6 +63,7 @@ const MAX_RUN: usize = 16;
 #[derive(Clone, Debug)]
 pub struct MathInput {
     tree: MathTree,
+    original: Option<(String, String)>,
     /// The letters of a `\command` being typed, without the backslash.
     command: Option<String>,
     /// Set by Shift F5 and consumed by the next key.
@@ -83,11 +84,20 @@ impl MathInput {
         });
         Self {
             tree,
+            original: None,
             command: None,
             symbol_prefix: false,
             undo: Vec::new(),
             redo: Vec::new(),
         }
+    }
+
+    /// Creates an input that retains its imported LaTeX until the tree is edited.
+    pub fn from_latex(latex: &str) -> Self {
+        let mut input = Self::new(MathTree::parse(latex));
+        let canonical = input.tree.latex();
+        input.original = Some((latex.to_owned(), canonical));
+        input
     }
 
     /// Handles one key. A key that changes the tree is one undo step.
@@ -108,7 +118,24 @@ impl MathInput {
     }
 
     pub fn latex(&self) -> String {
-        self.tree.latex()
+        self.source()
+    }
+
+    /// Confirms a pending `\command` and returns the completed formula source.
+    pub fn finish(mut self) -> String {
+        self.confirm_command();
+        self.source()
+    }
+
+    fn source(&self) -> String {
+        let current = self.tree.latex();
+        if let Some((source, canonical)) = &self.original
+            && canonical == &current
+        {
+            source.clone()
+        } else {
+            current
+        }
     }
 
     /// The LaTeX for display: the caret, grey placeholders, and a pending `\command` at the caret.
@@ -292,7 +319,7 @@ impl MathInput {
     /// Swaps the tree with the newest entry of one stack. A pending `\command` or ⇧F5 prefix is
     /// dropped first.
     fn restore(&mut self, undo: bool) -> Outcome {
-        self.command = None;
+        let cancelled_command = self.command.take().is_some();
         self.symbol_prefix = false;
         let (from, to) = if undo {
             (&mut self.undo, &mut self.redo)
@@ -300,7 +327,11 @@ impl MathInput {
             (&mut self.redo, &mut self.undo)
         };
         let Some(tree) = from.pop() else {
-            return Outcome::Ignored;
+            return if cancelled_command {
+                Outcome::Edited
+            } else {
+                Outcome::Ignored
+            };
         };
         to.push(std::mem::replace(&mut self.tree, tree));
         Outcome::Edited
@@ -1147,9 +1178,35 @@ mod tests {
             Outcome::Cancel
         );
         let mut input = typed("x");
+        let preview = input.display_latex();
         assert_eq!(feed(&mut input, r"\a⎋"), Outcome::Edited);
         assert_eq!(input.latex(), "x");
+        assert_eq!(input.display_latex(), preview);
         assert_eq!(input.key(MathKey::Return), Outcome::Close);
+    }
+
+    #[test]
+    fn finishing_confirms_pending_commands() {
+        for (keys, expected) in [
+            (r"\alpha", r"\alpha"),
+            (r"\unknownname", r"\unknownname"),
+            (r"\frac", r"\frac{}{}"),
+            (r"\sqrt", r"\sqrt{}"),
+        ] {
+            assert_eq!(typed(keys).finish(), expected, "command {keys:?}");
+        }
+    }
+
+    #[test]
+    fn undo_clearing_a_pending_command_requests_redraw() {
+        let mut input = typed(r"\alpha");
+        assert_eq!(input.key(MathKey::Undo), Outcome::Edited);
+        assert!(input.latex().is_empty());
+        assert_eq!(
+            input.display_latex(),
+            MathInput::new(MathTree::new()).display_latex()
+        );
+        assert_eq!(input.key(MathKey::Undo), Outcome::Ignored);
     }
 
     #[test]
@@ -1215,5 +1272,51 @@ mod tests {
         let mut moved = typed("x←");
         moved.key(MathKey::Undo);
         assert!(moved.latex().is_empty());
+    }
+
+    #[test]
+    fn imported_latex_survives_noop_motion_and_undo() {
+        let cases = [("whitespace", " x ^2 "), ("unbraced script", "x^2")];
+        for (name, source) in cases {
+            let mut input = MathInput::from_latex(source);
+            assert_eq!(input.latex(), source, "{name}");
+            assert_eq!(input.key(MathKey::Left), Outcome::Moved, "{name}");
+            assert_eq!(input.key(MathKey::Right), Outcome::Moved, "{name}");
+            assert_eq!(input.latex(), source, "{name} after motion");
+            assert_eq!(input.finish(), source, "{name} after finish");
+        }
+
+        let mut input = MathInput::from_latex("x^2");
+        assert_eq!(input.key(MathKey::Text('y')), Outcome::Edited);
+        assert_eq!(input.latex(), r"x^{2}y");
+        assert_eq!(input.key(MathKey::Undo), Outcome::Edited);
+        assert_eq!(input.latex(), "x^2");
+        assert_eq!(input.finish(), "x^2");
+    }
+
+    #[test]
+    fn imported_latex_edits_and_pending_commands_finish_canonically() {
+        let mut edited = MathInput::from_latex("x^2");
+        edited.key(MathKey::Text('y'));
+        assert_eq!(edited.finish(), r"x^{2}y");
+
+        let mut command = MathInput::from_latex("x^2");
+        for c in r"\alpha".chars() {
+            command.key(MathKey::Text(c));
+        }
+        assert_eq!(command.finish(), r"x^{2}\alpha");
+    }
+
+    #[test]
+    fn imported_latex_preserves_comments_when_edited() {
+        let mut input = MathInput::from_latex("x% comment\n+y");
+        assert_eq!(input.latex(), "x% comment\n+y");
+        input.key(MathKey::Text('z'));
+        assert_eq!(input.latex(), "x% comment\n+yz");
+
+        let mut terminal = MathInput::from_latex("x% naïve");
+        assert_eq!(terminal.latex(), "x% naïve");
+        terminal.key(MathKey::Text('y'));
+        assert_eq!(terminal.latex(), "x% naïve\ny");
     }
 }

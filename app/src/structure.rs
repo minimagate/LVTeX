@@ -7,6 +7,7 @@ type Step = (usize, usize);
 const CARET: &str = r"\textcolor{#FF0000}{|}";
 const PLACEHOLDER: &str = r"\textcolor{#73716F}{\square}";
 const RIGHT: &str = r"\right";
+const MAX_PARSE_DEPTH: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Node {
@@ -119,11 +120,23 @@ impl MathTree {
         Self::default()
     }
 
-    /// Parses LaTeX. Unknown or unbalanced input is kept as `Raw` nodes or closed implicitly,
-    /// so this never fails.
+    /// Parses LaTeX. Unknown or unbalanced input is kept as `Raw` nodes or closed implicitly.
+    /// Inputs nested beyond `MAX_PARSE_DEPTH` are retained as one raw node.
     pub fn parse(latex: &str) -> Self {
-        let mut parser = Parser { src: latex, at: 0 };
+        let mut parser = Parser {
+            src: latex,
+            at: 0,
+            depth: 0,
+            exceeded: false,
+        };
         let root = parser.row(Close::Eof);
+        if parser.exceeded {
+            return Self {
+                root: vec![Node::Raw(latex.to_owned())],
+                path: Vec::new(),
+                pos: 1,
+            };
+        }
         let pos = root.len();
         Self {
             root,
@@ -659,6 +672,8 @@ fn starts_with_right(rest: &str) -> bool {
 struct Parser<'a> {
     src: &'a str,
     at: usize,
+    depth: usize,
+    exceeded: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -777,6 +792,9 @@ impl<'a> Parser<'a> {
     fn row(&mut self, close: Close) -> Row {
         let mut row = Vec::new();
         loop {
+            if self.exceeded {
+                break;
+            }
             self.skip_space();
             let rest = self.rest();
             match close {
@@ -796,20 +814,49 @@ impl<'a> Parser<'a> {
         row
     }
 
-    /// Reads one item and pushes its node (a `{...}` group pushes its contents). Always consumes input.
+    /// Reads one item and pushes its node. Always consumes input.
     fn item(&mut self, row: &mut Row) {
+        if self.exceeded {
+            return;
+        }
+        if self.depth > MAX_PARSE_DEPTH {
+            self.exceeded = true;
+            self.at = self.src.len();
+            return;
+        }
+        self.depth += 1;
+        self.parse_item(row);
+        self.depth -= 1;
+    }
+
+    fn parse_item(&mut self, row: &mut Row) {
         let Some(c) = self.peek() else {
             return;
         };
         match c {
+            '%' => {
+                let start = self.at;
+                self.at += 1;
+                while let Some(next) = self.peek() {
+                    self.at += next.len_utf8();
+                    if next == '\n' {
+                        break;
+                    }
+                }
+                let mut comment = self.src[start..self.at].to_string();
+                if !comment.ends_with('\n') {
+                    comment.push('\n');
+                }
+                row.push(Node::Raw(comment));
+            }
             '\\' => {
                 let node = self.command_node();
                 row.push(node);
             }
             '{' => {
-                self.at += 1;
-                let inner = self.row(Close::Brace);
-                row.extend(inner);
+                let start = self.at;
+                self.skip_braces();
+                row.push(self.raw_from(start));
             }
             '_' | '^' => {
                 self.at += 1;
@@ -908,6 +955,37 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parser_retains_deep_input_raw_and_keeps_shallow_trees_editable() {
+        let at_limit = format!(
+            "{}x{}",
+            r"\sqrt{".repeat(MAX_PARSE_DEPTH),
+            "}".repeat(MAX_PARSE_DEPTH)
+        );
+        let parsed_at_limit = MathTree::parse(&at_limit);
+        assert_eq!(parsed_at_limit.latex(), at_limit);
+        assert!(matches!(
+            parsed_at_limit.root.first(),
+            Some(Node::Root { .. })
+        ));
+
+        let nested_braced = format!("{}x{}", r"\sqrt{".repeat(80), "}".repeat(80));
+        let nested_unbraced = format!("{}x", r"\sqrt".repeat(80));
+        for (name, source) in [
+            ("braced", nested_braced.as_str()),
+            ("unbraced", nested_unbraced.as_str()),
+        ] {
+            let parsed = MathTree::parse(source);
+            assert_eq!(parsed.latex(), source, "{name} source changed");
+            assert!(matches!(parsed.root.as_slice(), [Node::Raw(raw)] if raw == source));
+        }
+
+        let mut shallow = MathTree::parse(r"\sqrt{x^2}");
+        assert!(matches!(shallow.root.first(), Some(Node::Root { .. })));
+        shallow.insert_symbol("y", "y");
+        assert_eq!(shallow.latex(), r"\sqrt{x^{2}}y");
+    }
 
     fn sym(t: &mut MathTree, s: &str) {
         t.insert_symbol(s, s);
@@ -1497,6 +1575,27 @@ mod tests {
             assert!(
                 braces_balance(&MathTree::parse(input).latex()),
                 "unbalanced {input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn standalone_groups_and_unknown_command_arguments_are_preserved() {
+        let cases = [
+            ("{ab}^2", "{ab}^{2}"),
+            ("{{a}{b}}", "{{a}{b}}"),
+            ("{}", "{}"),
+            (r"\textcolor{red}{ab}", r"\textcolor{red}{ab}"),
+            (r"\unknown{a}{b}{c}", r"\unknown{a}{b}{c}"),
+        ];
+
+        for (input, expected) in cases {
+            let parsed = MathTree::parse(input).latex();
+            assert_eq!(parsed, expected, "input {input:?}");
+            assert_eq!(
+                MathTree::parse(&parsed).latex(),
+                expected,
+                "re-parse of {input:?}"
             );
         }
     }

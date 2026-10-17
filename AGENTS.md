@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Mathstral is a native macOS editor (Apple Silicon) for writing prose with inline math, written in pure Rust as a Cargo virtual workspace. Typing `\…\` starts a math prompt. A local Ollama model turns the prompt into LaTeX, and MiTeX and Typst render it in the background, so writing never waits.
+Mathstral is a native macOS editor (Apple Silicon) for writing prose with inline math, written in pure Rust as a Cargo virtual workspace. Typing `\` opens the TeXmacs-style manual math editor; Edit → Ask AI for Formula (⇧⌘1) opens an optional natural-language prompt. A local Ollama model turns AI prompts into LaTeX, and MiTeX and Typst render formulas in the background, so writing never waits.
 
 ## Layout
 

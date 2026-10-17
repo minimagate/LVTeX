@@ -1,11 +1,10 @@
 # Mathstral
 
-Mathstral is a native macOS editor for writing prose with inline
-math. Type a rough description of a formula between backslashes, such as
-`\integral from 0 to infinity of e^-x^2 dx\`, and keep writing. A local model
-running in [Ollama](https://ollama.com) turns the description into LaTeX. The
-formula is rendered in the background with MiTeX and Typst, so plain writing
-never waits for it.
+Mathstral is a native macOS editor for writing prose with inline math. Type `\` to
+write a formula directly with TeXmacs-style keys, or press **⇧⌘1** (Edit → Ask AI
+for Formula) to describe a formula and have a local model turn it into LaTeX.
+Formulas render in the background with MiTeX and Typst, so writing never waits for
+typesetting.
 
 ![Mathstral editor with inline and display math](artifacts/editor-math.png)
 
@@ -13,7 +12,7 @@ never waits for it.
 
 - macOS on Apple Silicon (the only platform tested).
 - Rust 1.92 or newer, to build from source.
-- [Ollama](https://ollama.com) running on `127.0.0.1:11434`, with the model set in
+- [Ollama](https://ollama.com) running on `127.0.0.1:11434` for AI formula prompts, with the model set in
   [`app/src/config.rs`](app/src/config.rs) (currently `gemma4:e4b`):
 
   ```sh
@@ -22,7 +21,7 @@ never waits for it.
 
 No TeX distribution, browser, JavaScript engine or GPU is needed. Writing, opening
 and saving files, and rendering math that is already in a document all work without
-Ollama. Only new `\…\` prompts need the model.
+Ollama. Only AI formula prompts need the model.
 
 ## Install
 
@@ -49,15 +48,18 @@ Renderer benchmarks and their outputs are described in
 
 ## Using Mathstral
 
-- Type `\…\` to start a math prompt. An open prompt is tinted; it is dim while the
-  model works and turns into a formula when it is ready. If generation fails, the
-  prompt stays with a red underline.
-- Press **⌘1** (Edit → Insert Formula) to write a formula by hand with TeXmacs keys,
-  such as `x` `^` `2`. Press **Enter** to close it.
+- Type **`\`** to start a named command in a new formula. For example, type `\alpha`
+  and press **Enter** to insert α, then press **Enter** again to close the formula.
+- Press **⌘1** (Edit → Insert Formula) to open a blank formula for TeXmacs-style keys,
+  such as `x` `^` `2`; press **Enter** to close it.
+- Press **⇧⌘1** (Edit → Ask AI for Formula) to describe a formula. Selected text
+  becomes the initial prompt. Press **Enter** to submit; the prompt is tinted while
+  open, dim while the model works, and turns into a formula when ready. If generation
+  fails, the prompt stays with a red underline.
 - Press **Enter** at the left edge of a formula, or **Backspace** just after it, to
   reopen it. A prompt returns to its prompt text, and a hand-written or imported formula
   opens in the hand-written editor.
-- Press **Escape** inside an open prompt to keep it as literal text.
+- Press **Escape** inside an open AI prompt to keep it as literal text.
 - Markdown styles as you type: headings, bold, italic, `code`, ~~strike~~, links, lists,
   quotes and rules. The markers stay visible. See [docs/EDITOR.md](docs/EDITOR.md#markdown).
 - Standard macOS shortcuts work: **⌘N** new, **⌘O** open, **⌘S** save, **⇧⌘S** save
@@ -73,7 +75,7 @@ Files are Markdown-compatible text.
 - Inline math is `$…$`. Display math is `$$` on its own lines.
 - A formula's source prompt is kept in a hidden comment,
   `<!--mathstral:BASE64URL-->`, so the prompt can be edited later.
-- Literal dollar signs in prose are saved as `\$`. Pending prompts are saved as
+- Literal dollar signs in prose are saved as `\$`. Pending AI prompts are saved as
   `\prompt\` and resume when the file is opened.
 - Settings and the last-opened path are stored in `~/Library/Application Support/Mathstral`.
 
