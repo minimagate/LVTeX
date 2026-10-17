@@ -27,6 +27,54 @@ pub fn rect(
         pixels[row * width + x0..row * width + x1].fill(color);
     }
 }
+// An I-beam caret: a stem centred on `x` with a serif at the top and at the bottom. `x`, `top`
+// and `h` are logical units.
+#[allow(clippy::too_many_arguments)] // mirrors `rect`, which it draws with
+pub fn caret(
+    pixels: &mut [u32],
+    width: usize,
+    height: usize,
+    x: f32,
+    top: f32,
+    h: f32,
+    scale: f32,
+    color: u32,
+) {
+    let thick = scale.max(1.0);
+    let stem = x * scale;
+    // Each serif is 1 logical pt thick and reaches 1.5 pt either side of the stem.
+    let (serif_x, serif_w) = (stem - 1.5 * scale, 3.0 * scale);
+    rect(
+        pixels,
+        width,
+        height,
+        serif_x,
+        top * scale,
+        serif_w,
+        thick,
+        color,
+    );
+    rect(
+        pixels,
+        width,
+        height,
+        serif_x,
+        (top + h) * scale - thick,
+        serif_w,
+        thick,
+        color,
+    );
+    rect(
+        pixels,
+        width,
+        height,
+        stem - thick / 2.0,
+        top * scale,
+        thick,
+        h * scale,
+        color,
+    );
+}
 #[allow(clippy::too_many_arguments)]
 pub fn page(
     layout: &Layout,

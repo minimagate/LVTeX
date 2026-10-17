@@ -39,8 +39,15 @@ dragging anywhere in the window.
 - Colors: background `#151515`; text `#C8C6C3`; markers `#73716F`; selection `#343434`;
   pending text `#868583`; failed prompt underline `#70484A`; pending marker `#292B2A`;
   inline code `#B9C3C6`; links `#9FB6C9`.
-- The caret is solid `#FF0000` in prose, sky blue `#87CEEB` in hand-written math, and green
-  `#78C995` in an AI prompt. It does not blink or fade.
+- The caret is an I-beam: a 1 pt stem with 1 pt serifs at top and bottom, about 3 pt wide. Its
+  height follows the ink of the last letter before it, down to the baseline, like TeXmacs: after
+  `A` it runs from cap height, after `l` from the ascender, after `e` from the x-height, and after
+  `y` down to the bottom of the descender. It is never shorter than the x-height, so a period
+  gives an x-height caret. After a space, or at a line start, it runs from cap height. After a
+  formula it runs over the formula's box. After a one-line prompt it follows the prompt's last
+  letter; after a wrapped prompt, it runs from cap height.
+  The caret is red `#FF2020` in prose, blue `#2F7BFF` in hand-written math, and green `#1FD65F`
+  in an AI prompt. It does not blink or fade.
 - The math caret adds no mathematical operator spacing to the formula.
 - Font family and sizes are set in `app/src/config.rs`.
 
@@ -100,7 +107,7 @@ the `\prompt\` format for compatibility.
 
 - Press Enter to submit the prompt. Escape leaves the prompt text as literal text.
 - Existing `\prompt\` files and copied prompts remain supported.
-- An open prompt uses ordinary prose styling; the green caret marks prompt editing.
+- An open prompt uses ordinary prose styling; the green (`#1FD65F`) caret marks prompt editing.
 - A closed prompt is dim until the model returns a formula that renders successfully.
 - A prompt whose generation fails stays as text with a muted red underline. Enter retries it.
 - Inline formulas share the text baseline. A formula alone on its line is centered with
@@ -117,7 +124,7 @@ the `\prompt\` format for compatibility.
 Typing `\` starts a named command in a new formula. For example, `\alpha` then Enter
 inserts α; press Enter again to close the formula. Pressing ⌘1 (Edit → Insert Formula)
 opens a blank formula for ordinary TeXmacs-style keys such as `x` `^` `2`. The formula previews as
-you type on the local render worker; its caret is sky blue, while AI prompt editing uses a green
+you type on the local render worker; its caret is blue (`#2F7BFF`), while AI prompt editing uses a green
 caret. Key handling never waits for typesetting. Keys follow
 TeXmacs's `math-kbd.scm`.
 

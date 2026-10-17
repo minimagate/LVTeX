@@ -1368,12 +1368,14 @@ mod tests {
         });
         assert_eq!(
             frac.latex_with_caret(),
-            r"\frac{\mathord{\textcolor{#87CEEB}{|}}\textcolor{#73716F}{\square}}{\textcolor{#73716F}{\square}}"
+            format!(
+                r"\frac{{\mathord{{\textcolor{{#{MATH_CARET_COLOR:06X}}}{{|}}}}\textcolor{{#73716F}}{{\square}}}}{{\textcolor{{#73716F}}{{\square}}}}"
+            )
         );
         assert_eq!(frac.latex(), r"\frac{}{}");
         assert_eq!(
             MathTree::new().latex_with_caret(),
-            r"\mathord{\textcolor{#87CEEB}{|}}"
+            format!(r"\mathord{{\textcolor{{#{MATH_CARET_COLOR:06X}}}{{|}}}}")
         );
         let script = build(|t| {
             sym(t, "x");
@@ -1382,7 +1384,7 @@ mod tests {
         });
         assert_eq!(
             script.latex_with_caret(),
-            r"x^{2\mathord{\textcolor{#87CEEB}{|}}}"
+            format!(r"x^{{2\mathord{{\textcolor{{#{MATH_CARET_COLOR:06X}}}{{|}}}}}}")
         );
     }
 

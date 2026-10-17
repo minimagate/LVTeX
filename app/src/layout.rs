@@ -5,7 +5,8 @@ use crate::{
     math::FormulaImage,
 };
 use cosmic_text::{
-    Attrs, Buffer, Family, FontSystem, LayoutGlyph, Metrics, Shaping, Style, Weight, Wrap,
+    Attrs, Buffer, Family, FontSystem, LayoutGlyph, Metrics, Shaping, Style, SwashCache,
+    SwashContent, Weight, Wrap,
 };
 use std::collections::HashMap;
 use std::ops::Range;
@@ -16,6 +17,8 @@ use unicode_segmentation::UnicodeSegmentation;
 const MONO_SCALE: f32 = 0.85;
 // Strikethrough sits this many font sizes above the baseline.
 const STRIKE_LIFT: f32 = 0.28;
+// Caret ink is measured at this multiple of the drawn size, for quarter-point precision.
+const INK_SCALE: f32 = 4.0;
 
 #[derive(Clone)]
 struct Word {
@@ -23,6 +26,9 @@ struct Word {
     width: f32,
     baseline: f32,
     stops: Vec<(usize, f32)>,
+    // Caret extent (ascent, descent) at each stop: the ink of the grapheme that ends there.
+    // The first entry is the cap height of the face, for a caret with no letter before it.
+    inks: Vec<(f32, f32)>,
 }
 pub struct Placed {
     pub glyph: LayoutGlyph,
@@ -37,6 +43,11 @@ pub struct Line {
     pub stops: Vec<(usize, f32)>,
     pub top: f32,
     pub height: f32,
+    baseline: f32,
+    // Caret extent (ascent, descent) after each grapheme or formula that ends at a byte.
+    carets: Vec<(usize, (f32, f32))>,
+    // Caret extent at the line start, before any letter.
+    start_caret: (f32, f32),
 }
 #[derive(Default)]
 pub struct Layout {
@@ -189,7 +200,25 @@ impl Para {
 }
 pub struct Typesetter {
     pub fonts: FontSystem,
+    swash: SwashCache,
     cache: HashMap<(String, Face), Word>,
+    // Ink height of the x and the cap, per face.
+    references: HashMap<Face, (f32, f32)>,
+}
+// Family, weight, style and size that each face is drawn with.
+fn face_style(face: Face) -> (&'static str, Weight, Style, f32) {
+    match face {
+        Face::Regular => (FONT_FAMILY, Weight::NORMAL, Style::Normal, FONT_SIZE),
+        Face::Italic => (FONT_FAMILY, Weight::NORMAL, Style::Italic, FONT_SIZE),
+        Face::Bold => (FONT_FAMILY, Weight::BOLD, Style::Normal, FONT_SIZE),
+        Face::BoldItalic => (FONT_FAMILY, Weight::BOLD, Style::Italic, FONT_SIZE),
+        Face::Mono => (
+            MONO_FONT_FAMILY,
+            Weight::NORMAL,
+            Style::Normal,
+            FONT_SIZE * MONO_SCALE,
+        ),
+    }
 }
 impl Typesetter {
     pub fn new() -> Self {
@@ -211,26 +240,13 @@ impl Typesetter {
             .load_font_data(include_bytes!("../../assets/fonts/DejaVuSansMono.ttf").to_vec());
         Self {
             fonts,
+            swash: SwashCache::new(),
             cache: HashMap::new(),
+            references: HashMap::new(),
         }
     }
-    fn word(&mut self, text: &str, face: Face) -> Word {
-        let key = (text.to_owned(), face);
-        if let Some(word) = self.cache.get(&key) {
-            return word.clone();
-        }
-        let (family, weight, style, size) = match face {
-            Face::Regular => (FONT_FAMILY, Weight::NORMAL, Style::Normal, FONT_SIZE),
-            Face::Italic => (FONT_FAMILY, Weight::NORMAL, Style::Italic, FONT_SIZE),
-            Face::Bold => (FONT_FAMILY, Weight::BOLD, Style::Normal, FONT_SIZE),
-            Face::BoldItalic => (FONT_FAMILY, Weight::BOLD, Style::Italic, FONT_SIZE),
-            Face::Mono => (
-                MONO_FONT_FAMILY,
-                Weight::NORMAL,
-                Style::Normal,
-                FONT_SIZE * MONO_SCALE,
-            ),
-        };
+    fn shape(&mut self, text: &str, face: Face) -> (Vec<LayoutGlyph>, f32, f32) {
+        let (family, weight, style, size) = face_style(face);
         let mut b = Buffer::new(&mut self.fonts, Metrics::new(size, LINE_HEIGHT));
         b.set_wrap(Wrap::None);
         b.set_size(None, None);
@@ -244,12 +260,69 @@ impl Typesetter {
             None,
         );
         b.shape_until_scroll(&mut self.fonts, false);
-        let (glyphs, line_w, baseline) = match b.layout_runs().next() {
+        match b.layout_runs().next() {
             Some(run) => (run.glyphs.to_vec(), run.line_w, run.line_y),
             None => (vec![], 0.0, LINE_HEIGHT * 0.75),
+        }
+    }
+    // Ink (height above the baseline, depth below it) of one glyph's pixels, in logical units.
+    // Rasterized at INK_SCALE times the size, so the ink is measured in quarter points.
+    fn glyph_ink(&mut self, glyph: &LayoutGlyph) -> (f32, f32) {
+        let physical = glyph.physical((0.0, 0.0), INK_SCALE);
+        let Some(image) = self
+            .swash
+            .get_image_uncached(&mut self.fonts, physical.cache_key)
+        else {
+            return (0.0, 0.0);
         };
+        let (w, h) = (
+            image.placement.width as usize,
+            image.placement.height as usize,
+        );
+        // Alpha is the last byte of each pixel (one byte for a mask).
+        let stride = match image.content {
+            SwashContent::Mask => 1,
+            _ => 4,
+        };
+        let inked = |y: usize| {
+            image.data[y * w * stride..(y + 1) * w * stride]
+                .chunks(stride)
+                .any(|px| px[stride - 1] > 0)
+        };
+        let rows: Vec<usize> = (0..h).filter(|&y| inked(y)).collect();
+        let (Some(&first), Some(&last)) = (rows.first(), rows.last()) else {
+            return (0.0, 0.0);
+        };
+        let top = image.placement.top as f32;
+        (
+            (top - first as f32) / INK_SCALE,
+            ((last + 1) as f32 - top) / INK_SCALE,
+        )
+    }
+    // Ink height of the x and of the cap in a face: the caret's floor and its space height.
+    fn references(&mut self, face: Face) -> (f32, f32) {
+        if let Some(&heights) = self.references.get(&face) {
+            return heights;
+        }
+        let mut height = |text: &str| {
+            let (glyphs, _, _) = self.shape(text, face);
+            glyphs.first().map_or(0.0, |g| self.glyph_ink(g).0)
+        };
+        let heights = (height("e"), height("A"));
+        self.references.insert(face, heights);
+        heights
+    }
+    fn word(&mut self, text: &str, face: Face) -> Word {
+        let key = (text.to_owned(), face);
+        if let Some(word) = self.cache.get(&key) {
+            return word.clone();
+        }
+        let (glyphs, line_w, baseline) = self.shape(text, face);
+        let (x_height, cap) = self.references(face);
         // Ligatures share a cluster; interpolate only at Unicode grapheme boundaries.
         let mut stops = vec![];
+        let mut inks = vec![(cap, 0.0)];
+        let mut previous = None;
         for (i, _) in text
             .grapheme_indices(true)
             .chain(std::iter::once((text.len(), "")))
@@ -269,12 +342,28 @@ impl Typesetter {
                     .unwrap_or(0.0)
             };
             stops.push((i, x));
+            // The grapheme that ends at this stop started at the previous one.
+            if let Some(start) = previous.replace(i) {
+                let grapheme = &text[start..i];
+                let ink = if grapheme.chars().all(char::is_whitespace) {
+                    (cap, 0.0)
+                } else {
+                    let (ascent, descent) = glyphs
+                        .iter()
+                        .find(|g| g.start <= start && start < g.end)
+                        .map_or((0.0, 0.0), |g| self.glyph_ink(g));
+                    // Never shorter than the x-height, nor deeper than the baseline.
+                    (ascent.max(x_height), descent.max(0.0))
+                };
+                inks.push(ink);
+            }
         }
         let word = Word {
             glyphs,
             width: line_w,
             baseline,
             stops,
+            inks,
         };
         if self.cache.len() > 8192 {
             self.cache.clear();
@@ -290,6 +379,7 @@ impl Typesetter {
         let open = doc.open_range();
         let mut out = Layout::default();
         let normal_baseline = self.word("M", Face::Regular).baseline;
+        let cap = (self.references(Face::Regular).1, 0.0);
         let mut offset = 0;
         for paragraph in text.split('\n') {
             let para = Para::new(paragraph, offset, open.clone());
@@ -357,21 +447,27 @@ impl Typesetter {
                                     g
                                 })
                                 .collect();
+                            // Wrapped labels take the caret of the regular cap height.
                             item.word = Some(Word {
                                 glyphs,
                                 width,
                                 baseline: normal_baseline,
                                 stops: vec![(0, 0.0), (ATOM.len(), width)],
+                                inks: vec![cap; 2],
                             });
                         } else {
+                            let (ascent, descent) = (word.baseline, LINE_HEIGHT - word.baseline);
+                            // The caret after a one-line label follows its last letter, like text.
+                            let inks = vec![word.inks[0], word.inks[word.inks.len() - 1]];
                             boxes.push(BoxItem {
                                 start: pos,
                                 end: pos + ATOM.len(),
                                 width: word.width,
-                                ascent: word.baseline,
-                                descent: LINE_HEIGHT - word.baseline,
+                                ascent,
+                                descent,
                                 word: Some(Word {
                                     stops: vec![(0, 0.0), (ATOM.len(), word.width)],
+                                    inks,
                                     ..word
                                 }),
                                 math: None,
@@ -427,6 +523,7 @@ impl Typesetter {
                         width,
                         display,
                         indent,
+                        cap,
                     );
                     start = item.start;
                     indent = hang;
@@ -443,6 +540,7 @@ impl Typesetter {
                 width,
                 display,
                 indent,
+                cap,
             );
             out.lines.last_mut().unwrap().end = offset + paragraph.len();
             if para.block == Block::Rule {
@@ -514,6 +612,7 @@ impl Typesetter {
         let mut row = Vec::new();
         let mut x = 0.0;
         let baseline = self.word("M", Face::Regular).baseline;
+        let cap = (self.references(Face::Regular).1, 0.0);
         for (start, part) in label.split_word_bound_indices() {
             let word = self.word(part, Face::Regular);
             if x > 0.0 && x + word.width > width {
@@ -525,6 +624,7 @@ impl Typesetter {
                     width,
                     false,
                     0.0,
+                    cap,
                 );
                 x = 0.0;
             }
@@ -544,11 +644,12 @@ impl Typesetter {
                 strike: false,
             });
         }
-        Self::line(&mut out, row, 0, baseline, width, false, 0.0);
+        Self::line(&mut out, row, 0, baseline, width, false, 0.0, cap);
         out
     }
     // Places one visual row. `indent` is where the row's first box starts, used by hanging
     // rows; centered display rows ignore it.
+    #[allow(clippy::too_many_arguments)] // `cap` is the row's only extra input; a struct would wrap one call shape
     fn line(
         out: &mut Layout,
         items: Vec<BoxItem>,
@@ -557,6 +658,7 @@ impl Typesetter {
         width: f32,
         display: bool,
         indent: f32,
+        cap: (f32, f32),
     ) {
         let ascent = items
             .iter()
@@ -580,24 +682,37 @@ impl Typesetter {
             stops: vec![(start, x)],
             top,
             height: ascent + descent + padding * 2.0,
+            baseline,
+            carets: Vec::new(),
+            start_caret: items
+                .first()
+                .and_then(|item| item.word.as_ref())
+                .map_or(cap, |word| word.inks[0]),
         };
         let mut struck: Option<f32> = None;
         for item in items {
             let y = top + padding + ascent - item.ascent;
-            if let Some(word) = item.word {
-                out.glyphs
-                    .extend(word.glyphs.into_iter().map(|glyph| Placed {
-                        glyph,
-                        x,
-                        baseline,
-                        color: item.color,
-                    }));
-                for (i, dx) in word.stops {
-                    if line.stops.last().is_some_and(|p| p.0 == item.start + i) {
-                        line.stops.pop();
+            match item.word {
+                Some(word) => {
+                    out.glyphs
+                        .extend(word.glyphs.into_iter().map(|glyph| Placed {
+                            glyph,
+                            x,
+                            baseline,
+                            color: item.color,
+                        }));
+                    for (k, ((i, dx), ink)) in word.stops.into_iter().zip(word.inks).enumerate() {
+                        if line.stops.last().is_some_and(|p| p.0 == item.start + i) {
+                            line.stops.pop();
+                        }
+                        line.stops.push((item.start + i, x + dx));
+                        // The first stop has no letter before it; the line start covers it.
+                        if k > 0 {
+                            line.carets.push((item.start + i, ink));
+                        }
                     }
-                    line.stops.push((item.start + i, x + dx));
                 }
+                None => line.carets.push((item.end, (item.ascent, item.descent))),
             }
             if let Some(image) = item.math {
                 if line.stops.last().is_some_and(|p| p.0 == item.start) {
@@ -673,6 +788,17 @@ impl Layout {
             .map(|p| p.1)
             .unwrap_or(0.0);
         (row, x)
+    }
+    // Top and height of the caret on `row` at `byte`: the ink of the letter that ends there,
+    // else the cap height at the line start.
+    pub fn caret_extent(&self, row: usize, byte: usize) -> (f32, f32) {
+        let line = &self.lines[row];
+        let (ascent, descent) = line
+            .carets
+            .iter()
+            .find(|c| c.0 == byte)
+            .map_or(line.start_caret, |c| c.1);
+        (line.baseline - ascent, ascent + descent)
     }
     pub fn hit(&self, row: usize, x: f32) -> usize {
         let row = row.min(self.lines.len().saturating_sub(1));
@@ -808,6 +934,53 @@ mod tests {
         }
         let layout = t.layout("`code`", 680.0);
         assert_eq!(row(&layout, 0)[1].glyph.font_size, FONT_SIZE * MONO_SCALE);
+    }
+
+    #[test]
+    fn caret_height_follows_the_last_letter_ink() {
+        let mut t = Typesetter::new();
+        // Bytes: A=0, l=1, e=2, y=3, '.'=4. The caret after byte b sits after the letter at b-1.
+        let layout = t.layout("Aley.", 680.0);
+        let (a, l, e, y, dot) = (
+            layout.caret_extent(0, 1),
+            layout.caret_extent(0, 2),
+            layout.caret_extent(0, 3),
+            layout.caret_extent(0, 4),
+            layout.caret_extent(0, 5),
+        );
+        let bottom = |(top, height): (f32, f32)| top + height;
+        let baseline = layout.lines[0].baseline;
+        assert!(a.0 < e.0, "cap is above x-height");
+        assert!(l.0 < e.0, "ascender is above x-height");
+        // Measured at quarter-point precision: l 13.25, A 12.5.
+        assert!(l.1 > a.1, "ascender is taller than the cap");
+        assert!(
+            bottom(y) > baseline + 1.0,
+            "descender reaches below the baseline"
+        );
+        assert!(
+            (bottom(e) - baseline).abs() < 1.0,
+            "x-height ends at the baseline"
+        );
+        assert!(
+            (dot.1 - e.1).abs() < 1.0,
+            "a period is as tall as an x-height letter"
+        );
+        let empty = t.layout("", 680.0);
+        let line = &empty.lines[0];
+        let (top, height) = empty.caret_extent(0, 0);
+        assert!((height - a.1).abs() < 0.01 && (top - a.0).abs() < 0.01);
+        assert!(top >= line.top && top + height <= line.top + line.height);
+        // A closed one-line prompt's caret follows its last letter, not the full line box.
+        let doc = Document::new("a \\x squared\\ b");
+        assert!(doc.formulas.contains_key(&2));
+        let label = t.document(&doc, 680.0);
+        let (_, label_height) = label.caret_extent(0, 2 + ATOM.len());
+        assert!(
+            label_height <= y.1 + 1.0,
+            "label caret {label_height} vs y {}",
+            y.1
+        );
     }
 
     #[test]

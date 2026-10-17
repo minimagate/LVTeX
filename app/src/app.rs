@@ -287,18 +287,20 @@ impl App {
         } else {
             CARET_COLOR
         };
+        let (caret_top, caret_height) = self.layout.caret_extent(row, self.doc.caret);
+        let caret_y = TOP + caret_top - self.scroll;
         if self.focused
             && self.doc.selection().is_empty()
             && (self.math.is_none() || !manual_preview_has_caret)
         {
-            render::rect(
+            render::caret(
                 &mut pixels,
                 width,
                 height,
-                (left + x) * scale,
-                (TOP + line_top + 4.0 - self.scroll) * scale,
-                scale.max(1.0),
-                (line_height - 8.0) * scale,
+                left + x,
+                caret_y,
+                caret_height,
+                scale,
                 caret_color,
             );
         }
@@ -306,11 +308,8 @@ impl App {
             eprintln!("Present: {error}");
         }
         self.window.as_ref().unwrap().set_ime_cursor_area(
-            LogicalPosition::new(
-                (left + x) as f64,
-                (TOP + line_top + line_height - self.scroll) as f64,
-            ),
-            LogicalSize::new(1.0, line_height as f64),
+            LogicalPosition::new((left + x) as f64, caret_y as f64),
+            LogicalSize::new(1.0, caret_height as f64),
         );
     }
     fn save(&mut self, save_as: bool) -> bool {
