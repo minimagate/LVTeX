@@ -16,7 +16,7 @@ fn render_formulas(doc: &mut Document) {
 #[test]
 fn exports_typeset_pdf_with_prompts_and_escaped_prose() {
     let mut doc = Document::new(
-        "# Title\n\nA line with # * _ \\$ \\\\ @ < [ characters.\n\nInline $x^2$ here.\n\n$$\n\\int_0^1 x dx\n$$\n\n\\half of x\\",
+        "# Title\n\nA line with # * _ \\$ \\\\ @ < [ characters.\n\nInline $x^2$ here.\n\n$$\n\\int_0^1 x dx\n$$\n\n<!--mathstral:pending:aGFsZiBvZiB4-->",
     );
     assert_eq!(unrendered(&doc), 3);
     render_formulas(&mut doc);

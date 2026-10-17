@@ -7,6 +7,7 @@ use std::{
 };
 
 pub(super) const LITERAL_BACKSLASH: &str = "<!--mathstral:literal-->";
+const PENDING_PREFIX: &str = "<!--mathstral:pending:";
 
 impl Document {
     pub fn markdown(&self) -> String {
@@ -37,13 +38,12 @@ impl Document {
                     continue;
                 }
             }
-            if let Some(edit) = editing {
-                if pos == edit.start {
-                    result.push('\\');
-                }
-                if pos == edit.end {
-                    result.push('\\');
-                }
+            if let Some(edit) = editing
+                && pos == edit.start
+            {
+                push_pending(&mut result, &text[edit.start..edit.end]);
+                pos = edit.end;
+                continue;
             }
             if text[pos..range.end].starts_with(LITERAL_BACKSLASH) {
                 push_literal_marker(&mut result);
@@ -74,7 +74,7 @@ impl Document {
                     }
                 } else {
                     if let Some(prompt) = &f.prompt {
-                        push_prompt_label(&mut result, prompt, escape);
+                        push_pending(&mut result, prompt);
                     } else {
                         let label = f.label();
                         result.push_str(&if escape { escape_label(&label) } else { label });
@@ -83,9 +83,7 @@ impl Document {
                 pos += ATOM.len();
             } else {
                 let c = text[pos..].chars().next().unwrap();
-                let literal_prompt_slash =
-                    c == '\\' && editing.is_some_and(|edit| edit.start <= pos && pos < edit.end);
-                let literal = c == '\\' && (self.cancelled.contains(&pos) || literal_prompt_slash);
+                let literal = c == '\\' && self.cancelled.contains(&pos);
                 if literal {
                     result.push_str(LITERAL_BACKSLASH);
                 }
@@ -106,14 +104,6 @@ impl Document {
                 pos = next;
             }
         }
-        if let Some(edit) = editing {
-            if edit.start == range.end {
-                result.push('\\');
-            }
-            if edit.end == range.end {
-                result.push('\\');
-            }
-        }
         result
     }
 }
@@ -131,30 +121,12 @@ fn escape_label(label: &str) -> String {
     out
 }
 
-fn push_prompt_label(out: &mut String, prompt: &str, escape: bool) {
-    out.push('\\');
-    let mut i = 0;
-    while i < prompt.len() {
-        if prompt[i..].starts_with(LITERAL_BACKSLASH) {
-            push_literal_marker(out);
-            i += LITERAL_BACKSLASH.len();
-            continue;
-        }
-        let c = prompt[i..].chars().next().unwrap();
-        if c == '\\' {
-            out.push_str(LITERAL_BACKSLASH);
-            out.push_str(if escape { r"\\" } else { r"\" });
-        } else if c == '$' && escape {
-            out.push_str("\\$");
-        } else if c == '$' {
-            out.push_str(LITERAL_BACKSLASH);
-            out.push('$');
-        } else {
-            out.push(c);
-        }
-        i += c.len_utf8();
-    }
-    out.push('\\');
+// A pending prompt is a comment, so its text is never read as prose.
+fn push_pending(out: &mut String, prompt: &str) {
+    out.push_str(&format!(
+        "{PENDING_PREFIX}{}-->",
+        URL_SAFE_NO_PAD.encode(prompt)
+    ));
 }
 
 fn push_literal_marker(out: &mut String) {
@@ -253,6 +225,18 @@ pub(super) fn decode(
             }
             i += LITERAL_BACKSLASH.len();
             cancelled.insert(text.len());
+            continue;
+        }
+        // Malformed payloads fall through and stay plain text.
+        if let Some(rest) = source[i..].strip_prefix(PENDING_PREFIX)
+            && let Some(end) = rest.find("-->")
+            && let Ok(bytes) = URL_SAFE_NO_PAD.decode(&rest[..end])
+            && let Ok(prompt) = String::from_utf8(bytes)
+            && !prompt.is_empty()
+        {
+            formulas.insert(text.len(), Formula::new(Some(prompt), None));
+            text.push_str(ATOM);
+            i += PENDING_PREFIX.len() + end + "-->".len();
             continue;
         }
         if unescape {

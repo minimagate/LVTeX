@@ -146,7 +146,7 @@ fn caret_height_follows_the_last_letter_ink() {
     assert!((height - a.1).abs() < 0.01 && (top - a.0).abs() < 0.01);
     assert!(top >= line.top && top + height <= line.top + line.height);
     // A closed one-line prompt's caret follows its last letter, not the full line box.
-    let doc = Document::new("a \\x squared\\ b");
+    let doc = Document::new("a <!--mathstral:pending:eCBzcXVhcmVk--> b");
     assert!(doc.formulas.contains_key(&2));
     let label = t.document(&doc, 680.0);
     let (_, label_height) = label.caret_extent(0, 2 + ATOM.len());

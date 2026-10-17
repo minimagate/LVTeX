@@ -100,7 +100,8 @@ Documents are Markdown-compatible text:
 - Inline math is `$…$`; display math uses `$$` on separate lines.
 - AI source prompts follow formulas in `<!--mathstral:BASE64URL-->` comments
   (UTF-8, base64url without padding).
-- Pending prompts use `\prompt\` and resume when opened.
+- Pending AI prompts are saved as `<!--mathstral:pending:BASE64URL-->` comments
+  (UTF-8, base64url without padding) and resume when opened.
 - Literal dollar signs in prose use `\$`. A `<!--mathstral:literal-->` comment
   protects literal delimiter-like text; doubled comments encode the marker itself.
 - An inline formula ending in a TeX `%` comment gains a newline before its closing

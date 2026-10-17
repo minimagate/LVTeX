@@ -90,7 +90,6 @@ impl Document {
         d.rope = Rope::from_str(&plain);
         d.formulas = atoms;
         d.cancelled = cancelled;
-        d.close_prompts();
         d.caret = 0;
         d.anchor = 0;
         d.saved = d.markdown();
@@ -203,7 +202,6 @@ impl Document {
         }
         self.caret = range.start + value.len();
         self.anchor = self.caret;
-        self.close_prompts();
         self.typing = if typing && !structural {
             Some(now)
         } else {
@@ -235,7 +233,6 @@ impl Document {
         }
         self.caret = start + plain.len();
         self.anchor = self.caret;
-        self.close_prompts();
     }
 
     pub fn retry(&mut self, pos: usize) {

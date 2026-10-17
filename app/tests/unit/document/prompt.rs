@@ -245,12 +245,14 @@ fn cancelling_ai_prompt_keeps_literal_text_and_undo_restores_edit() {
     );
 }
 #[test]
-fn reopening_prompt_edits_plain_text_and_saves_legacy_delimiters() {
-    let mut doc = Document::new(r"before \sum_{i=1}^n i\ after");
+fn reopening_pending_prompt_edits_its_text_and_saves_the_comment() {
+    let source = format!("before {} after", pending_comment(r"sum_{i=1}^n i"));
+    let mut doc = Document::new(&source);
     assert_eq!(doc.formulas[&7].label(), r"sum_{i=1}^n i");
     assert!(doc.reopen(7));
     assert_eq!(doc.text(), "before sum_{i=1}^n i after");
-    assert_eq!(doc.markdown(), r"before \sum_{i=1}^n i\ after");
+    assert_eq!(doc.markdown(), source);
     assert!(doc.submit_prompt());
     assert_eq!(doc.formulas[&7].prompt.as_deref(), Some("sum_{i=1}^n i"));
+    assert_eq!(doc.markdown(), source);
 }

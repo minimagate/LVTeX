@@ -44,7 +44,11 @@ fn edits_that_expose_a_backslash_keep_it_literal() {
 }
 #[test]
 fn atoms_survive_edits_and_history_and_roundtrip() {
-    let mut d = Document::new(r"A \one\ and \two\.");
+    let mut d = Document::new(&format!(
+        "A {} and {}.",
+        pending_comment("one"),
+        pending_comment("two")
+    ));
     let id = d.formulas[&2].id;
     d.move_to(0, false);
     d.replace("prefix ", true);

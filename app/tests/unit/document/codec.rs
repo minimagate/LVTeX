@@ -3,16 +3,12 @@ use super::*;
 #[test]
 fn backslash_rules() {
     let mut d = Document::new(r"and\or C:\a\b \1\2 plus a\b\ done");
-    assert_eq!(d.formulas.len(), 1);
-    assert_eq!(
-        d.formulas.values().next().unwrap().prompt.as_deref(),
-        Some(r"1\2 plus a\b")
-    );
-    assert_eq!(d.text(), format!(r"and\or C:\a\b {ATOM} done"));
+    assert!(d.formulas.is_empty());
+    assert_eq!(d.text(), r"and\or C:\a\b \1\2 plus a\b\ done");
     // Typed backslashes are ordinary prose: they open and close nothing.
     d.move_to(d.rope.len_bytes(), false);
     type_text(&mut d, r" \unfinished\");
-    assert_eq!(d.formulas.len(), 1);
+    assert!(d.formulas.is_empty());
     assert!(d.open_range().is_none());
     assert!(d.text().ends_with(r" \unfinished\"));
     assert_eq!(Document::new(&d.markdown()).text(), d.text());
@@ -141,16 +137,10 @@ fn dollars_in_prose_survive_save_and_reopen() {
     assert_eq!(d.markdown(), "a\\\\\\$");
     assert_eq!(Document::new(&d.markdown()).text(), "a\\$");
     let d = Document::new(r"x \cost \$5\ y");
-    assert_eq!(
-        d.formulas.values().next().unwrap().prompt.as_deref(),
-        Some("cost $5")
-    );
+    assert!(d.formulas.is_empty());
+    assert_eq!(d.text(), r"x \cost $5\ y");
     assert_eq!(d.markdown(), r"x \cost \$5\ y");
-    let reopened = Document::new(&d.markdown());
-    assert_eq!(
-        reopened.formulas.values().next().unwrap().prompt.as_deref(),
-        Some("cost $5")
-    );
+    assert!(Document::new(&d.markdown()).formulas.is_empty());
     let mut d = Document::new("$5");
     d.move_to(0, false);
     d.move_to(d.rope.len_bytes(), true);
@@ -179,16 +169,7 @@ fn backslashes_round_trip() {
     let d = Document::new(r"x \cost \$5\ y");
     assert_eq!(d.markdown(), r"x \cost \$5\ y");
     assert_round_trip(&d);
-    assert_eq!(
-        Document::new(&d.markdown())
-            .formulas
-            .values()
-            .next()
-            .unwrap()
-            .prompt
-            .as_deref(),
-        Some("cost $5")
-    );
+    assert!(Document::new(&d.markdown()).formulas.is_empty());
 }
 #[test]
 fn backslash_prompts_round_trip() {
@@ -232,11 +213,7 @@ fn prompt_backslashes_survive_save_edit_and_copy_round_trips() {
         assert_eq!(editing.text(), prompt);
 
         let editing_saved = editing.markdown();
-        assert_eq!(
-            editing_saved.contains(LITERAL_BACKSLASH),
-            prompt.contains('\\'),
-            "{prompt:?}: {editing_saved:?}"
-        );
+        assert_eq!(editing_saved, pending_comment(prompt), "{prompt:?}");
         let editing_reopened = Document::new(&editing_saved);
         assert_eq!(
             editing_reopened
@@ -252,7 +229,7 @@ fn prompt_backslashes_survive_save_edit_and_copy_round_trips() {
 
         assert!(editing.submit_prompt());
         let saved = editing.markdown();
-        assert_eq!(saved.contains(LITERAL_BACKSLASH), prompt.contains('\\'));
+        assert_eq!(saved, pending_comment(prompt), "{prompt:?}");
         let reopened = Document::new(&saved);
         assert_eq!(
             reopened.formulas.values().next().unwrap().prompt.as_deref(),
@@ -263,11 +240,7 @@ fn prompt_backslashes_survive_save_edit_and_copy_round_trips() {
         editing.move_to(0, false);
         editing.move_to(ATOM.len(), true);
         let copied = editing.selected();
-        assert_eq!(
-            copied.contains(LITERAL_BACKSLASH),
-            prompt.contains('\\') || prompt.contains('$'),
-            "{prompt:?}"
-        );
+        assert_eq!(copied, pending_comment(prompt), "{prompt:?}");
         let mut pasted = Document::new("");
         pasted.paste(&copied);
         assert_eq!(
@@ -275,5 +248,65 @@ fn prompt_backslashes_survive_save_edit_and_copy_round_trips() {
             Some(prompt),
             "copied prompt {prompt:?}"
         );
+    }
+}
+#[test]
+fn pending_prompt_round_trips_as_comment() {
+    let prompt = r"cost $5 \ naïve ∫";
+    let source = format!("a {} b", pending_comment(prompt));
+    let mut d = Document::new(&source);
+    assert_eq!(d.text(), format!("a {ATOM} b"));
+    assert_eq!(d.formulas[&2].prompt.as_deref(), Some(prompt));
+    assert!(d.formulas[&2].latex.is_none());
+    assert_eq!(d.markdown(), source);
+    assert_round_trip(&d);
+
+    // Copying a pending formula keeps it pending.
+    d.move_to(2, false);
+    d.move_to(2 + ATOM.len(), true);
+    let copied = d.selected();
+    assert_eq!(copied, pending_comment(prompt));
+    let mut pasted = Document::new("");
+    pasted.paste(&copied);
+    assert_eq!(pasted.formulas[&0].prompt.as_deref(), Some(prompt));
+    assert!(pasted.formulas[&0].latex.is_none());
+}
+#[test]
+fn ai_prompt_being_edited_saves_as_pending_comment() {
+    let mut d = Document::new("ab");
+    d.move_to(1, false);
+    d.open_ai_prompt();
+    type_text(&mut d, r"x \ $y");
+    assert_eq!(d.markdown(), format!("a {} b", pending_comment(r"x \ $y")));
+    let reopened = Document::new(&d.markdown());
+    assert_eq!(reopened.formulas[&2].prompt.as_deref(), Some(r"x \ $y"));
+}
+#[test]
+fn backslash_prose_is_plain_text() {
+    for source in [r"a \x\ b", r"C:\Users\me\ end"] {
+        let d = Document::new(source);
+        assert!(d.formulas.is_empty(), "{source:?}");
+        assert_eq!(d.text(), source);
+        assert_eq!(d.markdown(), source);
+    }
+}
+#[test]
+fn pending_comment_format_is_pinned() {
+    let d = Document::new("<!--mathstral:pending:c3Vt-->");
+    assert_eq!(d.formulas[&0].prompt.as_deref(), Some("sum"));
+    assert_eq!(d.markdown(), "<!--mathstral:pending:c3Vt-->");
+}
+#[test]
+fn malformed_pending_comment_stays_plain_text() {
+    for source in [
+        "a <!--mathstral:pending:!!!--> b",
+        "a <!--mathstral:pending:--> b",
+        "a <!--mathstral:pending:/w--> b",
+        "a <!--mathstral:pending:YQ b",
+    ] {
+        let d = Document::new(source);
+        assert!(d.formulas.is_empty(), "{source:?}");
+        assert_eq!(d.text(), source, "{source:?}");
+        assert_eq!(d.markdown(), source, "{source:?}");
     }
 }

@@ -5,8 +5,16 @@ use crate::{
     math::tree::MathTree,
     view::{layout::Typesetter, render},
 };
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use mathstral_render::math::Renderer;
 use std::{sync::Arc, time::Instant};
+
+fn pending(prompt: &str) -> String {
+    format!(
+        "<!--mathstral:pending:{}-->",
+        URL_SAFE_NO_PAD.encode(prompt)
+    )
+}
 
 fn finish(doc: &mut Document, renderer: &mut Renderer) {
     for job in doc.jobs() {
@@ -36,8 +44,16 @@ fn finish(doc: &mut Document, renderer: &mut Renderer) {
 }
 #[test]
 fn mixed_page_baselines_roundtrip_pixels_and_atomic_editing() {
-    let source = "# A page of mathematics\n\nThe area is \\integral from 0 to 1 of x^2 dx\\ which gives us \\1 over 3\\.\nWe can keep writing while the next expression takes shape.\n\n\\sum of 1 over n squared from 1 to infinity equals pi squared over 6\\\n\nA matrix \\matrix rows 1 2 and 3 4\\ fits in the same sentence.\n\n\\f of x is x squared for nonnegative x, minus x otherwise\\\n\n\\align x plus y equals 3 and x minus y equals 1\\\n\nand/or, https://example.com/a/b and C:\\dir\\file remain ordinary text.";
-    let mut doc = Document::new(source);
+    let source = format!(
+        "# A page of mathematics\n\nThe area is {} which gives us {}.\nWe can keep writing while the next expression takes shape.\n\n{}\n\nA matrix {} fits in the same sentence.\n\n{}\n\n{}\n\nand/or, https://example.com/a/b and C:\\dir\\file remain ordinary text.",
+        pending("integral from 0 to 1 of x^2 dx"),
+        pending("1 over 3"),
+        pending("sum of 1 over n squared from 1 to infinity equals pi squared over 6"),
+        pending("matrix rows 1 2 and 3 4"),
+        pending("f of x is x squared for nonnegative x, minus x otherwise"),
+        pending("align x plus y equals 3 and x minus y equals 1"),
+    );
+    let mut doc = Document::new(&source);
     let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
     finish(&mut doc, &mut renderer);
     let mut t = Typesetter::new();
@@ -141,7 +157,7 @@ fn mixed_page_baselines_roundtrip_pixels_and_atomic_editing() {
 }
 #[test]
 fn late_results_deleted_atoms_and_undo_never_target_other_text() {
-    let mut d = Document::new(r"\first\ \second\");
+    let mut d = Document::new(&format!("{} {}", pending("first"), pending("second")));
     let jobs = d.jobs();
     let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
     let image = Arc::new(math::render::render(&mut renderer, "x^2").unwrap());
@@ -161,7 +177,7 @@ fn late_results_deleted_atoms_and_undo_never_target_other_text() {
     assert!(d.formulas[&7].image.is_some());
     d.undo(true);
     assert!(d.text().contains("gone"));
-    let mut other = Document::new(r"\first\");
+    let mut other = Document::new(&pending("first"));
     assert!(!other.complete(jobs[0].id, Ok(image)));
 }
 #[test]
@@ -174,7 +190,9 @@ fn ten_pending_prompts_do_not_block_typing() {
         ));
         doc.move_to(doc.rope.len_bytes(), false);
         for i in 0..pending {
-            doc.replace(&format!("\\integral number {i}\\ "), false);
+            doc.open_ai_prompt();
+            doc.replace(&format!("integral number {i}"), false);
+            assert!(doc.submit_prompt());
         }
         doc.replace("\n", false);
         let mut timings = Vec::new();
