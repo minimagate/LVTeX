@@ -6,8 +6,6 @@ for Formula) to describe a formula and have a local model turn it into LaTeX.
 Formulas render in the background with MiTeX and Typst, so writing never waits for
 typesetting.
 
-![Mathstral editor with inline and display math](artifacts/editor-math.png)
-
 ## Requirements
 
 - macOS on Apple Silicon (the only platform tested).
@@ -89,7 +87,7 @@ Files are Markdown-compatible text.
 | `assets/fonts/` | Bundled fonts and their licenses ([details](assets/fonts/README.md)) |
 | `scripts/` | Build and packaging scripts |
 | `docs/` | Editor reference, rendering evaluation and original design brief |
-| `artifacts/` | Sample screenshots, saved documents and benchmark output |
+| `artifacts/` | Sample document and rendering benchmark output |
 
 ## Known limitations
 

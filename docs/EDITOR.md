@@ -246,11 +246,7 @@ The editor tests cover:
 
 Sample output:
 
-- [`artifacts/editor-math.png`](../artifacts/editor-math.png): a mixed inline and display page.
-- [`artifacts/math-demo.md`](../artifacts/math-demo.md): the portable source of that page.
-- [`artifacts/live-math.md`](../artifacts/live-math.md): the document produced during
-  native checks with the installed model, which exercised prompts, cancellation,
-  regeneration, undo and redo, and reopening rendered math.
+- [`artifacts/math-demo.md`](../artifacts/math-demo.md): a sample page with inline and display math in the portable format.
 
 ## Performance
 

@@ -23,7 +23,7 @@ crates/latex/vendor/   Vendored MiTeX Typst command library
 assets/fonts/          Bundled fonts and their licences
 scripts/               Build and packaging scripts
 docs/                  EDITOR.md (behavior), RENDERING-SPIKE.md, BRIEF.md (design brief)
-artifacts/             Screenshots, sample documents, benchmark output
+artifacts/             Sample document, rendering benchmark output
 .agents/skills/        Procedures and guidance; start with how-we-work
 ```
 
