@@ -5,6 +5,7 @@ mod config;
 mod export;
 mod file;
 mod layout;
+mod markdown;
 mod math;
 mod menu;
 mod render;
