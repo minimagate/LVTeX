@@ -1,7 +1,7 @@
 //! Undo and redo history of the document.
 use super::{Document, Formula, prompt::Editing};
 use ropey::Rope;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 #[derive(Clone)]
 pub(super) struct Snapshot {
@@ -9,7 +9,6 @@ pub(super) struct Snapshot {
     caret: usize,
     anchor: usize,
     pub(super) formulas: BTreeMap<usize, Formula>,
-    cancelled: BTreeSet<usize>,
     editing: Option<Editing>,
 }
 
@@ -30,7 +29,6 @@ impl Document {
             caret: self.caret,
             anchor: self.anchor,
             formulas: self.formulas.clone(),
-            cancelled: self.cancelled.clone(),
             editing: self.editing.clone(),
         }
     }
@@ -62,7 +60,6 @@ impl Document {
         self.caret = p.caret;
         self.anchor = p.anchor;
         self.formulas = p.formulas;
-        self.cancelled = p.cancelled;
         self.editing = p.editing;
     }
 }

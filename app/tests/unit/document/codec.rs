@@ -28,6 +28,14 @@ fn typed_backslashes_that_cannot_open_save_without_marker() {
     assert_eq!(reopened.text(), r"C:\path");
 }
 #[test]
+fn old_literal_marker_is_ordinary_prose() {
+    let source = r"<!--mathstral:literal-->\x\";
+    let d = Document::new(source);
+    assert!(d.formulas.is_empty());
+    assert_eq!(d.text(), source);
+    assert_eq!(d.markdown(), source);
+}
+#[test]
 fn portable_math_is_never_in_visible_buffer() {
     let source = "Before $\\frac{1}{3}$<!--mathstral:MSBvdmVyIDM--> after\n$$\n\\int_0^1 x dx\n$$";
     let d = Document::new(source);
@@ -186,7 +194,7 @@ fn backslash_prompts_round_trip() {
     let mut d = Document::new("");
     type_text(&mut d, r"\$5 and x");
     assert!(d.open_range().is_none());
-    assert_eq!(d.markdown(), r"<!--mathstral:literal-->\\\$5 and x");
+    assert_eq!(d.markdown(), r"\\\$5 and x");
     assert_round_trip(&d);
     assert!(Document::new(&d.markdown()).formulas.is_empty());
     let d = Document::new("/x/ and /y");

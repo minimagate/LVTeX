@@ -61,7 +61,7 @@ using that cache, prefix `CARGO_HOME="$PWD/.cargo-home"` and add `--offline`.
   commands, supported behavior or layout change. Keep detailed rules in code
   comments and regression tests rather than duplicating them in extra documents.
 - Preserve the Markdown file encoding: `$…$`, display `$$` lines, source-prompt
-  comments, literal-marker escaping and pending-prompt comments. These and the
+  comments, `\$` and `\\` escaping and pending-prompt comments. These and the
   settings format are compatibility boundaries.
 - Settings and the last-opened file live in
   `~/Library/Application Support/Mathstral`.

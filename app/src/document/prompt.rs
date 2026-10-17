@@ -12,30 +12,6 @@ pub(super) struct Editing {
 }
 
 impl Document {
-    /// Marks a backslash that an edit left at an opening boundary as literal, the same mark Escape
-    /// leaves. Only such a backslash can open a prompt, so the others stay plain text and save
-    /// without the literal marker. Checks the backslashes at the edit and the one just after it,
-    /// since only that character's opening status can change. Backslashes inside an open AI prompt
-    /// stay plain prompt text.
-    pub(super) fn mark_literal_backslashes(&mut self, start: usize, inserted_len: usize) {
-        let text = self.text();
-        let end = start + inserted_len;
-        let marks: Vec<usize> = text
-            .char_indices()
-            .filter(|&(pos, c)| {
-                c == '\\'
-                    && start <= pos
-                    && pos <= end
-                    && opening_boundary(&text, pos)
-                    && !self
-                        .editing
-                        .as_ref()
-                        .is_some_and(|edit| edit.start <= pos && pos < edit.end)
-            })
-            .map(|(pos, _)| pos)
-            .collect();
-        self.cancelled.extend(marks);
-    }
     pub fn open_range(&self) -> Option<Range<usize>> {
         self.editing.as_ref().map(|e| e.start..e.end)
     }
@@ -62,12 +38,6 @@ impl Document {
             self.anchor = start;
             return true;
         }
-        let text = self.text();
-        self.cancelled.extend(
-            text[edit.start..edit.end]
-                .char_indices()
-                .filter_map(|(offset, c)| (c == '\\').then_some(edit.start + offset)),
-        );
         self.editing = None;
         true
     }

@@ -102,8 +102,7 @@ Documents are Markdown-compatible text:
   (UTF-8, base64url without padding).
 - Pending AI prompts are saved as `<!--mathstral:pending:BASE64URL-->` comments
   (UTF-8, base64url without padding) and resume when opened.
-- Literal dollar signs in prose use `\$`. A `<!--mathstral:literal-->` comment
-  protects literal delimiter-like text; doubled comments encode the marker itself.
+- Literal dollar signs in prose use `\$`.
 - An inline formula ending in a TeX `%` comment gains a newline before its closing
   `$`, so the delimiter is not swallowed by the comment.
 

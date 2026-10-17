@@ -1,5 +1,4 @@
 use super::*;
-use crate::document::codec::LITERAL_BACKSLASH;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 
 mod codec;

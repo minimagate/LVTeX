@@ -14,16 +14,19 @@ fn typed_backslash_is_literal_and_undoable() {
     d.undo(false);
     assert_eq!(d.text(), "");
     assert!(d.open_range().is_none());
+    d.undo(true);
+    assert_eq!(d.text(), r"a \b c\ d");
+    assert_eq!(d.markdown(), r"a \b c\ d");
 }
 #[test]
-fn edits_that_expose_a_backslash_keep_it_literal() {
-    // A space typed before the backslash makes it an opener, so it must be marked.
+fn edits_that_expose_a_backslash_save_as_plain_text() {
+    // A space typed before the backslash makes it an opener; it still saves as plain text.
     let mut d = Document::new("");
     type_text(&mut d, r"a\b");
     d.move_to(1, false);
     d.replace(" ", true);
     assert_eq!(d.text(), r"a \b");
-    assert!(d.markdown().contains(LITERAL_BACKSLASH));
+    assert_eq!(d.markdown(), r"a \b");
     let reopened = Document::new(&d.markdown());
     assert!(reopened.formulas.is_empty());
     assert_eq!(reopened.text(), r"a \b");

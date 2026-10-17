@@ -164,7 +164,7 @@ impl App {
             self.math_input(text.chars().map(MathKey::Text));
             return;
         }
-        // A typed backslash is ordinary prose; the document keeps it literal.
+        // A typed backslash is ordinary prose.
         self.doc.replace(&text, true);
         self.goal_x = None;
         self.changed(true);

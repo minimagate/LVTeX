@@ -1,12 +1,8 @@
 //! Text codec: the Markdown-compatible file format, pasted text and formula labels.
 use super::{ATOM, ATOM_CHAR, Document, Formula};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    ops::Range,
-};
+use std::{collections::BTreeMap, ops::Range};
 
-pub(super) const LITERAL_BACKSLASH: &str = "<!--mathstral:literal-->";
 const PENDING_PREFIX: &str = "<!--mathstral:pending:";
 
 impl Document {
@@ -45,11 +41,6 @@ impl Document {
                 pos = edit.end;
                 continue;
             }
-            if text[pos..range.end].starts_with(LITERAL_BACKSLASH) {
-                push_literal_marker(&mut result);
-                pos += LITERAL_BACKSLASH.len();
-                continue;
-            }
             if let Some(f) = self.formulas.get(&pos) {
                 let display = Self::is_display_in(&text, pos);
                 if let Some(latex) = &f.latex {
@@ -83,14 +74,8 @@ impl Document {
                 pos += ATOM.len();
             } else {
                 let c = text[pos..].chars().next().unwrap();
-                let literal = c == '\\' && self.cancelled.contains(&pos);
-                if literal {
-                    result.push_str(LITERAL_BACKSLASH);
-                }
                 let next = pos + c.len_utf8();
-                if literal {
-                    result.push_str(if escape { r"\\" } else { r"\" });
-                } else if c == '$' && escape {
+                if c == '$' && escape {
                     result.push_str("\\$");
                 } else if c == '\\'
                     && escape
@@ -127,30 +112,6 @@ fn push_pending(out: &mut String, prompt: &str) {
         "{PENDING_PREFIX}{}-->",
         URL_SAFE_NO_PAD.encode(prompt)
     ));
-}
-
-fn push_literal_marker(out: &mut String) {
-    out.push_str(LITERAL_BACKSLASH);
-    out.push_str(LITERAL_BACKSLASH);
-}
-
-pub(super) fn unescape_literal_markers(source: &str) -> String {
-    let mut result = String::with_capacity(source.len());
-    let mut i = 0;
-    while i < source.len() {
-        if source[i..].starts_with(LITERAL_BACKSLASH) {
-            let marker_end = i + LITERAL_BACKSLASH.len();
-            if source[marker_end..].starts_with(LITERAL_BACKSLASH) {
-                result.push_str(LITERAL_BACKSLASH);
-                i = marker_end + LITERAL_BACKSLASH.len();
-                continue;
-            }
-        }
-        let c = source[i..].chars().next().unwrap();
-        result.push(c);
-        i += c.len_utf8();
-    }
-    result
 }
 
 fn is_tex_escaped(source: &str, index: usize) -> bool {
@@ -207,26 +168,11 @@ fn has_terminal_tex_comment(source: &str) -> bool {
 }
 
 // Files use `unescape`; pasted text is taken literally, as before escapes existed.
-pub(super) fn decode(
-    source: &str,
-    unescape: bool,
-) -> (String, BTreeMap<usize, Formula>, BTreeSet<usize>) {
+pub(super) fn decode(source: &str, unescape: bool) -> (String, BTreeMap<usize, Formula>) {
     let mut text = String::new();
     let mut formulas = BTreeMap::new();
-    let mut cancelled = BTreeSet::new();
     let mut i = 0;
     while i < source.len() {
-        if source[i..].starts_with(LITERAL_BACKSLASH) {
-            let marker_end = i + LITERAL_BACKSLASH.len();
-            if source[marker_end..].starts_with(LITERAL_BACKSLASH) {
-                text.push_str(LITERAL_BACKSLASH);
-                i = marker_end + LITERAL_BACKSLASH.len();
-                continue;
-            }
-            i += LITERAL_BACKSLASH.len();
-            cancelled.insert(text.len());
-            continue;
-        }
         // Malformed payloads fall through and stay plain text.
         if let Some(rest) = source[i..].strip_prefix(PENDING_PREFIX)
             && let Some(end) = rest.find("-->")
@@ -251,10 +197,7 @@ pub(super) fn decode(
                 continue;
             }
         }
-        if source.as_bytes()[i] == b'$'
-            && !cancelled.contains(&text.len())
-            && (unescape || !is_tex_escaped(source, i))
-        {
+        if source.as_bytes()[i] == b'$' && (unescape || !is_tex_escaped(source, i)) {
             let display = source[i..].starts_with("$$");
             let delimiter = if display { "$$" } else { "$" };
             let start = i + delimiter.len();
@@ -292,5 +235,5 @@ pub(super) fn decode(
         }
         i += c.len_utf8();
     }
-    (text, formulas, cancelled)
+    (text, formulas)
 }
