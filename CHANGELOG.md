@@ -38,3 +38,5 @@ First public alpha.
 - Defensive guards in the rendering path.
 - The workspace is restructured into `app/`, `crates/render` and `crates/latex`.
 - Unused fonts are removed from the bundle.
+- Math prompts are shown as dimmed text without an underline while typing and while waiting
+  for a formula.

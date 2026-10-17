@@ -197,11 +197,7 @@ impl Typesetter {
                                 scale: 1.0,
                                 display,
                                 color: PENDING_COLOR,
-                                mark: Some(if formula.failed {
-                                    FAILED_MARK_COLOR
-                                } else {
-                                    PENDING_MARK_COLOR
-                                }),
+                                mark: formula.failed.then_some(FAILED_MARK_COLOR),
                             });
                             // Reuse the word container for wrapped glyphs with a measured baseline.
                             let item = boxes.last_mut().unwrap();
@@ -271,13 +267,13 @@ impl Typesetter {
                             scale: 1.0,
                             display: false,
                             color: if active {
-                                PROMPT_COLOR
+                                PENDING_COLOR
                             } else if local + i + gi < marker_end {
                                 MARKER_COLOR
                             } else {
                                 TEXT_COLOR
                             },
-                            mark: active.then_some(PROMPT_MARK_COLOR),
+                            mark: None,
                         });
                     }
                 }

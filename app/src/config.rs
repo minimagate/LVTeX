@@ -12,10 +12,7 @@ pub const MARKER_COLOR: u32 = 0x73716F;
 pub const CARET_COLOR: u32 = 0xFF0000;
 pub const SELECTION_COLOR: u32 = 0x343434;
 pub const PENDING_COLOR: u32 = 0x868583;
-pub const PROMPT_COLOR: u32 = 0xC8CFCB;
 pub const FAILED_MARK_COLOR: u32 = 0x70484A;
-pub const PENDING_MARK_COLOR: u32 = 0x292B2A;
-pub const PROMPT_MARK_COLOR: u32 = 0x3C5147;
 
 // Math rendering cache entries kept per cache before it is cleared.
 pub const MATH_CACHE_LIMIT: usize = 512;
