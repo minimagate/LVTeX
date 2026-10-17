@@ -159,7 +159,12 @@ impl Document {
                         if display {
                             result.push_str(&format!("$$\n{latex}\n$$"));
                         } else {
-                            result.push_str(&format!("${latex}$"));
+                            result.push('$');
+                            result.push_str(latex);
+                            if has_terminal_tex_comment(latex) {
+                                result.push('\n');
+                            }
+                            result.push('$');
                         }
                         if let Some(prompt) = &f.prompt {
                             result.push_str(&format!(
@@ -913,6 +918,59 @@ fn push_prompt_label(out: &mut String, prompt: &str, escape: bool) {
     out.push('\\');
 }
 
+fn is_tex_escaped(source: &str, index: usize) -> bool {
+    let bytes = source.as_bytes();
+    let mut slashes = 0;
+    let mut i = index;
+    while i > 0 && bytes[i - 1] == b'\\' {
+        slashes += 1;
+        i -= 1;
+    }
+    slashes % 2 == 1
+}
+
+fn find_tex_delimiter(source: &str, start: usize, delimiter: &str) -> Option<usize> {
+    let mut i = start;
+    while i < source.len() {
+        match source.as_bytes()[i] {
+            b'\\' => {
+                i += 1;
+                if i < source.len() {
+                    i += source[i..].chars().next().unwrap().len_utf8();
+                }
+            }
+            b'%' => {
+                let newline = source[i..].find('\n')?;
+                i += newline + 1;
+            }
+            _ if source[i..].starts_with(delimiter) => return Some(i),
+            _ => i += source[i..].chars().next().unwrap().len_utf8(),
+        }
+    }
+    None
+}
+
+fn has_terminal_tex_comment(source: &str) -> bool {
+    let mut i = 0;
+    let mut in_comment = false;
+    while i < source.len() {
+        match source.as_bytes()[i] {
+            b'\n' if in_comment => in_comment = false,
+            b'\\' if !in_comment => {
+                i += 1;
+                if i < source.len() {
+                    i += source[i..].chars().next().unwrap().len_utf8();
+                }
+                continue;
+            }
+            b'%' if !in_comment => in_comment = true,
+            _ => {}
+        }
+        i += source[i..].chars().next().unwrap().len_utf8();
+    }
+    in_comment
+}
+
 // Files use `unescape`; pasted text is taken literally, as before escapes existed.
 fn decode(source: &str, unescape: bool) -> (String, BTreeMap<usize, Formula>, BTreeSet<usize>) {
     let mut text = String::new();
@@ -939,19 +997,21 @@ fn decode(source: &str, unescape: bool) -> (String, BTreeMap<usize, Formula>, BT
         }
         if source.as_bytes()[i] == b'$'
             && !cancelled.contains(&text.len())
-            && (unescape || i == 0 || source.as_bytes()[i - 1] != b'\\')
+            && (unescape || !is_tex_escaped(source, i))
         {
             let display = source[i..].starts_with("$$");
             let delimiter = if display { "$$" } else { "$" };
             let start = i + delimiter.len();
-            let end = source[start..]
-                .match_indices(delimiter)
-                .find(|(j, _)| *j == 0 || source.as_bytes()[start + j - 1] != b'\\')
-                .map(|(j, _)| start + j);
-            if let Some(end) =
-                end.filter(|&end| end > start && (display || !source[start..end].contains('\n')))
-            {
-                let latex = source[start..end].trim().to_owned();
+            let end = find_tex_delimiter(source, start, delimiter);
+            if let Some(end) = end.filter(|&end| end > start) {
+                let body = &source[start..end];
+                let latex = if display {
+                    let body = body.strip_prefix('\n').unwrap_or(body);
+                    let body = body.strip_suffix('\n').unwrap_or(body);
+                    body.to_owned()
+                } else {
+                    body.to_owned()
+                };
                 i = end + delimiter.len();
                 let mut prompt = None;
                 let prefix = "<!--mathstral:";
@@ -1036,6 +1096,92 @@ mod tests {
         assert!(!d.text().contains("frac"));
         assert_eq!(d.formulas[&7].prompt.as_deref(), Some("1 over 3"));
         assert_eq!(d.markdown(), source);
+    }
+    #[test]
+    fn manual_latex_round_trips_through_save_and_copy() {
+        for (latex, expected) in [
+            (r"a\\", r"a\\".to_owned()),
+            (r"x\$y", r"x\$y".to_owned()),
+            (r"a\\\$b", r"a\\\$b".to_owned()),
+            (r"\alpha + λ", r"\alpha + λ".to_owned()),
+            ("x\n+y", "x\n+y".to_owned()),
+            (" x \n+y ", " x \n+y ".to_owned()),
+            ("x% note $\n+y", "x% note $\n+y".to_owned()),
+            ("x% terminal $", "x% terminal $\n".to_owned()),
+        ] {
+            let mut doc = Document::new("before after");
+            doc.move_to(7, false);
+            doc.open_manual();
+            doc.update_manual(latex.to_owned());
+            doc.finish_manual();
+
+            let saved = doc.markdown();
+            let mut reopened = Document::new(&saved);
+            let formula_pos = *reopened.formulas.keys().next().unwrap();
+            assert_eq!(
+                reopened.formulas[&formula_pos].latex.as_deref(),
+                Some(expected.as_str()),
+                "{latex:?}"
+            );
+            assert_eq!(reopened.markdown(), saved, "{latex:?}");
+            let reopened_again = Document::new(&reopened.markdown());
+            assert_eq!(
+                reopened_again.formulas[&7].latex.as_deref(),
+                Some(expected.as_str()),
+                "{latex:?}"
+            );
+
+            reopened.move_to(formula_pos, false);
+            reopened.move_to(formula_pos + ATOM.len(), true);
+            let copied = reopened.selected();
+            let mut pasted = Document::new("");
+            pasted.paste(&copied);
+            let pasted_formula = pasted.formulas.values().next().unwrap();
+            assert_eq!(
+                pasted_formula.latex.as_deref(),
+                Some(expected.as_str()),
+                "copy {latex:?}"
+            );
+        }
+    }
+    #[test]
+    fn display_latex_preserves_source_whitespace_and_compact_legacy_form() {
+        for latex in [
+            " x \n\n",
+            r"a\\",
+            r"a\",
+            r"x\$y",
+            r"a\\\$b",
+            r"\alpha + λ",
+            "x% note $\n+y",
+            "x% terminal $",
+        ] {
+            let mut doc = Document::new("");
+            doc.open_manual();
+            doc.update_manual(latex.to_owned());
+            doc.finish_manual();
+            let saved = doc.markdown();
+            let mut reopened = Document::new(&saved);
+            assert_eq!(
+                reopened.formulas.values().next().unwrap().latex.as_deref(),
+                Some(latex),
+                "{latex:?}"
+            );
+            assert_eq!(reopened.markdown(), saved, "{latex:?}");
+            reopened.move_to(0, false);
+            reopened.move_to(ATOM.len(), true);
+            let copied = reopened.selected();
+            let mut pasted = Document::new("");
+            pasted.paste(&copied);
+            assert_eq!(
+                pasted.formulas.values().next().unwrap().latex.as_deref(),
+                Some(latex),
+                "copy {latex:?}"
+            );
+        }
+
+        let compact = Document::new("$$x$$");
+        assert_eq!(compact.formulas[&0].latex.as_deref(), Some("x"));
     }
     #[test]
     fn graphemes_words_and_history() {

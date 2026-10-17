@@ -191,6 +191,10 @@ TeXmacs's `math-kbd.scm`.
 
 - Inline math: `$body$`.
 - Display math: `$$` on its own line, the body on the lines between, and `$$` on its own line.
+- Inline source may contain newlines; inline versus display describes where the formula sits in the
+  document.
+- An inline formula ending in a live TeX `%` comment gets a newline before its closing `$`;
+  that newline remains part of the source when the file is reopened.
 - Prompt source: a comment `<!--mathstral:BASE64URL-->` directly after the formula. The payload
   is the UTF-8 original prompt, encoded in base64url without padding. Markdown readers hide it.
 - The reserved `<!--mathstral:literal-->` comment protects literal backslashes inside prompts,
