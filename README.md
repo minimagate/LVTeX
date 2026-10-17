@@ -1,6 +1,6 @@
 # Mathstral
 
-**Alpha software.** Mathstral is a native macOS editor for writing prose with inline
+Mathstral is a native macOS editor for writing prose with inline
 math. Type a rough description of a formula between slashes, such as
 `/integral from 0 to infinity of e^-x^2 dx/`, and keep writing. A local model
 running in [Ollama](https://ollama.com) turns the description into LaTeX. The
