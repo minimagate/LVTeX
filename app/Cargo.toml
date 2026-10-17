@@ -1,7 +1,12 @@
 [package]
 name = "mathstral"
-version = "0.1.0"
-edition = "2024"
+description = "A native macOS editor for writing prose with inline math"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
 publish = false
 
 [dependencies]
@@ -13,8 +18,8 @@ unicode-segmentation = "=1.13.3"
 muda = { version = "=0.21.2", default-features = false }
 rfd = "=0.17.2"
 arboard = { version = "=3.7.0", default-features = false }
-latex-spike = { path = "../tools/latex-spike" }
-mathstral-render-spike = { path = ".." }
+mathstral-latex = { path = "../crates/latex" }
+mathstral-render = { path = "../crates/render" }
 serde_json = "=1.0.154"
 base64 = "=0.22.1"
 

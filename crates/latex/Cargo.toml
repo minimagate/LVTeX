@@ -1,0 +1,25 @@
+[package]
+name = "mathstral-latex"
+description = "LaTeX to Typst math conversion via MiTeX, with the LaTeX benchmark binary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+name = "mathstral_latex"
+path = "src/lib.rs"
+
+[[bin]]
+name = "latex-spike"
+path = "src/main.rs"
+
+[dependencies]
+mathstral-render = { path = "../render" }
+mitex = "=0.2.4"
+# Select the prebuilt specification in this existing transitive dependency.
+# This makes builds independent of any installed Typst CLI.
+mitex-spec-gen = { version = "=0.2.4", features = ["prebuilt"] }

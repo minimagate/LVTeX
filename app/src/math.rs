@@ -1,6 +1,6 @@
 //! Background-only conversion and rendering. Nothing in this module runs on a key event.
 use crate::config::*;
-use mathstral_render_spike::math::Renderer;
+use mathstral_render::math::Renderer;
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -92,7 +92,7 @@ impl Worker {
             .name("mathstral-math".into())
             .stack_size(32 * 1024 * 1024)
             .spawn(move || {
-                let mut renderer = Renderer::with_prelude(latex_spike::PRELUDE);
+                let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
                 let mut cache: HashMap<String, Arc<FormulaImage>> = HashMap::new();
                 let send = |reply| {
                     let _ = replies.send(reply);
@@ -192,7 +192,7 @@ fn guarded<T>(
     work: impl FnOnce(&mut Renderer) -> Result<T, Error>,
 ) -> Result<T, Error> {
     panic::catch_unwind(AssertUnwindSafe(|| work(renderer))).unwrap_or_else(|_| {
-        *renderer = Renderer::with_prelude(latex_spike::PRELUDE);
+        *renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
         Err("renderer panicked".to_owned().into())
     })
 }
@@ -314,7 +314,7 @@ pub fn render(renderer: &mut Renderer, latex: &str) -> Result<FormulaImage, Stri
         return Err("empty or oversized expression".into());
     }
     reject_prose(latex)?;
-    let body = latex_spike::convert(latex)?;
+    let body = mathstral_latex::convert(latex)?;
     let mut image = |display| {
         let equation = if display {
             format!("$ {body} $")
@@ -322,7 +322,7 @@ pub fn render(renderer: &mut Renderer, latex: &str) -> Result<FormulaImage, Stri
             format!("#math.equation(block: true, math.inline(${body}$))")
         };
         let pixels = renderer.render_source(format!(
-            "#set page(width: auto, height: auto, margin: 2pt, fill: none)\n#set text(font: \"Libertinus Serif\", size: {FONT_SIZE}pt, fill: rgb(\"{TEXT_COLOR:06x}\"))\n#show math.equation: set text(font: \"New Computer Modern Math\")\n{}\n{equation}", latex_spike::PRELUDE), 2.0)?;
+            "#set page(width: auto, height: auto, margin: 2pt, fill: none)\n#set text(font: \"Libertinus Serif\", size: {FONT_SIZE}pt, fill: rgb(\"{TEXT_COLOR:06x}\"))\n#show math.equation: set text(font: \"New Computer Modern Math\")\n{}\n{equation}", mathstral_latex::PRELUDE), 2.0)?;
         Ok::<_, String>(Image {
             width: pixels.width() as usize,
             height: pixels.height() as usize,
@@ -578,7 +578,7 @@ mod tests {
             r"\frac{1}{3}"
         );
         assert_eq!(clean(r"Here it is: \[x^2\] This is squared."), "x^2");
-        let mut renderer = Renderer::with_prelude(latex_spike::PRELUDE);
+        let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
         let mut cache = HashMap::new();
         let mut calls = 0;
         let job = Job {

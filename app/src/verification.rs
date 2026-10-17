@@ -3,7 +3,7 @@ use crate::{
     layout::Typesetter,
     math, render,
 };
-use mathstral_render_spike::math::Renderer;
+use mathstral_render::math::Renderer;
 use std::{sync::Arc, time::Instant};
 
 fn finish(doc: &mut Document, renderer: &mut Renderer) {
@@ -33,7 +33,7 @@ fn finish(doc: &mut Document, renderer: &mut Renderer) {
 fn mixed_page_baselines_roundtrip_pixels_and_atomic_editing() {
     let source = "# A page of mathematics\n\nThe area is /integral from 0 to 1 of x^2 dx/ which gives us /1 over 3/.\nWe can keep writing while the next expression takes shape.\n\n/sum of 1 over n squared from 1 to infinity equals pi squared over 6/\n\nA matrix /matrix rows 1 2 and 3 4/ fits in the same sentence.\n\n/f of x is x squared for nonnegative x, minus x otherwise/\n\n/align x plus y equals 3 and x minus y equals 1/\n\nand/or and https://example.com/a/b remain ordinary text.";
     let mut doc = Document::new(source);
-    let mut renderer = Renderer::with_prelude(latex_spike::PRELUDE);
+    let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
     finish(&mut doc, &mut renderer);
     let mut t = Typesetter::new();
     let layout = t.document(&doc, 680.0);
@@ -129,7 +129,7 @@ fn mixed_page_baselines_roundtrip_pixels_and_atomic_editing() {
 fn late_results_deleted_atoms_and_undo_never_target_other_text() {
     let mut d = Document::new("/first/ /second/");
     let jobs = d.jobs();
-    let mut renderer = Renderer::with_prelude(latex_spike::PRELUDE);
+    let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
     let image = Arc::new(math::render(&mut renderer, "x^2").unwrap());
     d.move_to(0, false);
     d.replace("prefix ", false);

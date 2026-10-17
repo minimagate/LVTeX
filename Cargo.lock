@@ -1712,15 +1712,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "latex-spike"
-version = "0.1.0"
-dependencies = [
- "mathstral-render-spike",
- "mitex",
- "mitex-spec-gen",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.190"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1857,8 +1848,8 @@ dependencies = [
  "arboard",
  "base64 0.22.1",
  "cosmic-text",
- "latex-spike",
- "mathstral-render-spike",
+ "mathstral-latex",
+ "mathstral-render",
  "muda",
  "rfd",
  "ropey",
@@ -1870,7 +1861,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "mathstral-render-spike"
+name = "mathstral-latex"
+version = "0.1.0"
+dependencies = [
+ "mathstral-render",
+ "mitex",
+ "mitex-spec-gen",
+]
+
+[[package]]
+name = "mathstral-render"
 version = "0.1.0"
 dependencies = [
  "tiny-skia 0.12.0",

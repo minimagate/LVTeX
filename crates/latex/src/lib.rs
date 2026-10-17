@@ -96,7 +96,7 @@ fn validate_structure(latex: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mathstral_render_spike::{
+    use mathstral_render::{
         fixtures::FORMULAS,
         math::{Renderer, SCALE},
     };

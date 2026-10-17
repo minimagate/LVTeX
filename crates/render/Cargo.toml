@@ -1,0 +1,28 @@
+[package]
+name = "mathstral-render"
+description = "Typst-based math renderer for the Mathstral editor, with benchmark harness and fixtures"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+name = "mathstral_render"
+path = "src/lib.rs"
+
+[dependencies]
+typst = "=0.15.1"
+typst-layout = "=0.15.1"
+typst-render = "=0.15.1"
+tiny-skia = "=0.12.0"
+
+[[bin]]
+name = "typst-spike"
+path = "src/bin/typst-spike.rs"
+
+[[bin]]
+name = "size-baseline"
+path = "src/bin/size-baseline.rs"

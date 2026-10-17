@@ -32,8 +32,8 @@ impl Renderer {
 
     pub fn with_prelude(prelude: &'static str) -> Self {
         let fonts = [
-            include_bytes!("../assets/fonts/NewCMMath-Regular.otf").as_slice(),
-            include_bytes!("../assets/fonts/LibertinusSerif-Regular.otf").as_slice(),
+            include_bytes!("../../../assets/fonts/NewCMMath-Regular.otf").as_slice(),
+            include_bytes!("../../../assets/fonts/LibertinusSerif-Regular.otf").as_slice(),
         ]
         .into_iter()
         .map(|data| Font::new(Bytes::new(data), 0).expect("bundled font is valid"))

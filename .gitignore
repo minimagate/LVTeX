@@ -1,4 +1,5 @@
 /target/
 /.cargo-home/
-/tools/latex-spike/target/
+/dist/
+/.claude/
 .DS_Store
