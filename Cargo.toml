@@ -20,7 +20,7 @@ opt-level = "s"
 lto = "thin"
 codegen-units = 1
 strip = true
-panic = "abort"
+panic = "unwind"
 
 [[bin]]
 name = "typst-spike"

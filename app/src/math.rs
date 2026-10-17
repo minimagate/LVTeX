@@ -6,6 +6,7 @@ use std::{
     collections::HashMap,
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
+    panic::{self, AssertUnwindSafe},
     sync::{Arc, mpsc},
     thread,
     time::Duration,
@@ -89,6 +90,7 @@ impl Worker {
         let (replies, rx) = mpsc::channel();
         thread::Builder::new()
             .name("mathstral-math".into())
+            .stack_size(32 * 1024 * 1024)
             .spawn(move || {
                 let mut renderer = Renderer::with_prelude(latex_spike::PRELUDE);
                 let mut cache: HashMap<String, Arc<FormulaImage>> = HashMap::new();
@@ -99,7 +101,7 @@ impl Worker {
                 // An empty chat loads the model without generating text.
                 let warm = json!({"model": OLLAMA_MODEL, "messages": [], "stream": false,
                 "keep_alive": KEEP_ALIVE, "options": {"temperature": 0}});
-                let mut online = request(&warm).is_ok();
+                let mut online = warm_up(&mut request, &warm);
                 send(Reply::Connection(online));
                 let mut pending = std::collections::VecDeque::new();
                 loop {
@@ -123,15 +125,16 @@ impl Worker {
                                             .as_ref()
                                             .is_some_and(|p| cache.contains_key(p)))
                                 {
-                                    let result =
-                                        resolve_with(&job, &mut renderer, &mut cache, &mut request);
+                                    let result = guarded(&mut renderer, |renderer| {
+                                        resolve_with(&job, renderer, &mut cache, &mut request)
+                                    });
                                     send(Reply::Done(job.id, result.map_err(|e| e.message)));
                                 } else {
                                     rest.push_back(job);
                                 }
                             }
                             pending = rest;
-                            online = request(&warm).is_ok();
+                            online = warm_up(&mut request, &warm);
                             if online {
                                 send(Reply::Connection(true));
                             }
@@ -140,7 +143,8 @@ impl Worker {
                     }
                     if let Some(job) = pending.pop_front() {
                         if job.describe {
-                            match describe(job.latex.as_deref().unwrap_or(""), &mut request) {
+                            let latex = job.latex.as_deref().unwrap_or("");
+                            match guarded(&mut renderer, |_| describe(latex, &mut request)) {
                                 Ok(prompt) => send(Reply::Described(job.id, Ok(prompt))),
                                 Err(error) if error.offline => {
                                     online = false;
@@ -151,7 +155,10 @@ impl Worker {
                             }
                             continue;
                         }
-                        match resolve_with(&job, &mut renderer, &mut cache, &mut request) {
+                        let result = guarded(&mut renderer, |renderer| {
+                            resolve_with(&job, renderer, &mut cache, &mut request)
+                        });
+                        match result {
                             Ok(image) => send(Reply::Done(job.id, Ok(image))),
                             Err(error) if error.offline => {
                                 online = false;
@@ -173,6 +180,21 @@ impl Worker {
 struct Error {
     message: String,
     offline: bool,
+}
+// A panicking backend during warm-up counts as offline.
+fn warm_up(request: &mut impl FnMut(&Value) -> Result<Value, Error>, warm: &Value) -> bool {
+    panic::catch_unwind(AssertUnwindSafe(|| request(warm).is_ok())).unwrap_or(false)
+}
+// A panic in mitex/typst (or a backend) fails only the current job. The renderer
+// may be left inconsistent, so it is rebuilt.
+fn guarded<T>(
+    renderer: &mut Renderer,
+    work: impl FnOnce(&mut Renderer) -> Result<T, Error>,
+) -> Result<T, Error> {
+    panic::catch_unwind(AssertUnwindSafe(|| work(renderer))).unwrap_or_else(|_| {
+        *renderer = Renderer::with_prelude(latex_spike::PRELUDE);
+        Err("renderer panicked".to_owned().into())
+    })
 }
 impl From<String> for Error {
     fn from(message: String) -> Self {
@@ -437,11 +459,12 @@ fn chat(body: &Value) -> Result<Value, Error> {
                 break;
             }
             rest = &rest[end + 2..];
-            if rest.len() < size + 2 {
+            let framed = size.checked_add(2).ok_or("invalid chunk size".to_owned())?;
+            if rest.len() < framed {
                 return Err("incomplete chunk".to_owned().into());
             }
             decoded.extend_from_slice(&rest[..size]);
-            rest = &rest[size + 2..];
+            rest = &rest[framed..];
         }
         bytes = decoded;
     }
@@ -497,6 +520,44 @@ mod tests {
         }
         assert!(connected);
         assert_eq!(ids, (0..10).collect::<std::collections::BTreeSet<u64>>());
+    }
+    #[test]
+    fn panicking_job_fails_alone_and_worker_survives() {
+        let worker = Worker::with_backend(
+            || {},
+            |request| {
+                if request["messages"].as_array().unwrap().is_empty() {
+                    return Ok(json!({"done":true}));
+                }
+                panic!("backend exploded")
+            },
+            Duration::from_millis(5),
+        );
+        let timeout = Duration::from_secs(5);
+        assert!(matches!(
+            worker.rx.recv_timeout(timeout).unwrap(),
+            Reply::Connection(true)
+        ));
+        worker.submit(Job {
+            id: 1,
+            prompt: Some("boom".into()),
+            latex: None,
+            describe: false,
+        });
+        assert!(matches!(
+            worker.rx.recv_timeout(timeout).unwrap(),
+            Reply::Done(1, Err(_))
+        ));
+        worker.submit(Job {
+            id: 2,
+            prompt: None,
+            latex: Some("x^2".into()),
+            describe: false,
+        });
+        assert!(matches!(
+            worker.rx.recv_timeout(timeout).unwrap(),
+            Reply::Done(2, Ok(_))
+        ));
     }
     #[test]
     fn imported_edit_descriptions_cannot_expose_latex() {

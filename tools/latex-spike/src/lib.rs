@@ -7,6 +7,11 @@ pub fn convert(latex: &str) -> Result<String, String> {
     mitex::convert_math(latex, None)
 }
 
+// Bounds recursion in MiTeX's parser; ordinary formulas stay far below these.
+const MAX_BRACE_DEPTH: usize = 64;
+const MAX_ENVIRONMENT_DEPTH: usize = 32;
+const TOO_DEEP: &str = "expression is nested too deeply";
+
 /// MiTeX intentionally recovers some unfinished input, including an environment
 /// without an end. Reject that before displaying an apparently successful atom.
 /// This is structural validation of expression bodies, not a complete TeX parser.
@@ -24,6 +29,9 @@ fn validate_structure(latex: &str) -> Result<(), String> {
             }
             b'{' => {
                 braces += 1;
+                if braces > MAX_BRACE_DEPTH {
+                    return Err(TOO_DEEP.into());
+                }
                 i += 1;
             }
             b'}' => {
@@ -62,6 +70,9 @@ fn validate_structure(latex: &str) -> Result<(), String> {
                     let name = &latex[name_start..i];
                     if command == "begin" {
                         environments.push(name);
+                        if environments.len() > MAX_ENVIRONMENT_DEPTH {
+                            return Err(TOO_DEEP.into());
+                        }
                     } else if environments.pop() != Some(name) {
                         return Err("mismatched environment end".into());
                     }
@@ -116,6 +127,12 @@ mod tests {
         }
     }
 
+    #[test]
+    fn nesting_limit_is_64_braces() {
+        let nested = |n: usize| format!("{}x{}", "{".repeat(n), "}".repeat(n));
+        assert!(convert(&nested(64)).is_ok());
+        assert_eq!(convert(&nested(65)).unwrap_err(), TOO_DEEP);
+    }
     #[test]
     fn errors_and_helper_variations() {
         let mut renderer = Renderer::with_prelude(PRELUDE);
