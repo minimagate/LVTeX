@@ -1,4 +1,4 @@
-use rfd::{FileDialog, MessageDialog, MessageLevel};
+use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
 use std::{
     fs,
     io::{self, Write},
@@ -29,10 +29,44 @@ pub fn choose_save(current: Option<&Path>) -> Option<PathBuf> {
         p
     })
 }
+pub fn choose_export(current: Option<&Path>) -> Option<PathBuf> {
+    let mut dialog = FileDialog::new().add_filter("PDF", &["pdf"]).set_file_name(
+        current
+            .and_then(Path::file_stem)
+            .and_then(|n| n.to_str())
+            .map_or("Untitled.pdf".into(), |n| format!("{n}.pdf")),
+    );
+    if let Some(parent) = current.and_then(Path::parent) {
+        dialog = dialog.set_directory(parent);
+    }
+    dialog.save_file().map(with_pdf_extension)
+}
+fn with_pdf_extension(p: PathBuf) -> PathBuf {
+    if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")) {
+        return p;
+    }
+    let mut name = p.into_os_string();
+    name.push(".pdf");
+    name.into()
+}
+pub fn confirm_unrendered(count: usize) -> bool {
+    let description = if count == 1 {
+        "1 formula hasn’t rendered yet and will be exported as its prompt text.".to_owned()
+    } else {
+        format!("{count} formulas haven’t rendered yet and will be exported as their prompt text.")
+    };
+    MessageDialog::new()
+        .set_title("Mathstral")
+        .set_description(description)
+        .set_level(MessageLevel::Warning)
+        .set_buttons(MessageButtons::OkCancel)
+        .show()
+        == MessageDialogResult::Ok
+}
 pub fn read(path: &Path) -> io::Result<String> {
     fs::read_to_string(path).map(|s| s.replace("\r\n", "\n").replace('\r', "\n"))
 }
-pub fn write(path: &Path, text: &str) -> io::Result<()> {
+pub fn write(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
     // Resolve symlinks, preserve permissions, and replace atomically on the same volume.
     let path = fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
     let parent = path.parent().unwrap_or(Path::new("."));
@@ -52,7 +86,7 @@ pub fn write(path: &Path, text: &str) -> io::Result<()> {
         if let Ok(metadata) = fs::metadata(&path) {
             f.set_permissions(metadata.permissions())?;
         }
-        f.write_all(text.as_bytes())?;
+        f.write_all(contents.as_ref())?;
         f.sync_all()?;
         drop(f);
         fs::rename(&temporary, &path)
@@ -137,7 +171,7 @@ pub fn remember_window_geometry(geometry: WindowGeometry) {
     };
     let result = (|| {
         fs::create_dir_all(state.parent().unwrap())?;
-        write(&state, &geometry.encode())
+        write(&state, geometry.encode())
     })();
     if let Err(error) = result {
         eprintln!("Cannot remember window geometry: {error}");
@@ -168,6 +202,16 @@ mod tests {
         assert_eq!(WindowGeometry::parse(&secondary.encode()), Some(secondary));
         assert_eq!(WindowGeometry::parse("1495 944\n").unwrap().position, None);
         assert!(WindowGeometry::parse("NaN 944").is_none());
+    }
+    #[test]
+    fn export_appends_pdf_without_replacing_existing_extension() {
+        assert_eq!(with_pdf_extension("a".into()), PathBuf::from("a.pdf"));
+        assert_eq!(
+            with_pdf_extension("Report 2026.10".into()),
+            PathBuf::from("Report 2026.10.pdf")
+        );
+        assert_eq!(with_pdf_extension("x.PDF".into()), PathBuf::from("x.PDF"));
+        assert_eq!(with_pdf_extension("x.pdf".into()), PathBuf::from("x.pdf"));
     }
     #[test]
     fn saves_unicode_and_replaces_existing_document() {

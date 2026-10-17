@@ -10,6 +10,7 @@ pub enum Action {
     Open,
     Save,
     SaveAs,
+    ExportPdf,
     Undo,
     Redo,
     Cut,
@@ -28,25 +29,57 @@ pub fn install(proxy: EventLoopProxy<Action>) -> Menu {
     let file = Submenu::new("File", true);
     let edit = Submenu::new("Edit", true);
     let mut ids = vec![];
-    for (parent, label, key, shift, action) in [
-        (&app, "Quit Mathstral", Code::KeyQ, false, Action::Quit),
-        (&file, "New", Code::KeyN, false, Action::New),
-        (&file, "Open…", Code::KeyO, false, Action::Open),
-        (&file, "Close Window", Code::KeyW, false, Action::Quit),
-        (&file, "Save", Code::KeyS, false, Action::Save),
-        (&file, "Save As…", Code::KeyS, true, Action::SaveAs),
-        (&edit, "Undo", Code::KeyZ, false, Action::Undo),
-        (&edit, "Redo", Code::KeyZ, true, Action::Redo),
-        (&edit, "Cut", Code::KeyX, false, Action::Cut),
-        (&edit, "Copy", Code::KeyC, false, Action::Copy),
-        (&edit, "Paste", Code::KeyV, false, Action::Paste),
-        (&edit, "Select All", Code::KeyA, false, Action::SelectAll),
+    for (parent, label, key, modifiers, action) in [
+        (
+            &app,
+            "Quit Mathstral",
+            Code::KeyQ,
+            Modifiers::META,
+            Action::Quit,
+        ),
+        (&file, "New", Code::KeyN, Modifiers::META, Action::New),
+        (&file, "Open…", Code::KeyO, Modifiers::META, Action::Open),
+        (
+            &file,
+            "Close Window",
+            Code::KeyW,
+            Modifiers::META,
+            Action::Quit,
+        ),
+        (&file, "Save", Code::KeyS, Modifiers::META, Action::Save),
+        (
+            &file,
+            "Save As…",
+            Code::KeyS,
+            Modifiers::META | Modifiers::SHIFT,
+            Action::SaveAs,
+        ),
+        (
+            &file,
+            "Export as PDF…",
+            Code::KeyE,
+            Modifiers::META | Modifiers::ALT,
+            Action::ExportPdf,
+        ),
+        (&edit, "Undo", Code::KeyZ, Modifiers::META, Action::Undo),
+        (
+            &edit,
+            "Redo",
+            Code::KeyZ,
+            Modifiers::META | Modifiers::SHIFT,
+            Action::Redo,
+        ),
+        (&edit, "Cut", Code::KeyX, Modifiers::META, Action::Cut),
+        (&edit, "Copy", Code::KeyC, Modifiers::META, Action::Copy),
+        (&edit, "Paste", Code::KeyV, Modifiers::META, Action::Paste),
+        (
+            &edit,
+            "Select All",
+            Code::KeyA,
+            Modifiers::META,
+            Action::SelectAll,
+        ),
     ] {
-        let modifiers = if shift {
-            Modifiers::META | Modifiers::SHIFT
-        } else {
-            Modifiers::META
-        };
         let item = MenuItem::new(label, true, Some(Accelerator::new(modifiers, key)));
         ids.push((item.id().clone(), action));
         parent.append(&item).unwrap();

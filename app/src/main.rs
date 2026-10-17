@@ -2,6 +2,7 @@
 mod app;
 mod buffer;
 mod config;
+mod export;
 mod file;
 mod layout;
 mod math;

@@ -23,7 +23,7 @@ Menus:
 | Menu | Items |
 | --- | --- |
 | Mathstral | Hide, Hide Others, Show All, Quit Mathstral (⌘Q) |
-| File | New (⌘N), Open… (⌘O), Close Window (⌘W), Save (⌘S), Save As… (⇧⌘S) |
+| File | New (⌘N), Open… (⌘O), Close Window (⌘W), Save (⌘S), Save As… (⇧⌘S), Export as PDF… (⌥⌘E) |
 | Edit | Undo (⌘Z), Redo (⇧⌘Z), Cut (⌘X), Copy (⌘C), Paste (⌘V), Select All (⌘A) |
 | Window | Minimize, Zoom, Enter Full Screen |
 
@@ -65,6 +65,9 @@ File commands:
 - Save writes to a temporary file in the same folder, copies the file permissions, and
   renames it over the target. Symbolic links are resolved first.
 - New, Open, Close Window and Quit ask "Save changes?" when the document has unsaved edits.
+- Export as PDF writes an A4 PDF typeset with Typst: black text on white, `# ` lines as italic
+  headings, formulas as vector math. Prompts that have not rendered are exported as their
+  `/prompt/` text after a confirmation.
 
 ## Math prompts
 

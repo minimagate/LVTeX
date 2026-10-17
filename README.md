@@ -57,7 +57,7 @@ Renderer benchmarks and their outputs are described in
 - Press **Escape** inside an open prompt to keep it as literal text.
 - A line starting with `# ` is a title.
 - Standard macOS shortcuts work: **⌘N** new, **⌘O** open, **⌘S** save, **⇧⌘S** save
-  as, **⌘Z** / **⇧⌘Z** undo and redo, **⌘X**, **⌘C**, **⌘V**, **⌘A**.
+  as, **⌥⌘E** export PDF, **⌘Z** / **⇧⌘Z** undo and redo, **⌘X**, **⌘C**, **⌘V**, **⌘A**.
 - Move the window by dragging the top strip or holding **⌘** while dragging.
 
 See [docs/EDITOR.md](docs/EDITOR.md) for the full behavior.

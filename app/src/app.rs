@@ -1,7 +1,7 @@
 use crate::{
     buffer::Document,
     config::*,
-    file,
+    export, file,
     layout::{Layout, Typesetter},
     math::{FormulaImage, Job, Reply, Worker},
     menu::{self, Action},
@@ -294,7 +294,7 @@ impl App {
             self.path.clone()
         };
         let Some(path) = path else { return false };
-        match file::write(&path, &self.doc.markdown()) {
+        match file::write(&path, self.doc.markdown()) {
             Ok(()) => {
                 self.path = Some(path);
                 self.doc.mark_saved();
@@ -306,6 +306,21 @@ impl App {
                 file::error("Could not save the document.", error);
                 false
             }
+        }
+    }
+    fn export_pdf(&mut self) {
+        self.doc.break_group();
+        let n = export::unrendered(&self.doc);
+        if n > 0 && !file::confirm_unrendered(n) {
+            return;
+        }
+        let Some(path) = file::choose_export(self.path.as_deref()) else {
+            return;
+        };
+        if let Err(error) = export::pdf(&self.doc)
+            .and_then(|bytes| file::write(&path, bytes).map_err(|e| e.to_string()))
+        {
+            file::error("Could not export the PDF.", error);
         }
     }
     fn may_discard(&mut self) -> bool {
@@ -430,6 +445,7 @@ impl App {
             Action::SaveAs => {
                 self.save(true);
             }
+            Action::ExportPdf => self.export_pdf(),
             Action::Undo | Action::Redo => {
                 self.doc.undo(matches!(action, Action::Redo));
                 self.changed(true);
