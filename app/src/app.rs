@@ -1,6 +1,6 @@
 use crate::{
-    buffer::Document,
     config::*,
+    document::Document,
     export, file,
     keymap::{MathInput, MathKey, Outcome},
     layout::{Layout, Typesetter},

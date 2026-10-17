@@ -1,6 +1,6 @@
 use crate::{
-    buffer::{ATOM, Document},
     config::*,
+    document::{ATOM, Document},
     markdown::{self, Block, Span},
     math::FormulaImage,
 };

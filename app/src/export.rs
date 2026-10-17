@@ -1,5 +1,5 @@
 //! PDF export: typesets the document with Typst, formulas as vector math.
-use crate::buffer::{Document, Formula};
+use crate::document::{Document, Formula};
 use crate::markdown::{self, Block};
 use mathstral_render::math::Renderer;
 

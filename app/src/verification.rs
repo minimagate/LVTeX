@@ -1,5 +1,5 @@
 use crate::{
-    buffer::{ATOM, Document},
+    document::{ATOM, Document},
     keymap::{MathInput, MathKey, Outcome},
     layout::Typesetter,
     markdown, math, render,

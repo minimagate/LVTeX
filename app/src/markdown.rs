@@ -370,7 +370,7 @@ fn closing_run(bytes: &[u8], mut at: usize, end: usize, n: usize) -> Option<usiz
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::buffer::ATOM;
+    use crate::document::ATOM;
 
     fn letters(s: &Span) -> String {
         let st = s.style;
