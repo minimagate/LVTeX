@@ -1,5 +1,5 @@
 //! In-memory Typst world: embedded fonts only, no filesystem or package access.
-use typst::diag::{FileError, FileResult};
+use typst::diag::{FileError, FileResult, SourceDiagnostic};
 use typst::foundations::{Bytes, Datetime, Duration};
 use typst::syntax::{FileId, Source};
 use typst::text::{Font, FontBook};
@@ -34,6 +34,7 @@ impl Renderer {
         let fonts = [
             include_bytes!("../../../assets/fonts/NewCMMath-Regular.otf").as_slice(),
             include_bytes!("../../../assets/fonts/LibertinusSerif-Regular.otf").as_slice(),
+            include_bytes!("../../../assets/fonts/LibertinusSerif-Italic.otf").as_slice(),
         ]
         .into_iter()
         .map(|data| Font::new(Bytes::new(data), 0).expect("bundled font is valid"))
@@ -74,6 +75,21 @@ impl Renderer {
         )
     }
 
+    pub fn compile_pdf(&mut self, source: String) -> Result<Vec<u8>, String> {
+        let document = self.compile(source)?;
+        typst_pdf::pdf(&document, &typst_pdf::PdfOptions::default()).map_err(|e| join_messages(&e))
+    }
+
+    fn compile(&mut self, source: String) -> Result<PagedDocument, String> {
+        self.source = Source::detached(source);
+        let compiled = typst::compile::<PagedDocument>(self);
+        let document = compiled.output.map_err(|e| join_messages(&e))?;
+        if !compiled.warnings.is_empty() {
+            return Err(join_messages(&compiled.warnings));
+        }
+        Ok(document)
+    }
+
     pub fn render_source(
         &mut self,
         source: String,
@@ -82,23 +98,7 @@ impl Renderer {
         if !scale.is_finite() || !(0.5..=4.0).contains(&scale) {
             return Err("scale must be finite and between 0.5 and 4".into());
         }
-        self.source = Source::detached(source);
-        let compiled = typst::compile::<PagedDocument>(self);
-        let document = compiled.output.map_err(|errors| {
-            errors
-                .iter()
-                .map(|e| e.message.to_string())
-                .collect::<Vec<_>>()
-                .join("; ")
-        })?;
-        if !compiled.warnings.is_empty() {
-            return Err(compiled
-                .warnings
-                .iter()
-                .map(|e| e.message.to_string())
-                .collect::<Vec<_>>()
-                .join("; "));
-        }
+        let document = self.compile(source)?;
         let [page] = document.pages() else {
             return Err("expected exactly one page".into());
         };
@@ -133,6 +133,14 @@ impl Renderer {
         }
         Ok(pixmap)
     }
+}
+
+fn join_messages(diagnostics: &[SourceDiagnostic]) -> String {
+    diagnostics
+        .iter()
+        .map(|e| e.message.to_string())
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 impl World for Renderer {
@@ -192,6 +200,20 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn pdf_export_pages_and_sandbox() {
+        let mut renderer = Renderer::new();
+        let pdf = renderer
+            .compile_pdf("Page one\n#pagebreak()\nPage two".into())
+            .unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
+        assert!(
+            renderer
+                .compile_pdf("#read(\"/etc/passwd\")".into())
+                .is_err()
+        );
     }
 
     #[test]
