@@ -111,7 +111,7 @@ pub fn convert(latex: &str) -> Result<String, String> {
 }
 
 /// Quotes `text` as a Typst string literal.
-fn typst_string_literal(text: &str) -> String {
+pub fn typst_string_literal(text: &str) -> String {
     let mut quoted = String::with_capacity(text.len() + 2);
     quoted.push('"');
     for c in text.chars() {
