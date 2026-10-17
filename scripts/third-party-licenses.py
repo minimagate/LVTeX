@@ -275,6 +275,23 @@ def appendix_section(missing, candidates):
     return lines, elected
 
 
+def vendored_sources_section():
+    """Describe Typst sources copied into the repository rather than fetched as crates."""
+    return [
+        "## Vendored Typst sources",
+        "",
+        "### MiTeX Typst specification",
+        "",
+        "- Location: `crates/latex/vendor/mitex` (`prelude.typ` and `standard.typ`; "
+        "the modifications are listed in its `README.md`).",
+        "- Source: https://github.com/mitex-rs/mitex, directory `packages/mitex/specs`, "
+        "commit `c5e9f9bf2` (MiTeX 0.2.4).",
+        "- License: Apache-2.0. The license file is `crates/latex/vendor/mitex/LICENSE`, "
+        "and the Apache-2.0 text is reproduced in Appendix: Standard license texts.",
+        "",
+    ]
+
+
 def build_document(packages, candidates):
     missing_all = [p for p in packages if not license_files(p)]
     appendix, elected = appendix_section(missing_all, candidates)
@@ -358,6 +375,7 @@ def build_document(packages, candidates):
             out.append(fence)
             out.append("")
 
+    out.extend(vendored_sources_section())
     if appendix:
         out.extend(appendix)
     return "\n".join(out).rstrip("\n") + "\n", missing

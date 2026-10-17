@@ -38,5 +38,10 @@ First public alpha.
 - Defensive guards in the rendering path.
 - The workspace is restructured into `app/`, `crates/render` and `crates/latex`.
 - Unused fonts are removed from the bundle.
+- LaTeX rendering uses MiTeX's own Typst command library (vendored from MiTeX 0.2.4 under
+  Apache-2.0 in `crates/latex/vendor/mitex`), so commands such as `\pmod`, `\operatorname`,
+  `\dfrac`, `\boxed`, `\xrightarrow` and the `array` environment render instead of failing.
+  Symbols whose MiTeX names were removed in Typst 0.15, such as `\oplus` and `\hbar`, are
+  drawn from their Unicode characters.
 - Math prompts are shown as dimmed text without an underline while typing and while waiting
   for a formula.

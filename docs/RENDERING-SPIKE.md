@@ -74,11 +74,14 @@ transparency, and the gallery composites them onto the requested background.
 
 ## Integration decisions
 
-The [small compatibility scope](../crates/latex/src/mitex.typ) supplies MiTeX's square-root,
-matrix, aligned-equation and text helpers. It restores the older partial-derivative and
-angle-delimiter names, and gives cases a clear column gap. It does not rewrite text inside
-formulas. Unknown helpers fail compilation rather than being shown as words or replaced
-with another expression. This is an explicit subset of MiTeX's full package scope.
+The compatibility scope is the vendored MiTeX command library
+(`../crates/latex/vendor/mitex`) plus [local overrides](../crates/latex/src/mitex.typ).
+The overrides supply MiTeX's square-root, matrix, aligned-equation and text helpers. They
+restore the older partial-derivative and angle-delimiter names, and give cases a clear
+column gap. Apart from a few symbol commands that are replaced by their Unicode
+characters, formulas are not rewritten. Unknown helpers fail compilation rather than being
+shown as words or replaced with another expression. Everything else comes unchanged from
+the vendored library.
 Additional commands may need helpers during editor integration.
 
 The adapter rejects unclosed braces and missing or mismatched environment ends. MiTeX can

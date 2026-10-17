@@ -19203,6 +19203,14 @@ Same text as zune-core 0.5.3's LICENSE-MIT.
 
 Same text as zune-core 0.5.3's LICENSE-ZLIB.
 
+## Vendored Typst sources
+
+### MiTeX Typst specification
+
+- Location: `crates/latex/vendor/mitex` (`prelude.typ` and `standard.typ`; the modifications are listed in its `README.md`).
+- Source: https://github.com/mitex-rs/mitex, directory `packages/mitex/specs`, commit `c5e9f9bf2` (MiTeX 0.2.4).
+- License: Apache-2.0. The license file is `crates/latex/vendor/mitex/LICENSE`, and the Apache-2.0 text is reproduced in Appendix: Standard license texts.
+
 ## Appendix: Standard license texts
 
 Each license identifier below appears in the SPDX expression of a crate listed above that has no license file. Each text is reproduced once.
