@@ -40,12 +40,13 @@ dragging anywhere in the window.
   pending text `#868583`; failed prompt underline `#70484A`; pending marker `#292B2A`;
   inline code `#B9C3C6`; links `#9FB6C9`.
 - The caret is an I-beam: a 1 pt stem with 1 pt serifs at top and bottom, about 3 pt wide. Its
-  height follows the ink of the last letter before it, down to the baseline, like TeXmacs: after
-  `A` it runs from cap height, after `l` from the ascender, after `e` from the x-height, and after
-  `y` down to the bottom of the descender. It is never shorter than the x-height, so a period
-  gives an x-height caret. After a space, or at a line start, it runs from cap height. After a
-  formula it runs over the formula's box. After a one-line prompt it follows the prompt's last
-  letter; after a wrapped prompt, it runs from cap height.
+  height follows the ink of the last letter before it, like TeXmacs: it runs from the top of
+  that letter's ink to its bottom edge, which is the baseline for letters without a descender.
+  After `A` it runs from cap height, after `l` from the ascender, after `e` from the x-height,
+  and after `y` down to the bottom of the descender. It is never shorter than the x-height, so
+  a period gives an x-height caret. After a space, or at a line start, it runs from cap height.
+  After a formula it runs over the formula's box. After a one-line prompt it follows the
+  prompt's last letter; after a wrapped prompt, it runs from cap height.
   All three carets are this same I-beam and differ only in colour: red `#FF2020` in prose, blue
   `#2F7BFF` in hand-written math, and green `#1FD65F` in an AI prompt. None blinks or fades.
 - The math caret adds no mathematical operator spacing to the formula. Its bottom sits on the
@@ -110,7 +111,8 @@ the `\prompt\` format for compatibility.
 - Press Enter to submit the prompt. Escape leaves the prompt text as literal text.
 - Existing `\prompt\` files and copied prompts remain supported.
 - An open prompt is unstyled and dimmed to the pending color `#868583`, the same as a submitted prompt; the green (`#1FD65F`) caret marks prompt editing.
-- An open prompt alone on its line is centered with display spacing while you type it, like a formula alone on its line.
+- An open prompt that is a single line alone on its line is centered with display spacing while
+  you type it, like a formula alone on its line.
 - A closed prompt is dim until the model returns a formula that renders successfully.
 - A prompt whose generation fails stays as text with a muted red underline. Enter retries it.
 - Inline formulas share the text baseline. A formula alone on its line is centered with
@@ -126,10 +128,10 @@ the `\prompt\` format for compatibility.
 
 Typing `\` starts a named command in a new formula. For example, `\alpha` then Enter
 inserts α; press Enter again to close the formula. Pressing ⌘1 (Edit → Insert Formula)
-opens a blank formula for ordinary TeXmacs-style keys such as `x` `^` `2`. The formula previews as
-you type on the local render worker. Its caret is the same I-beam as the prose caret, in blue
-(`#2F7BFF`); AI prompt editing uses a green caret. Key handling never waits for typesetting. Keys follow
-TeXmacs's `math-kbd.scm`.
+opens a blank formula for ordinary TeXmacs-style keys such as `x` `^` `2`. The formula
+previews as you type on the local render worker. Its caret is the same I-beam as the prose
+caret, in blue (`#2F7BFF`); AI prompt editing uses a green caret. Key handling never waits
+for typesetting. Keys follow TeXmacs's `math-kbd.scm`.
 
 - Enter closes the formula. With a `\command` pending, Enter confirms the command instead;
   press Enter again to close. Closing by click or a file command also confirms a pending command.
@@ -178,8 +180,8 @@ TeXmacs's `math-kbd.scm`.
   Ollama is slow or unavailable. Live previews keep only the newest queued edit; older results
   are discarded. The current LaTeX source stays visible while its preview is pending or fails.
   A native caret is shown until the first preview arrives. The caret is drawn by the app, not
-  inside the preview bitmap, so it stays the I-beam at the caret's size. After closing an edit, its last preview stays visible until the final render
-  replaces it.
+  inside the preview bitmap, so it stays the I-beam at the caret's size. After closing an
+  edit, its last preview stays visible until the final render replaces it.
 - The system prompt and few-shot examples are in `app/src/math/model.rs`. They cover integrals,
   sums, fractions, matrices, cases, aligned equations, sets and Greek letters.
 - Responses are cleaned of fences, delimiters and surrounding prose. Output containing

@@ -51,9 +51,10 @@ Renderer benchmarks and their outputs are described in
 - Press **⌘1** (Edit → Insert Formula) to open a blank formula for TeXmacs-style keys,
   such as `x` `^` `2`; press **Enter** to close it.
 - Press **⇧⌘1** (Edit → Ask AI for Formula) to describe a formula. Selected text
-  becomes the initial prompt. Press **Enter** to submit; the text stays in prose style with
-  a green caret while open, dims while the model works, and turns into a formula when ready.
-  If generation fails, the prompt stays with a red underline.
+  becomes the initial prompt. Press **Enter** to submit. While open, the text is dimmed with
+  a green caret (centered when a single-line prompt is alone on its line), stays dimmed while
+  the model works, and turns into a formula when ready. If generation fails, the prompt stays
+  with a red underline.
 - Press **Enter** at the left edge of a formula, or **Backspace** just after it, to
   reopen it. A prompt returns to its prompt text, and a hand-written or imported formula
   opens in the hand-written editor.
