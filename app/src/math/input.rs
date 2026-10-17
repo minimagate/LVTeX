@@ -144,7 +144,7 @@ impl MathInput {
         let mut tree = self.tree.clone();
         if let Some(name) = &self.command {
             tree.insert(Node::Raw(format!(
-                r"\textcolor{{#73716F}}{{\backslash\mathrm{{{name}}}}}"
+                r"\textcolor{{#73716F}}{{\backslash\hspace{{-0.15em}}\mathrm{{{name}}}}}"
             )));
         }
         tree.latex_with_caret()
@@ -507,7 +507,43 @@ mod tests {
         assert!(
             typed(r"\al")
                 .display_latex()
-                .contains(r"\textcolor{#73716F}{\backslash\mathrm{al}}")
+                .contains(r"\textcolor{#73716F}{\backslash\hspace{-0.15em}\mathrm{al}}")
+        );
+    }
+
+    /// The widest run of columns with no ink between the first and last inked column, in px.
+    fn widest_ink_gap(image: &crate::math::render::Image) -> usize {
+        let inked: Vec<bool> = (0..image.width)
+            .map(|x| (0..image.height).any(|y| image.rgba[(y * image.width + x) * 4 + 3] > 64))
+            .collect();
+        let (Some(first), Some(last)) = (
+            inked.iter().position(|&ink| ink),
+            inked.iter().rposition(|&ink| ink),
+        ) else {
+            return 0;
+        };
+        let (mut widest, mut run) = (0, 0);
+        for &ink in &inked[first..=last] {
+            run = if ink { 0 } else { run + 1 };
+            widest = widest.max(run);
+        }
+        widest
+    }
+
+    #[test]
+    fn pending_command_backslash_sits_tight_against_its_letters() {
+        let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
+        let latex = typed(r"\in").display_latex();
+        // The live preview erases the caret marker, so the gap is measured between the command and
+        // the letters only.
+        let formula = crate::math::render::render_preview(&mut renderer, &latex)
+            .unwrap_or_else(|error| panic!("display {latex}: {error}"));
+        let gap = widest_ink_gap(&formula.inline);
+        // Two pixels per pt: a gap wider than 2 pt is a visible space inside the command.
+        assert!(
+            gap <= 4,
+            "gap of {gap} px ({} pt) inside {latex}",
+            gap as f32 / 2.0
         );
     }
 
