@@ -47,6 +47,11 @@ struct Editing {
     original: Formula,
 }
 #[derive(Clone)]
+struct Manual {
+    id: u64,
+    original: Option<Formula>,
+}
+#[derive(Clone)]
 struct Snapshot {
     rope: Rope,
     caret: usize,
@@ -62,6 +67,7 @@ pub struct Document {
     pub formulas: BTreeMap<usize, Formula>,
     cancelled: BTreeSet<usize>,
     editing: Option<Editing>,
+    manual: Option<Manual>,
     saved: String,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
@@ -79,6 +85,7 @@ impl Document {
             formulas: BTreeMap::new(),
             cancelled: BTreeSet::new(),
             editing: None,
+            manual: None,
             saved: String::new(),
             undo: vec![],
             redo: vec![],
@@ -114,16 +121,19 @@ impl Document {
             if let Some(f) = self.formulas.get(&pos) {
                 let display = Self::is_display_in(&text, pos);
                 if let Some(latex) = &f.latex {
-                    if display {
-                        result.push_str(&format!("$$\n{latex}\n$$"));
-                    } else {
-                        result.push_str(&format!("${latex}$"));
-                    }
-                    if let Some(prompt) = &f.prompt {
-                        result.push_str(&format!(
-                            "<!--mathstral:{}-->",
-                            URL_SAFE_NO_PAD.encode(prompt)
-                        ));
+                    // An empty formula still being written has no source; `$$` would not reopen.
+                    if !latex.is_empty() {
+                        if display {
+                            result.push_str(&format!("$$\n{latex}\n$$"));
+                        } else {
+                            result.push_str(&format!("${latex}$"));
+                        }
+                        if let Some(prompt) = &f.prompt {
+                            result.push_str(&format!(
+                                "<!--mathstral:{}-->",
+                                URL_SAFE_NO_PAD.encode(prompt)
+                            ));
+                        }
                     }
                 } else {
                     let label = f.label();
@@ -420,6 +430,102 @@ impl Document {
         });
         true
     }
+    // The session's one undo step is recorded at open. Redo is left alone until finish,
+    // so cancel can restore it untouched.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn open_manual(&mut self) -> u64 {
+        self.undo.push(self.snapshot());
+        self.break_group();
+        let range = self.selection();
+        let formula = Formula::new(None, Some(String::new()));
+        let id = formula.id;
+        self.splice(range.clone(), ATOM);
+        self.formulas.insert(range.start, formula);
+        self.caret = range.start + ATOM.len();
+        self.anchor = self.caret;
+        self.manual = Some(Manual { id, original: None });
+        id
+    }
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn reopen_manual(&mut self, pos: usize) -> Option<String> {
+        let original = self
+            .formulas
+            .get(&pos)
+            .filter(|f| f.prompt.is_none())?
+            .clone();
+        let latex = original.latex.clone()?;
+        self.undo.push(self.snapshot());
+        self.break_group();
+        // A fresh id makes late results for the old source land nowhere.
+        let mut edited = original.clone();
+        edited.id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        self.manual = Some(Manual {
+            id: edited.id,
+            original: Some(original),
+        });
+        self.formulas.insert(pos, edited);
+        self.caret = pos + ATOM.len();
+        self.anchor = self.caret;
+        Some(latex)
+    }
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn manual_id(&self) -> Option<u64> {
+        self.manual.as_ref().map(|m| m.id)
+    }
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn set_manual(&mut self, latex: String, image: Option<Arc<FormulaImage>>) {
+        let Some(id) = self.manual_id() else {
+            return;
+        };
+        if let Some(f) = self.formulas.values_mut().find(|f| f.id == id) {
+            f.latex = Some(latex);
+            f.image = image;
+        }
+    }
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn finish_manual(&mut self) {
+        let Some(edit) = self.manual.take() else {
+            return;
+        };
+        let Some((&pos, formula)) = self.formulas.iter().find(|(_, f)| f.id == edit.id) else {
+            return;
+        };
+        let formula = formula.clone();
+        let latex = formula.latex.clone().unwrap_or_default();
+        if latex.is_empty() {
+            self.redo.clear();
+            self.splice(pos..pos + ATOM.len(), "");
+            self.caret = pos;
+        } else if let Some(original) = edit
+            .original
+            .filter(|o| o.latex.as_deref() == Some(latex.as_str()))
+        {
+            // Unchanged: the snapshot from reopen would be a no-op undo step, so drop it and keep redo.
+            self.undo.pop();
+            self.formulas.insert(pos, original);
+            self.caret = pos + ATOM.len();
+        } else {
+            // Changed source is re-rendered; the session's undo step is the one recorded at open.
+            self.redo.clear();
+            let formula = Formula {
+                image: None,
+                failed: false,
+                ..formula
+            };
+            self.formulas.insert(pos, formula);
+            self.caret = pos + ATOM.len();
+        }
+        self.anchor = self.caret;
+    }
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn cancel_manual(&mut self) {
+        if self.manual.take().is_some()
+            && let Some(previous) = self.undo.pop()
+        {
+            self.restore(previous);
+        }
+        self.break_group();
+    }
     pub fn retry(&mut self, pos: usize) {
         if let Some(f) = self.formulas.get_mut(&pos) {
             f.id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
@@ -429,7 +535,7 @@ impl Document {
     pub fn jobs(&self) -> Vec<Job> {
         self.formulas
             .values()
-            .filter(|f| f.image.is_none() && !f.failed)
+            .filter(|f| f.image.is_none() && !f.failed && self.manual_id() != Some(f.id))
             .map(|f| Job {
                 id: f.id,
                 prompt: f.prompt.clone(),
@@ -492,14 +598,17 @@ impl Document {
             } else {
                 self.redo.push(current)
             }
-            self.rope = p.rope;
-            self.caret = p.caret;
-            self.anchor = p.anchor;
-            self.formulas = p.formulas;
-            self.cancelled = p.cancelled;
-            self.editing = p.editing;
+            self.restore(p);
         }
         self.break_group();
+    }
+    fn restore(&mut self, p: Snapshot) {
+        self.rope = p.rope;
+        self.caret = p.caret;
+        self.anchor = p.anchor;
+        self.formulas = p.formulas;
+        self.cancelled = p.cancelled;
+        self.editing = p.editing;
     }
     pub fn adjacent(&self, forward: bool, word: bool) -> usize {
         let text = self.text();
@@ -857,5 +966,147 @@ mod tests {
         d.replace("\u{fffc}", true);
         assert_eq!(d.text(), "abc");
         assert_eq!(d.selected(), "abc");
+    }
+    fn image(latex: &str) -> Arc<FormulaImage> {
+        let pixels = || crate::math::Image {
+            rgba: vec![],
+            width: 0,
+            height: 0,
+            baseline: 0.0,
+        };
+        Arc::new(FormulaImage {
+            latex: latex.into(),
+            inline: pixels(),
+            display: pixels(),
+        })
+    }
+    #[test]
+    fn manual_formula_saves_as_plain_math_and_renders() {
+        let mut d = Document::new("");
+        type_text(&mut d, "a ");
+        d.open_manual();
+        d.set_manual("x^{2}".into(), None);
+        d.finish_manual();
+        assert_eq!(d.markdown(), "a $x^{2}$");
+        let jobs = d.jobs();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].latex.as_deref(), Some("x^{2}"));
+        assert!(jobs[0].prompt.is_none());
+        let reopened = Document::new(&d.markdown());
+        assert_eq!(reopened.markdown(), "a $x^{2}$");
+        assert_eq!(
+            reopened.formulas.values().next().unwrap().latex.as_deref(),
+            Some("x^{2}")
+        );
+    }
+    #[test]
+    fn jobs_skip_the_formula_being_edited() {
+        let mut d = Document::new("");
+        type_text(&mut d, "a ");
+        d.open_manual();
+        d.set_manual("x".into(), None);
+        assert!(d.jobs().is_empty());
+        d.finish_manual();
+        assert_eq!(d.jobs().len(), 1);
+    }
+    #[test]
+    fn finishing_an_empty_manual_formula_removes_it() {
+        let mut d = Document::new("");
+        type_text(&mut d, "a b");
+        d.move_to(2, false);
+        d.open_manual();
+        d.finish_manual();
+        assert_eq!(d.text(), "a b");
+        assert!(d.formulas.is_empty());
+        assert_eq!(d.caret, 2);
+        assert_eq!(d.markdown(), "a b");
+        assert!(d.manual_id().is_none());
+    }
+    #[test]
+    fn cancel_manual_restores_document_and_history() {
+        let mut d = Document::new("a b");
+        d.move_to(2, false);
+        d.replace("x", false);
+        d.undo(false);
+        let before = (d.text(), d.caret, d.undo.len(), d.redo.len());
+        d.open_manual();
+        d.set_manual("x".into(), None);
+        d.cancel_manual();
+        assert_eq!((d.text(), d.caret, d.undo.len(), d.redo.len()), before);
+        assert!(d.formulas.is_empty());
+        assert!(d.manual_id().is_none());
+
+        let mut d = Document::new("a $x$ b");
+        let old = d.formulas[&2].id;
+        assert!(d.reopen_manual(2).is_some());
+        d.set_manual("y".into(), None);
+        d.cancel_manual();
+        assert_eq!(d.markdown(), "a $x$ b");
+        assert_eq!(d.formulas[&2].id, old);
+        assert_eq!(d.formulas[&2].latex.as_deref(), Some("x"));
+    }
+    #[test]
+    fn manual_session_is_one_undo_step() {
+        let mut d = Document::new("");
+        type_text(&mut d, "a b");
+        d.move_to(2, false);
+        let before = d.text();
+        let depth = d.undo.len();
+        d.open_manual();
+        d.set_manual("x".into(), None);
+        d.set_manual("x^{2}".into(), None);
+        d.finish_manual();
+        let after = d.markdown();
+        assert_eq!(after, "a $x^{2}$b");
+        d.undo(false);
+        assert_eq!(d.text(), before);
+        assert_eq!(d.caret, 2);
+        assert!(d.formulas.is_empty());
+        assert_eq!(d.undo.len(), depth);
+        d.undo(true);
+        assert_eq!(d.markdown(), after);
+        assert_eq!(d.formulas.len(), 1);
+    }
+    #[test]
+    fn reopened_formula_keeps_its_source_unless_changed() {
+        let mut d = Document::new("a $\\frac{a}{b}$ b");
+        d.move_to(d.rope.len_bytes(), false);
+        d.replace("!", false);
+        d.undo(false);
+        let old = d.formulas[&2].id;
+        d.complete(old, Ok(image("\\frac{a}{b}")));
+        let history = (d.undo.len(), d.redo.len());
+        assert_eq!(history.1, 1);
+        assert_eq!(d.reopen_manual(2).as_deref(), Some("\\frac{a}{b}"));
+        assert_eq!(d.caret, 2 + ATOM.len());
+        assert_ne!(d.formulas[&2].id, old);
+        // A late render for the old id must not touch the edited formula.
+        assert!(!d.complete(old, Ok(image("\\frac{1}{1}"))));
+        assert_eq!(d.formulas[&2].latex.as_deref(), Some("\\frac{a}{b}"));
+        d.finish_manual();
+        assert_eq!(d.formulas[&2].id, old);
+        assert!(d.formulas[&2].image.is_some());
+        assert_eq!(d.markdown(), "a $\\frac{a}{b}$ b");
+        assert!(d.jobs().is_empty());
+        assert_eq!((d.undo.len(), d.redo.len()), history);
+
+        assert!(d.reopen_manual(2).is_some());
+        d.set_manual("\\frac{1}{b}".into(), None);
+        d.finish_manual();
+        assert_eq!(d.markdown(), "a $\\frac{1}{b}$ b");
+        let jobs = d.jobs();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].latex.as_deref(), Some("\\frac{1}{b}"));
+        assert_eq!(jobs[0].id, d.formulas[&2].id);
+    }
+    #[test]
+    fn reopen_manual_refuses_prompts_and_empty_positions() {
+        let mut d = Document::new(r"a \one\ b");
+        let undo = d.undo.len();
+        assert_eq!(d.reopen_manual(2), None);
+        assert_eq!(d.reopen_manual(0), None);
+        assert_eq!(d.undo.len(), undo);
+        assert!(d.manual_id().is_none());
+        assert_eq!(d.formulas[&2].prompt.as_deref(), Some("one"));
     }
 }
