@@ -3,6 +3,8 @@ pub const FONT_FAMILY: &str = "Libertinus Serif";
 pub const MONO_FONT_FAMILY: &str = "DejaVu Sans Mono";
 pub const FONT_SIZE: f32 = 19.0;
 pub const LINE_HEIGHT: f32 = FONT_SIZE * 1.6;
+// Size of a heading level's lines, as a multiple of FONT_SIZE (index level - 1).
+pub const HEADING_SCALES: [f32; 6] = [1.6, 1.35, 1.15, 1.0, 1.0, 1.0];
 pub const COLUMN_WIDTH: f32 = 680.0;
 pub const TOP: f32 = 76.0;
 
@@ -10,6 +12,7 @@ pub const TOP: f32 = 76.0;
 pub const BACKGROUND: u32 = 0x151515;
 pub const TEXT_COLOR: u32 = 0xC8C6C3;
 pub const MARKER_COLOR: u32 = 0x73716F;
+pub const QUOTE_COLOR: u32 = 0xA3A19E;
 pub const CODE_COLOR: u32 = 0xB9C3C6;
 pub const LINK_COLOR: u32 = 0x9FB6C9;
 pub const CARET_COLOR: u32 = 0xFF2020;

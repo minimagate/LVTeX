@@ -14,24 +14,18 @@ fn row(layout: &Layout, index: usize) -> Vec<&Placed> {
 fn expect(t: &mut Typesetter, table: &[(&str, Face, u32)]) -> Vec<(cosmic_text::fontdb::ID, u32)> {
     let mut want = Vec::new();
     for &(piece, face, color) in table {
-        let id = t.word("x", face).glyphs[0].font_id;
+        let id = t.word("x", face, 1.0).glyphs[0].font_id;
         want.extend(piece.chars().map(|_| (id, color)));
     }
     want
 }
 
 #[test]
-fn heading_levels_pick_their_face_and_dim_the_marker() {
+fn heading_levels_are_bold_upright_and_dim_the_marker() {
     let mut t = Typesetter::new();
-    let cases = [
-        ("# Title", Face::Bold),
-        ("## Title", Face::Italic),
-        ("### Title", Face::BoldItalic),
-        ("###### Title", Face::BoldItalic),
-    ];
-    for (text, face) in cases {
+    for text in ["# Title", "## Title", "### Title", "###### Title"] {
         let layout = t.layout(text, 680.0);
-        let id = t.word("x", face).glyphs[0].font_id;
+        let id = t.word("x", Face::Bold, 1.0).glyphs[0].font_id;
         let glyphs = row(&layout, 0);
         let marker = text.len() - "Title".len();
         assert!(glyphs.iter().all(|g| g.glyph.font_id == id), "{text:?}");
@@ -43,7 +37,66 @@ fn heading_levels_pick_their_face_and_dim_the_marker() {
             glyphs[marker..].iter().all(|g| g.color == TEXT_COLOR),
             "{text:?} content"
         );
-        assert!(layout.lines.iter().all(|line| line.height == LINE_HEIGHT));
+    }
+}
+
+#[test]
+fn heading_lines_scale_with_their_level() {
+    let mut t = Typesetter::new();
+    let texts = ["# T", "## T", "### T", "#### T", "##### T", "###### T", "T"];
+    let heights: Vec<f32> = texts
+        .iter()
+        .map(|text| t.layout(text, 680.0).lines[0].height)
+        .collect();
+    assert!(
+        heights[0] > heights[1] && heights[1] > heights[2],
+        "{heights:?}"
+    );
+    assert!(heights[2] > heights[3], "{heights:?}");
+    assert!(
+        heights[3..].iter().all(|&h| h == LINE_HEIGHT),
+        "{heights:?}"
+    );
+    let h1 = t.layout("# T", 680.0);
+    let body = t.layout("T", 680.0);
+    let size = row(&h1, 0)[2].glyph.font_size;
+    assert!(
+        (size - FONT_SIZE * HEADING_SCALES[0]).abs() < 0.01,
+        "{size}"
+    );
+    assert!(size > row(&body, 0)[0].glyph.font_size);
+}
+
+#[test]
+fn body_rows_keep_their_metrics_under_a_heading() {
+    let mut t = Typesetter::new();
+    let plain = t.layout("\nbody", 680.0);
+    let under = t.layout("# Title\n\nbody", 680.0);
+    let metrics = |layout: &Layout, row: usize| {
+        let line = &layout.lines[row];
+        (line.height, line.baseline - line.top)
+    };
+    assert_eq!(under.lines[2].height, LINE_HEIGHT);
+    // Tops are sums after the heading, so compare the offsets within rounding.
+    let (a, b) = (metrics(&under, 2), metrics(&plain, 1));
+    assert!(
+        (a.0 - b.0).abs() < 0.001 && (a.1 - b.1).abs() < 0.001,
+        "{a:?} {b:?}"
+    );
+}
+
+#[test]
+fn heading_caret_stays_within_its_taller_line() {
+    let mut t = Typesetter::new();
+    let text = "# Title";
+    let layout = t.layout(text, 680.0);
+    let line = &layout.lines[0];
+    for byte in 0..=text.len() {
+        let (top, height) = layout.caret_extent(0, byte);
+        assert!(
+            top >= line.top && top + height <= line.top + line.height,
+            "byte {byte}: {top} {height}"
+        );
     }
 }
 
@@ -99,7 +152,7 @@ fn inline_styles_pick_faces_and_colors() {
 #[test]
 fn code_is_smaller_mono_and_keeps_line_height() {
     let mut t = Typesetter::new();
-    for text in ["`code`", "# `code`", "- `code` item", "a `x` b"] {
+    for text in ["`code`", "#### `code`", "- `code` item", "a `x` b"] {
         let layout = t.layout(text, 680.0);
         assert!(
             layout.lines.iter().all(|line| line.height == LINE_HEIGHT),
@@ -161,8 +214,12 @@ fn caret_height_follows_the_last_letter_ink() {
 fn block_colors_and_faces() {
     let mut t = Typesetter::new();
     let quote = t.layout("> quoted", 680.0);
-    let italic = t.word("x", Face::Italic).glyphs[0].font_id;
-    assert!(row(&quote, 0).iter().all(|g| g.glyph.font_id == italic));
+    let upright = t.word("x", Face::Regular, 1.0).glyphs[0].font_id;
+    assert!(
+        row(&quote, 0)[2..]
+            .iter()
+            .all(|g| g.glyph.font_id == upright && g.color == QUOTE_COLOR)
+    );
     let done = t.layout("- [x] done", 680.0);
     assert!(row(&done, 0).iter().all(|g| g.color == MARKER_COLOR));
     let todo = t.layout("- [ ] todo", 680.0);
@@ -311,7 +368,17 @@ fn mixed_markdown_keeps_line_heights_and_editable_stops() {
     let text = doc.text();
     let layout = t.document(&doc, 160.0);
     assert!(layout.lines.len() > 12);
-    assert!(layout.lines.iter().all(|line| line.height == LINE_HEIGHT));
+    // Headings are taller than body lines; everything after them keeps the body height.
+    assert!(
+        layout.lines[..3]
+            .iter()
+            .all(|line| line.height > LINE_HEIGHT)
+    );
+    assert!(
+        layout.lines[3..]
+            .iter()
+            .all(|line| line.height == LINE_HEIGHT)
+    );
     for (row, line) in layout.lines.iter().enumerate() {
         assert_eq!(layout.row_at(line.top + line.height / 2.0), row);
     }
@@ -333,7 +400,7 @@ fn every_face_loads_its_own_font() {
     ];
     let ids: Vec<_> = faces
         .iter()
-        .map(|&face| t.word("Title", face).glyphs[0].font_id)
+        .map(|&face| t.word("Title", face, 1.0).glyphs[0].font_id)
         .collect();
     for (i, id) in ids.iter().enumerate() {
         assert!(

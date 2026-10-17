@@ -40,22 +40,24 @@ pub(super) fn face_of(bold: bool, italic: bool) -> Face {
 pub struct Typesetter {
     pub fonts: FontSystem,
     swash: SwashCache,
-    cache: HashMap<(String, Face), Word>,
-    // Ink height of the x and the cap, per face.
-    references: HashMap<Face, (f32, f32)>,
+    // Keyed by text, face and the size scale (its bits, so equal scales hash equal).
+    cache: HashMap<(String, Face, u32), Word>,
+    // Ink height of the x and the cap, per face and size scale.
+    references: HashMap<(Face, u32), (f32, f32)>,
 }
-// Family, weight, style and size that each face is drawn with.
-fn face_style(face: Face) -> (&'static str, Weight, Style, f32) {
+// Family, weight, style and size that each face is drawn with at a size scale.
+fn face_style(face: Face, scale: f32) -> (&'static str, Weight, Style, f32) {
+    let size = FONT_SIZE * scale;
     match face {
-        Face::Regular => (FONT_FAMILY, Weight::NORMAL, Style::Normal, FONT_SIZE),
-        Face::Italic => (FONT_FAMILY, Weight::NORMAL, Style::Italic, FONT_SIZE),
-        Face::Bold => (FONT_FAMILY, Weight::BOLD, Style::Normal, FONT_SIZE),
-        Face::BoldItalic => (FONT_FAMILY, Weight::BOLD, Style::Italic, FONT_SIZE),
+        Face::Regular => (FONT_FAMILY, Weight::NORMAL, Style::Normal, size),
+        Face::Italic => (FONT_FAMILY, Weight::NORMAL, Style::Italic, size),
+        Face::Bold => (FONT_FAMILY, Weight::BOLD, Style::Normal, size),
+        Face::BoldItalic => (FONT_FAMILY, Weight::BOLD, Style::Italic, size),
         Face::Mono => (
             MONO_FONT_FAMILY,
             Weight::NORMAL,
             Style::Normal,
-            FONT_SIZE * MONO_SCALE,
+            size * MONO_SCALE,
         ),
     }
 }
@@ -84,9 +86,11 @@ impl Typesetter {
             references: HashMap::new(),
         }
     }
-    fn shape(&mut self, text: &str, face: Face) -> (Vec<LayoutGlyph>, f32, f32) {
-        let (family, weight, style, size) = face_style(face);
-        let mut b = Buffer::new(&mut self.fonts, Metrics::new(size, LINE_HEIGHT));
+    // Glyphs, width and baseline of one line at a size scale; the line height scales with it.
+    fn shape(&mut self, text: &str, face: Face, scale: f32) -> (Vec<LayoutGlyph>, f32, f32) {
+        let (family, weight, style, size) = face_style(face, scale);
+        let line_height = LINE_HEIGHT * scale;
+        let mut b = Buffer::new(&mut self.fonts, Metrics::new(size, line_height));
         b.set_wrap(Wrap::None);
         b.set_size(None, None);
         b.set_text(
@@ -101,7 +105,7 @@ impl Typesetter {
         b.shape_until_scroll(&mut self.fonts, false);
         match b.layout_runs().next() {
             Some(run) => (run.glyphs.to_vec(), run.line_w, run.line_y),
-            None => (vec![], 0.0, LINE_HEIGHT * 0.75),
+            None => (vec![], 0.0, line_height * 0.75),
         }
     }
     // Ink (height above the baseline, depth below it) of one glyph's pixels, in logical units.
@@ -139,25 +143,26 @@ impl Typesetter {
         )
     }
     // Ink height of the x and of the cap in a face: the caret's floor and its space height.
-    pub(super) fn references(&mut self, face: Face) -> (f32, f32) {
-        if let Some(&heights) = self.references.get(&face) {
+    pub(super) fn references(&mut self, face: Face, scale: f32) -> (f32, f32) {
+        let key = (face, scale.to_bits());
+        if let Some(&heights) = self.references.get(&key) {
             return heights;
         }
         let mut height = |text: &str| {
-            let (glyphs, _, _) = self.shape(text, face);
+            let (glyphs, _, _) = self.shape(text, face, scale);
             glyphs.first().map_or(0.0, |g| self.glyph_ink(g).0)
         };
         let heights = (height("e"), height("A"));
-        self.references.insert(face, heights);
+        self.references.insert(key, heights);
         heights
     }
-    pub(super) fn word(&mut self, text: &str, face: Face) -> Word {
-        let key = (text.to_owned(), face);
+    pub(super) fn word(&mut self, text: &str, face: Face, scale: f32) -> Word {
+        let key = (text.to_owned(), face, scale.to_bits());
         if let Some(word) = self.cache.get(&key) {
             return word.clone();
         }
-        let (glyphs, line_w, baseline) = self.shape(text, face);
-        let (x_height, cap) = self.references(face);
+        let (glyphs, line_w, baseline) = self.shape(text, face, scale);
+        let (x_height, cap) = self.references(face, scale);
         // Ligatures share a cluster; interpolate only at Unicode grapheme boundaries.
         let mut stops = vec![];
         let mut inks = vec![(cap, 0.0)];

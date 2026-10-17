@@ -81,11 +81,13 @@ impl Typesetter {
         let text = doc.text();
         let open = doc.open_range();
         let mut out = Layout::default();
-        let normal_baseline = self.word("M", Face::Regular).baseline;
-        let cap = (self.references(Face::Regular).1, 0.0);
         let mut offset = 0;
         for paragraph in text.split('\n') {
             let para = Para::new(paragraph, offset, open.clone());
+            // A heading's rows take the regular metrics at its size.
+            let normal_baseline = self.word("M", Face::Regular, para.scale).baseline;
+            let cap = (self.references(Face::Regular, para.scale).1, 0.0);
+            let line_height = LINE_HEIGHT * para.scale;
             let mut boxes = Vec::new();
             let mut local = 0;
             while local < paragraph.len() {
@@ -98,7 +100,9 @@ impl Typesetter {
                         } else {
                             &image.inline
                         };
-                        let scale = (width / bitmap.width()).min(1.0);
+                        // Formulas in a heading scale with its text, still fitted to the column.
+                        let fit = width / bitmap.width();
+                        let scale = (fit.min(1.0) * para.scale).min(fit);
                         boxes.push(BoxItem {
                             start: pos,
                             end: pos + ATOM.len(),
@@ -115,7 +119,7 @@ impl Typesetter {
                         });
                     } else {
                         let label = formula.label().replace('\n', " ");
-                        let word = self.word(&label, Face::Regular);
+                        let word = self.word(&label, Face::Regular, 1.0);
                         // Pending prompts remain readable and wrap as text inside a single atom.
                         let pending = if word.width > width {
                             Some(self.layout_plain_label(&label, width))
@@ -146,7 +150,7 @@ impl Typesetter {
                                 .map(|p| {
                                     let mut g = p.glyph;
                                     g.x += p.x;
-                                    g.y += p.baseline - normal_baseline;
+                                    g.y += p.baseline - word.baseline;
                                     g
                                 })
                                 .collect();
@@ -225,6 +229,7 @@ impl Typesetter {
                         std::mem::take(&mut row),
                         start,
                         normal_baseline,
+                        line_height,
                         width,
                         display,
                         indent,
@@ -242,6 +247,7 @@ impl Typesetter {
                 row,
                 start,
                 normal_baseline,
+                line_height,
                 width,
                 display,
                 indent,
@@ -282,16 +288,16 @@ impl Typesetter {
             let next = para.cut(at).min(end);
             let (face, color, strike) = para.look(at);
             for (i, token) in text[at - start..next - start].split_word_bound_indices() {
-                let parts: Vec<_> = if self.word(token, face).width > width {
+                let parts: Vec<_> = if self.word(token, face, para.scale).width > width {
                     token.grapheme_indices(true).collect()
                 } else {
                     vec![(0, token)]
                 };
                 for (gi, piece) in parts {
-                    let word = self.word(piece, face);
+                    let word = self.word(piece, face, para.scale);
                     // Clamp to the normal metrics so a code span never makes a line taller.
                     let ascent = word.baseline.min(normal_baseline);
-                    let descent = LINE_HEIGHT - word.baseline.max(normal_baseline);
+                    let descent = LINE_HEIGHT * para.scale - word.baseline.max(normal_baseline);
                     boxes.push(BoxItem {
                         start: at + i + gi,
                         end: at + i + gi + piece.len(),
@@ -316,16 +322,17 @@ impl Typesetter {
         let mut out = Layout::default();
         let mut row = Vec::new();
         let mut x = 0.0;
-        let baseline = self.word("M", Face::Regular).baseline;
-        let cap = (self.references(Face::Regular).1, 0.0);
+        let baseline = self.word("M", Face::Regular, 1.0).baseline;
+        let cap = (self.references(Face::Regular, 1.0).1, 0.0);
         for (start, part) in label.split_word_bound_indices() {
-            let word = self.word(part, Face::Regular);
+            let word = self.word(part, Face::Regular, 1.0);
             if x > 0.0 && x + word.width > width {
                 Self::line(
                     &mut out,
                     std::mem::take(&mut row),
                     0,
                     baseline,
+                    LINE_HEIGHT,
                     width,
                     false,
                     0.0,
@@ -349,7 +356,17 @@ impl Typesetter {
                 strike: false,
             });
         }
-        Self::line(&mut out, row, 0, baseline, width, false, 0.0, cap);
+        Self::line(
+            &mut out,
+            row,
+            0,
+            baseline,
+            LINE_HEIGHT,
+            width,
+            false,
+            0.0,
+            cap,
+        );
         out
     }
     // Places one visual row. `indent` is where the row's first box starts, used by hanging
@@ -360,6 +377,7 @@ impl Typesetter {
         items: Vec<BoxItem>,
         start: usize,
         normal_baseline: f32,
+        line_height: f32,
         width: f32,
         display: bool,
         indent: f32,
@@ -372,7 +390,7 @@ impl Typesetter {
         let descent = items
             .iter()
             .map(|i| i.descent)
-            .fold(LINE_HEIGHT - normal_baseline, f32::max);
+            .fold(line_height - normal_baseline, f32::max);
         let padding = if display { 12.0 } else { 0.0 };
         let top = out.height();
         let baseline = top + padding + ascent;
