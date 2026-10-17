@@ -470,7 +470,7 @@ fn replacing_with_only_atom_chars_is_a_no_op() {
     assert_eq!(d.selected(), "abc");
 }
 fn image(latex: &str) -> Arc<FormulaImage> {
-    let pixels = || crate::math::Image {
+    let pixels = || crate::math::worker::Image {
         rgba: vec![],
         width: 0,
         height: 0,

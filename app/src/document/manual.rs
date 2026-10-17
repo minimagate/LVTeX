@@ -1,6 +1,6 @@
 //! Hand-written math session: opening, previewing, finishing and cancelling a manual formula.
 use super::{ATOM, Document, Formula, NEXT_ID};
-use crate::math::FormulaImage;
+use crate::math::worker::FormulaImage;
 use std::sync::{Arc, atomic::Ordering};
 
 #[derive(Clone)]

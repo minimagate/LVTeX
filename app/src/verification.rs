@@ -1,9 +1,10 @@
 use crate::{
     document::{ATOM, Document},
-    keymap::{MathInput, MathKey, Outcome},
     layout::Typesetter,
-    markdown, math, render,
-    structure::MathTree,
+    markdown, math,
+    math::input::{MathInput, MathKey, Outcome},
+    math::tree::MathTree,
+    render,
 };
 use mathstral_render::math::Renderer;
 use std::{sync::Arc, time::Instant};
@@ -28,7 +29,10 @@ fn finish(doc: &mut Document, renderer: &mut Renderer) {
                 }
                 _ => "x^2",
             });
-        doc.complete(job.id, Ok(Arc::new(math::render(renderer, latex).unwrap())));
+        doc.complete(
+            job.id,
+            Ok(Arc::new(math::worker::render(renderer, latex).unwrap())),
+        );
     }
 }
 #[test]
@@ -160,7 +164,7 @@ fn late_results_deleted_atoms_and_undo_never_target_other_text() {
     let mut d = Document::new(r"\first\ \second\");
     let jobs = d.jobs();
     let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
-    let image = Arc::new(math::render(&mut renderer, "x^2").unwrap());
+    let image = Arc::new(math::worker::render(&mut renderer, "x^2").unwrap());
     d.move_to(0, false);
     d.replace("prefix ", false);
     assert!(d.complete(jobs[1].id, Ok(image.clone())));
@@ -296,7 +300,7 @@ fn manual_preview_latency() {
                     let latex = input.display_latex();
                     preparation_timings.push(key_start.elapsed());
                     let render_start = Instant::now();
-                    math::render(&mut renderer, &latex)
+                    math::worker::render(&mut renderer, &latex)
                         .unwrap_or_else(|error| panic!("{name} preview {latex:?}: {error}"));
                     let elapsed = render_start.elapsed();
                     cold.get_or_insert((name, elapsed));

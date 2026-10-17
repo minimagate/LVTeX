@@ -4,13 +4,11 @@ mod config;
 mod document;
 mod export;
 mod file;
-mod keymap;
 mod layout;
 mod markdown;
 mod math;
 mod menu;
 mod render;
-mod structure;
 #[cfg(test)]
 mod verification;
 

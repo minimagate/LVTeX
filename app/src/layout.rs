@@ -2,7 +2,7 @@ use crate::{
     config::*,
     document::{ATOM, Document},
     markdown::{self, Block, Span},
-    math::FormulaImage,
+    math::worker::FormulaImage,
 };
 use cosmic_text::{
     Attrs, Buffer, Family, FontSystem, LayoutGlyph, Metrics, Shaping, Style, SwashCache,

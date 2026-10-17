@@ -2,13 +2,15 @@ use crate::{
     config::*,
     document::Document,
     export, file,
-    keymap::{MathInput, MathKey, Outcome},
     layout::{Layout, Typesetter},
     markdown,
-    math::{FormulaImage, Preview, Reply, Worker},
+    math::input::{MathInput, MathKey, Outcome},
+    math::{
+        tree::MathTree,
+        worker::{FormulaImage, Preview, Reply, Worker},
+    },
     menu::{self, Action},
     render,
-    structure::MathTree,
 };
 use cosmic_text::SwashCache;
 use std::{

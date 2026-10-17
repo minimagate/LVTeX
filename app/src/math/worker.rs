@@ -1,11 +1,11 @@
-//! Background-only conversion and rendering. Nothing in this module runs on a key event.
+//! Background worker: threads, job queues and formula rendering. Nothing here runs on a key event.
+
+use super::model::{EXAMPLES, Error, SYSTEM, chat, clean, reject_prose};
 use crate::config::*;
 use mathstral_render::math::Renderer;
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
-    io::{Read, Write},
-    net::{SocketAddr, TcpStream},
     panic::{self, AssertUnwindSafe},
     sync::{Arc, Condvar, Mutex, mpsc},
     thread,
@@ -74,33 +74,6 @@ struct LocalPending {
 struct LocalWorker {
     pending: Arc<(Mutex<LocalPending>, Condvar)>,
 }
-
-pub const SYSTEM: &str = r#"Convert the user's mathematical description to LaTeX. Output ONLY the LaTeX math body. No dollar signs, delimiters, Markdown fences, explanations, labels, or prose. Use standard amsmath commands. If input is already LaTeX, clean it up. Preserve the intended mathematics; do not evaluate unless asked. Use aligned (not align) for multiple equations. Never include document commands or packages. Follow the examples."#;
-const EXAMPLES: &[(&str, &str)] = &[
-    ("integral from 0 to 1 of x^2 dx", r"\int_0^1 x^2\,dx"),
-    (
-        "sum n squared for n from 1 to infinity",
-        r"\sum_{n=1}^{\infty} n^2",
-    ),
-    ("1 over 3", r"\frac{1}{3}"),
-    (
-        "matrix rows 1 2 and 3 4",
-        r"\begin{pmatrix}1&2\\3&4\end{pmatrix}",
-    ),
-    (
-        "f(x) is x squared if x is nonnegative and minus x otherwise",
-        r"f(x)=\begin{cases}x^2&x\geq0\\-x&x<0\end{cases}",
-    ),
-    (
-        "align x+y=3 and x-y=1 on separate lines",
-        r"\begin{aligned}x+y&=3\\x-y&=1\end{aligned}",
-    ),
-    (
-        "set of real x such that x is greater than 0",
-        r"\{x\in\mathbb{R}\mid x>0\}",
-    ),
-    ("alpha plus beta equals gamma", r"\alpha+\beta=\gamma"),
-];
 
 impl Worker {
     pub fn new(wake: impl Fn() + Send + Sync + 'static) -> Self {
@@ -195,6 +168,7 @@ impl Worker {
         self.local.cancel_preview(id);
     }
 }
+
 impl LocalWorker {
     fn new(replies: mpsc::Sender<Reply>, wake: Arc<dyn Fn() + Send + Sync>) -> Self {
         let pending = Arc::new((
@@ -287,6 +261,7 @@ enum LocalTask {
     Job(Job),
     Preview(Preview),
 }
+
 impl LocalPending {
     fn take_next(&mut self, prefer_preview: &mut bool) -> Option<LocalTask> {
         let task = if *prefer_preview {
@@ -304,6 +279,7 @@ impl LocalPending {
         task
     }
 }
+
 impl Drop for LocalWorker {
     fn drop(&mut self) {
         let (lock, ready) = &*self.pending;
@@ -311,10 +287,7 @@ impl Drop for LocalWorker {
         ready.notify_one();
     }
 }
-struct Error {
-    message: String,
-    offline: bool,
-}
+
 // A panicking backend during warm-up counts as offline.
 fn warm_up(request: &mut impl FnMut(&Value) -> Result<Value, Error>, warm: &Value) -> bool {
     panic::catch_unwind(AssertUnwindSafe(|| request(warm).is_ok())).unwrap_or(false)
@@ -330,14 +303,7 @@ fn guarded<T>(
         Err("renderer panicked".to_owned().into())
     })
 }
-impl From<String> for Error {
-    fn from(message: String) -> Self {
-        Self {
-            message,
-            offline: false,
-        }
-    }
-}
+
 fn resolve_with(
     job: &Job,
     renderer: &mut Renderer,
@@ -382,50 +348,6 @@ fn resolve_with(
         }
     }
     Err(last.into())
-}
-
-pub fn clean(raw: &str) -> String {
-    let mut s = raw.trim();
-    if let Some(start) = s.find("```") {
-        let fenced = &s[start + 3..];
-        if let Some(end) = fenced.find("```") {
-            s = &fenced[..end];
-            for language in ["latex", "tex", "math"] {
-                if let Some(rest) = s.strip_prefix(language) {
-                    s = rest;
-                    break;
-                }
-            }
-        }
-    }
-    for (open, close) in [("\\[", "\\]"), ("\\(", "\\)"), ("$$", "$$"), ("$", "$")] {
-        if let Some(start) = s.find(open) {
-            let rest = &s[start + open.len()..];
-            if let Some(end) = rest.find(close) {
-                s = &rest[..end];
-                break;
-            }
-        }
-    }
-    let lines: Vec<_> = s
-        .lines()
-        .filter(|line| {
-            let lower = line.trim().to_lowercase();
-            ![
-                "here is",
-                "here's",
-                "the latex",
-                "latex:",
-                "this ",
-                "where ",
-                "note:",
-                "explanation:",
-            ]
-            .iter()
-            .any(|p| lower.starts_with(p))
-        })
-        .collect();
-    lines.join("\n").trim().to_owned()
 }
 
 pub fn render(renderer: &mut Renderer, latex: &str) -> Result<FormulaImage, String> {
@@ -511,143 +433,10 @@ fn take_caret(rgba: &mut [u8], width: usize) -> Option<CaretBox> {
     })
 }
 
-fn reject_prose(latex: &str) -> Result<(), String> {
-    let bytes = latex.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'\\' {
-            i += 1;
-            let start = i;
-            while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
-                i += 1;
-            }
-            let command = &latex[start..i];
-            if start == i {
-                if i < bytes.len() {
-                    i += latex[i..].chars().next().unwrap().len_utf8();
-                }
-                continue;
-            }
-            if [
-                "text",
-                "operatorname",
-                "begin",
-                "end",
-                "mathrm",
-                "mathbf",
-                "mathbb",
-                "mathcal",
-                "mathsf",
-                "textnormal",
-            ]
-            .contains(&command)
-            {
-                while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-                    i += 1;
-                }
-                if bytes.get(i) == Some(&b'{') {
-                    let mut depth = 1;
-                    i += 1;
-                    while i < bytes.len() && depth > 0 {
-                        match bytes[i] {
-                            b'{' => depth += 1,
-                            b'}' => depth -= 1,
-                            _ => {}
-                        };
-                        i += 1;
-                    }
-                }
-            }
-        } else if bytes[i].is_ascii_alphabetic() {
-            let start = i;
-            while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
-                i += 1;
-            }
-            let word = &latex[start..i];
-            if word.len() > 3
-                && !["arcsin", "arccos", "arctan", "sinh", "cosh", "tanh"].contains(&word)
-            {
-                return Err("output contains prose; use only a LaTeX math body".into());
-            }
-        } else {
-            i += 1;
-        }
-    }
-    Ok(())
-}
-
-// Ollama is loopback HTTP only. Timeouts and I/O are confined to the worker.
-fn chat(body: &Value) -> Result<Value, Error> {
-    let io_error = |e: std::io::Error| Error {
-        message: e.to_string(),
-        offline: true,
-    };
-    let addr: SocketAddr = OLLAMA_ADDRESS.parse().unwrap();
-    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(2)).map_err(io_error)?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(120)))
-        .map_err(io_error)?;
-    stream
-        .set_write_timeout(Some(Duration::from_secs(5)))
-        .map_err(io_error)?;
-    let body = body.to_string();
-    write!(stream, "POST /api/chat HTTP/1.1\r\nHost: localhost:11434\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).map_err(io_error)?;
-    let mut response = Vec::new();
-    stream
-        .take(2 * 1024 * 1024)
-        .read_to_end(&mut response)
-        .map_err(io_error)?;
-    let split = response
-        .windows(4)
-        .position(|b| b == b"\r\n\r\n")
-        .ok_or_else(|| Error::from("invalid HTTP response".to_owned()))?;
-    let headers = String::from_utf8_lossy(&response[..split]);
-    if !headers.starts_with("HTTP/1.1 200") && !headers.starts_with("HTTP/1.0 200") {
-        return Err(Error {
-            message: String::from_utf8_lossy(&response[split + 4..]).into(),
-            offline: true,
-        });
-    }
-    let mut bytes = response[split + 4..].to_vec();
-    if headers
-        .to_ascii_lowercase()
-        .contains("transfer-encoding: chunked")
-    {
-        let mut decoded = Vec::new();
-        let mut rest = bytes.as_slice();
-        loop {
-            let end = rest
-                .windows(2)
-                .position(|w| w == b"\r\n")
-                .ok_or("invalid chunk".to_owned())?;
-            let size = usize::from_str_radix(
-                std::str::from_utf8(&rest[..end])
-                    .unwrap_or("")
-                    .split(';')
-                    .next()
-                    .unwrap(),
-                16,
-            )
-            .map_err(|_| "invalid chunk size".to_owned())?;
-            if size == 0 {
-                break;
-            }
-            rest = &rest[end + 2..];
-            let framed = size.checked_add(2).ok_or("invalid chunk size".to_owned())?;
-            if rest.len() < framed {
-                return Err("incomplete chunk".to_owned().into());
-            }
-            decoded.extend_from_slice(&rest[..size]);
-            rest = &rest[framed..];
-        }
-        bytes = decoded;
-    }
-    serde_json::from_slice(&bytes).map_err(|e| e.to_string().into())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn offline_queue_recovers_and_renders_all_pending_jobs() {
         let mut warmups = 0;
@@ -694,6 +483,7 @@ mod tests {
         assert!(connected);
         assert_eq!(ids, (0..10).collect::<std::collections::BTreeSet<u64>>());
     }
+
     #[test]
     fn panicking_job_fails_alone_and_worker_survives() {
         let worker = Worker::with_backend(
@@ -730,11 +520,7 @@ mod tests {
             Reply::Done(2, Ok(_))
         ));
     }
-    #[test]
-    fn rendered_latex_cannot_be_prose() {
-        assert!(reject_prose("The answer is x squared").is_err());
-        assert!(reject_prose(r"\text{otherwise} + \operatorname{variance}(X)").is_ok());
-    }
+
     #[test]
     fn local_preview_slot_keeps_only_the_newest_revision() {
         let local = LocalWorker {
@@ -786,6 +572,7 @@ mod tests {
         let (lock, _) = &*local.pending;
         assert!(lock.lock().unwrap().preview.is_none());
     }
+
     #[test]
     fn local_formulas_and_previews_render_while_model_backend_is_blocked() {
         let (started, wait_started) = mpsc::channel();
@@ -839,6 +626,7 @@ mod tests {
         }
         release.send(()).unwrap();
     }
+
     #[test]
     fn prose_is_rejected_for_generated_math_but_words_render_as_user_math() {
         let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
@@ -867,6 +655,7 @@ mod tests {
         assert_eq!(calls, 2);
         assert_eq!(image.latex, "x");
     }
+
     #[test]
     fn cleanup_and_rendered_repair_then_cache() {
         assert_eq!(

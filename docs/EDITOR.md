@@ -180,7 +180,7 @@ TeXmacs's `math-kbd.scm`.
   A native caret is shown until the first preview arrives. The caret is drawn by the app, not
   inside the preview bitmap, so it stays the I-beam at the caret's size. After closing an edit, its last preview stays visible until the final render
   replaces it.
-- The system prompt and few-shot examples are in `app/src/math.rs`. They cover integrals,
+- The system prompt and few-shot examples are in `app/src/math/model.rs`. They cover integrals,
   sums, fractions, matrices, cases, aligned equations, sets and Greek letters.
 - Responses are cleaned of fences, delimiters and surrounding prose. Output containing
   prose is rejected. The result is rendered before it is accepted.
