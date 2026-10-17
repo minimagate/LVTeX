@@ -98,10 +98,8 @@ Files are Markdown-compatible text.
 
 ## License
 
-Mathstral is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE),
-at your option.
+Mathstral is licensed under [Apache-2.0](LICENSE).
 
-Third-party Rust crates and their licenses are listed in
-[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). The bundled fonts are licensed
-under the SIL Open Font License 1.1 (Libertinus Serif) and the GUST Font License
-(New Computer Modern Math); see [assets/fonts/README.md](assets/fonts/README.md).
+The bundled fonts are licensed under the SIL Open Font License 1.1 (Libertinus Serif)
+and the GUST Font License (New Computer Modern Math); see
+[assets/fonts/README.md](assets/fonts/README.md).

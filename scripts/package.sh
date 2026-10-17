@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build the app bundle and package it, with the README and license files, as
+# Build the app bundle and package it, with the README and LICENSE, as
 # dist/Mathstral-<version>-alpha-macos-<arch>.zip.
 set -eu
 cd "$(dirname "$0")/.."
@@ -17,7 +17,7 @@ stage="$root/dist/stage/$name"
 rm -rf "$root/dist/stage"
 mkdir -p "$stage"
 ditto "$app" "$stage/Mathstral.app"
-cp README.md LICENSE-MIT LICENSE-APACHE THIRD_PARTY_LICENSES.md "$stage/"
+cp README.md LICENSE "$stage/"
 
 rm -f "$zip"
 # --norsrc --noextattr --noqtn keep AppleDouble "._" entries out of the archive.

@@ -53,7 +53,7 @@ plutil -lint "$contents/Info.plist" >/dev/null
 # Legal notices and font attribution, rebuilt from scratch every time.
 rm -rf "$contents/Resources"
 mkdir -p "$contents/Resources"
-cp LICENSE-MIT LICENSE-APACHE THIRD_PARTY_LICENSES.md "$contents/Resources/"
+cp LICENSE "$contents/Resources/"
 cp assets/fonts/README.md "$contents/Resources/FONTS.md"
 cp assets/fonts/UPSTREAM-NOTICE "$contents/Resources/FONTS-UPSTREAM-NOTICE"
 
