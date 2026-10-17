@@ -119,6 +119,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --release --locked --workspace
 sh scripts/build-app.sh     # target/Mathstral.app
+sh scripts/install.sh       # /Applications/Mathstral.app
 sh scripts/package.sh       # dist/Mathstral-<version>-alpha-macos-<arch>.zip
 ```
 
