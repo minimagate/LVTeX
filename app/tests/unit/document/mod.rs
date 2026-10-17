@@ -1,5 +1,5 @@
 use super::*;
-use crate::document::codec::LITERAL_BACKSLASH;
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 
 mod codec;
 mod editing;
@@ -20,6 +20,12 @@ fn assert_round_trip(d: &Document) {
         assert_eq!(a.latex, b.latex);
     }
     assert!(!reopened.dirty());
+}
+fn pending_comment(prompt: &str) -> String {
+    format!(
+        "<!--mathstral:pending:{}-->",
+        URL_SAFE_NO_PAD.encode(prompt)
+    )
 }
 fn image(latex: &str) -> Arc<FormulaImage> {
     let pixels = || crate::math::render::Image {

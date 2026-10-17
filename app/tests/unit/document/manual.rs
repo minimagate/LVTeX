@@ -202,7 +202,7 @@ fn reopened_formula_keeps_its_source_unless_changed() {
 }
 #[test]
 fn reopen_manual_refuses_prompts_and_empty_positions() {
-    let mut d = Document::new(r"a \one\ b");
+    let mut d = Document::new("a <!--mathstral:pending:b25l--> b");
     let undo = d.undo.len();
     assert_eq!(d.reopen_manual(2), None);
     assert_eq!(d.reopen_manual(0), None);

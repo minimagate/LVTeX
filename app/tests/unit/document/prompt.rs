@@ -1,117 +1,6 @@
 use super::*;
 
 #[test]
-fn literal_marker_text_survives_plain_ai_and_clipboard_round_trips() {
-    let marker = LITERAL_BACKSLASH;
-    for text in [
-        marker.to_owned(),
-        format!("{marker}{marker}"),
-        format!("{marker}\\"),
-        format!("{marker}$"),
-    ] {
-        let mut plain = Document::new("");
-        type_text(&mut plain, &text);
-        let saved = plain.markdown();
-        assert_eq!(
-            saved.matches(marker).count(),
-            text.matches(marker).count() * 2
-        );
-        let reopened = Document::new(&saved);
-        assert_eq!(reopened.text(), text, "plain {text:?}");
-        assert_eq!(
-            Document::new(&reopened.markdown()).text(),
-            text,
-            "save {text:?}"
-        );
-
-        plain.move_to(0, false);
-        plain.move_to(plain.rope.len_bytes(), true);
-        let copied = plain.selected();
-        let mut pasted = Document::new("");
-        pasted.paste(&copied);
-        assert_eq!(pasted.text(), text, "clipboard {text:?}");
-    }
-
-    let prompt = format!("before {marker}{marker} {marker}\\ {marker}$ after");
-    let mut active = Document::new("");
-    active.open_ai_prompt();
-    type_text(&mut active, &prompt);
-    let saved = active.markdown();
-    let reopened_active = Document::new(&saved);
-    assert_eq!(
-        reopened_active
-            .formulas
-            .values()
-            .next()
-            .unwrap()
-            .prompt
-            .as_deref(),
-        Some(prompt.as_str())
-    );
-    assert_eq!(reopened_active.markdown(), saved);
-    assert!(active.submit_prompt());
-    let submitted = active.markdown();
-    let reopened = Document::new(&submitted);
-    assert_eq!(
-        reopened.formulas.values().next().unwrap().prompt.as_deref(),
-        Some(prompt.as_str())
-    );
-    assert_eq!(Document::new(&reopened.markdown()).markdown(), submitted);
-
-    active.move_to(0, false);
-    active.move_to(ATOM.len(), true);
-    let copied = active.selected();
-    let mut pasted = Document::new("");
-    pasted.paste(&copied);
-    assert_eq!(
-        pasted.formulas.values().next().unwrap().prompt.as_deref(),
-        Some(prompt.as_str())
-    );
-
-    let id = active.formulas.values().next().unwrap().id;
-    assert!(active.complete(id, Err("generation failed".into())));
-    let failed = active.markdown();
-    assert_eq!(
-        Document::new(&failed)
-            .formulas
-            .values()
-            .next()
-            .unwrap()
-            .prompt
-            .as_deref(),
-        Some(prompt.as_str())
-    );
-    assert_eq!(Document::new(&failed).markdown(), failed);
-}
-#[test]
-fn active_ai_clipboard_unescapes_literal_markers_without_parsing_text() {
-    let marker = LITERAL_BACKSLASH;
-    let prompt = format!("before {marker} \\alpha $ after");
-    let mut active = Document::new("");
-    active.open_ai_prompt();
-    type_text(&mut active, &prompt);
-    let marker_start = prompt.find(marker).unwrap();
-    active.move_to(marker_start, false);
-    active.move_to(marker_start + marker.len(), true);
-    let copied = active.selected();
-    assert_eq!(copied, format!("{marker}{marker}"));
-    active.paste(&copied);
-    assert_eq!(active.text(), prompt);
-    assert!(active.formulas.is_empty());
-
-    let mut another = Document::new("");
-    another.open_ai_prompt();
-    type_text(&mut another, "prefix suffix");
-    another.move_to(7, false);
-    another.paste(&copied);
-    assert_eq!(another.text(), format!("prefix {marker}suffix"));
-    assert!(another.formulas.is_empty());
-    another.move_to(another.rope.len_bytes(), false);
-    another.paste(marker);
-    assert!(another.text().ends_with(marker));
-    assert!(another.formulas.is_empty());
-}
-#[test]
 fn ai_prompt_submits_from_document_edges_and_selection() {
     let cases = [
         ("", 0, 0, "integral", 0),
@@ -225,7 +114,7 @@ fn empty_ai_prompt_submission_handles_deleted_boundary_spaces() {
     assert_eq!(suffix.text(), "a");
 }
 #[test]
-fn cancelling_ai_prompt_keeps_literal_text_and_undo_restores_edit() {
+fn cancelling_ai_prompt_keeps_plain_text_and_undo_restores_edit() {
     let mut doc = Document::new("word");
     doc.move_to(2, false);
     doc.open_ai_prompt();
@@ -245,12 +134,30 @@ fn cancelling_ai_prompt_keeps_literal_text_and_undo_restores_edit() {
     );
 }
 #[test]
-fn reopening_prompt_edits_plain_text_and_saves_legacy_delimiters() {
-    let mut doc = Document::new(r"before \sum_{i=1}^n i\ after");
+fn cancelling_backslash_prompt_leaves_plain_prose() {
+    let mut doc = Document::new("word");
+    doc.move_to(2, false);
+    doc.open_ai_prompt();
+    type_text(&mut doc, r"a \x\ b");
+    assert!(doc.cancel());
+    assert_eq!(doc.text(), r"wo a \x\ b rd");
+    assert!(doc.open_range().is_none());
+    let saved = doc.markdown();
+    assert_eq!(saved, r"wo a \x\ b rd");
+    let reopened = Document::new(&saved);
+    assert!(reopened.formulas.is_empty());
+    assert_eq!(reopened.text(), doc.text());
+    assert_eq!(reopened.markdown(), saved);
+}
+#[test]
+fn reopening_pending_prompt_edits_its_text_and_saves_the_comment() {
+    let source = format!("before {} after", pending_comment(r"sum_{i=1}^n i"));
+    let mut doc = Document::new(&source);
     assert_eq!(doc.formulas[&7].label(), r"sum_{i=1}^n i");
     assert!(doc.reopen(7));
     assert_eq!(doc.text(), "before sum_{i=1}^n i after");
-    assert_eq!(doc.markdown(), r"before \sum_{i=1}^n i\ after");
+    assert_eq!(doc.markdown(), source);
     assert!(doc.submit_prompt());
     assert_eq!(doc.formulas[&7].prompt.as_deref(), Some("sum_{i=1}^n i"));
+    assert_eq!(doc.markdown(), source);
 }

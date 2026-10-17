@@ -8,7 +8,8 @@ pub(super) struct Para {
     // End of the block marker; the content starts here.
     pub(super) marker: usize,
     pub(super) bold: bool,
-    pub(super) italic: bool,
+    // Size of the block's lines, as a multiple of FONT_SIZE.
+    pub(super) scale: f32,
     // Inline spans covering the content, in order.
     pub(super) spans: Vec<Span>,
     pub(super) open: Option<Range<usize>>,
@@ -26,18 +27,15 @@ impl Para {
             let range = span.range.clone();
             span.range = range.start + offset + content..range.end + offset + content;
         }
-        let (bold, italic) = match line.block {
-            Block::Heading(1) => (true, false),
-            Block::Heading(2) => (false, true),
-            Block::Heading(_) => (true, true),
-            Block::Quote => (false, true),
-            _ => (false, false),
+        let (bold, scale) = match line.block {
+            Block::Heading(level) => (true, HEADING_SCALES[level as usize - 1]),
+            _ => (false, 1.0),
         };
         Self {
             block: line.block,
             marker: offset + content,
             bold,
-            italic,
+            scale,
             spans,
             open,
         }
@@ -65,12 +63,20 @@ impl Para {
         }
         cut
     }
+    // Color of plain text in this block.
+    fn text_color(&self) -> u32 {
+        if self.block == Block::Quote {
+            QUOTE_COLOR
+        } else {
+            TEXT_COLOR
+        }
+    }
     // Face, color and strikethrough for the bytes that start at `at`.
     pub(super) fn look(&self, at: usize) -> (Face, u32, bool) {
         if self.open.as_ref().is_some_and(|r| r.contains(&at)) {
             return (Face::Regular, PENDING_COLOR, false);
         }
-        let base = face_of(self.bold, self.italic);
+        let base = face_of(self.bold, false);
         if at < self.marker {
             return (base, MARKER_COLOR, false);
         }
@@ -78,13 +84,13 @@ impl Para {
             .spans
             .get(self.spans.partition_point(|s| s.range.end <= at))
         else {
-            return (base, TEXT_COLOR, false);
+            return (base, self.text_color(), false);
         };
         let style = span.style;
         let face = if style.code {
             Face::Mono
         } else {
-            face_of(self.bold || style.bold, self.italic || style.italic)
+            face_of(self.bold || style.bold, style.italic)
         };
         let color = if span.marker {
             MARKER_COLOR
@@ -95,7 +101,7 @@ impl Para {
         } else if self.block == Block::Task(true) {
             MARKER_COLOR
         } else {
-            TEXT_COLOR
+            self.text_color()
         };
         (face, color, style.strike && !span.marker)
     }

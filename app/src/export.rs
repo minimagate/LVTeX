@@ -6,9 +6,11 @@ use mathstral_render::math::Renderer;
 const PREAMBLE: &str = "#set page(paper: \"a4\", margin: 2.5cm)\n\
 #set text(font: \"Libertinus Serif\", size: 11pt, fill: black)\n\
 #set par(justify: true)\n\
-#show heading: set text(size: 11pt, weight: \"bold\", style: \"italic\")\n\
-#show heading.where(level: 1): set text(style: \"normal\")\n\
-#show heading.where(level: 2): set text(weight: \"regular\")\n\
+#show heading: set text(size: 11pt, weight: \"bold\", style: \"normal\")\n\
+#show heading.where(level: 1): set text(size: 17.6pt)\n\
+#show heading.where(level: 2): set text(size: 14.85pt)\n\
+#show heading.where(level: 3): set text(size: 12.65pt)\n\
+#show quote.where(block: true): set text(fill: luma(40%))\n\
 #show raw: set text(font: \"DejaVu Sans Mono\", size: 0.85em)\n\
 #show math.equation: set text(font: \"New Computer Modern Math\")\n";
 

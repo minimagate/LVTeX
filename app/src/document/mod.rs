@@ -9,13 +9,13 @@ mod prompt;
 mod tests;
 
 use crate::math::{render::FormulaImage, worker::Job};
-use codec::{decode, unescape_literal_markers};
+use codec::decode;
 use history::Snapshot;
 use manual::Manual;
 use prompt::Editing;
 use ropey::Rope;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     ops::Range,
     sync::{
         Arc,
@@ -60,7 +60,6 @@ pub struct Document {
     pub caret: usize,
     pub anchor: usize,
     pub formulas: BTreeMap<usize, Formula>,
-    cancelled: BTreeSet<usize>,
     editing: Option<Editing>,
     manual: Option<Manual>,
     saved: String,
@@ -78,7 +77,6 @@ impl Document {
             caret: 0,
             anchor: 0,
             formulas: BTreeMap::new(),
-            cancelled: BTreeSet::new(),
             editing: None,
             manual: None,
             saved: String::new(),
@@ -86,11 +84,9 @@ impl Document {
             redo: vec![],
             typing: None,
         };
-        let (plain, atoms, cancelled) = decode(text, unescape);
+        let (plain, atoms) = decode(text, unescape);
         d.rope = Rope::from_str(&plain);
         d.formulas = atoms;
-        d.cancelled = cancelled;
-        d.close_prompts();
         d.caret = 0;
         d.anchor = 0;
         d.saved = d.markdown();
@@ -128,21 +124,6 @@ impl Document {
                         },
                         f,
                     ))
-                }
-            })
-            .collect();
-        self.cancelled = self
-            .cancelled
-            .iter()
-            .filter_map(|&pos| {
-                if range.contains(&pos) {
-                    None
-                } else {
-                    Some(if pos >= range.end {
-                        pos.wrapping_add_signed(delta)
-                    } else {
-                        pos
-                    })
                 }
             })
             .collect();
@@ -197,13 +178,8 @@ impl Document {
         self.redo.clear();
         let range = self.selection();
         self.splice(range.clone(), value);
-        // Typed text is literal, and a deletion can leave a backslash at an opening boundary.
-        if typing || value.is_empty() {
-            self.mark_literal_backslashes(range.start, value.len());
-        }
         self.caret = range.start + value.len();
         self.anchor = self.caret;
-        self.close_prompts();
         self.typing = if typing && !structural {
             Some(now)
         } else {
@@ -218,7 +194,7 @@ impl Document {
                 && edit.start <= self.caret
                 && self.caret <= edit.end
         }) {
-            self.replace(&unescape_literal_markers(text), false);
+            self.replace(text, false);
             return;
         }
         self.record();
@@ -230,12 +206,8 @@ impl Document {
         for (pos, formula) in imported.formulas {
             self.formulas.insert(start + pos, formula);
         }
-        for pos in imported.cancelled {
-            self.cancelled.insert(start + pos);
-        }
         self.caret = start + plain.len();
         self.anchor = self.caret;
-        self.close_prompts();
     }
 
     pub fn retry(&mut self, pos: usize) {
