@@ -47,6 +47,21 @@ const UNICODE_FOR_CONTROL_WORD: &[(&str, char)] = &[
     ("vartriangleright", '\u{22B3}'), // ⊳
     ("vDash", '\u{22A8}'),            // ⊨
     ("nvDash", '\u{22AD}'),           // ⊭
+    ("iiiint", '\u{2A0C}'),           // ⨌
+    ("gtrapprox", '\u{2A86}'),        // ⪆
+    ("gtreqqless", '\u{2A8C}'),       // ⪌
+    ("lvertneqq", '\u{2268}'),        // ≨
+    ("gvertneqq", '\u{2269}'),        // ≩
+    ("precneq", '\u{2AB1}'),          // ⪱
+    ("succneq", '\u{2AB2}'),          // ⪲
+    ("preceqq", '\u{2AB3}'),          // ⪳
+    ("succeqq", '\u{2AB4}'),          // ⪴
+    ("Prec", '\u{2ABB}'),             // ⪻
+    ("Succ", '\u{2ABC}'),             // ⪼
+    ("leftsquigarrow", '\u{21DC}'),   // ⇜
+    ("dotminus", '\u{2238}'),         // ∸
+    ("dottimes", '\u{2A30}'),         // ⨰
+    ("iddots", '\u{22F0}'),           // ⋰
 ];
 
 /// Replaces each whole control word in `UNICODE_FOR_CONTROL_WORD` by its
@@ -847,5 +862,26 @@ mod tests {
         assert_eq!(substitute_symbols(r"% \oplus"), r"% \oplus");
         assert_eq!(substitute_symbols(r"\%\oplus"), "\\%⊕");
         assert!(matches!(substitute_symbols(r"\alpha"), Cow::Borrowed(_)));
+        assert_eq!(substitute_symbols(r"\preceqq\cdots\preceqq"), "⪳\\cdots⪳");
+        assert_eq!(substitute_symbols(r"\not\gtrapprox"), r"\not⪆");
+    }
+
+    #[test]
+    fn substituted_symbols_convert_and_render() {
+        let mut renderer = Renderer::with_prelude(PRELUDE);
+        for latex in [
+            r"\iiiint",
+            r"\preceqq\cdots\preceqq",
+            r"\not\succeqq",
+            r"\Prec\cdots\Prec",
+            r"\leftsquigarrow\cdots\leftsquigarrow",
+            r"\dotminus\dottimes",
+            r"\iddots",
+        ] {
+            let body = convert(latex).unwrap_or_else(|e| panic!("{latex}: {e}"));
+            renderer
+                .render_math(&body, false, SCALE)
+                .unwrap_or_else(|e| panic!("{latex}: {e}\n{body}"));
+        }
     }
 }
