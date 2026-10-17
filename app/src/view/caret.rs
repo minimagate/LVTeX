@@ -3,8 +3,9 @@
 use crate::{
     config::*,
     math::render::FormulaImage,
-    view::{layout::PlacedMath, render::rect},
+    view::{layout::Layout, render::rect},
 };
+use std::sync::Arc;
 
 /// The caret's colour, per editing context. Every caret is the same I-beam; only the colour differs.
 #[derive(Clone, Copy)]
@@ -73,14 +74,20 @@ pub fn caret(
     );
 }
 
-/// The hand-written caret of a formula preview, in window units (x, top, height). `top` is the
-/// page's vertical offset (`TOP - scroll`). None until the bitmap has a caret box.
+/// The hand-written caret of a formula preview, in window units (x, top, height). `image` must be
+/// the image of a formula placed in `layout`; the placement supplies the position and scale, and
+/// whether the inline or display bitmap is used. `top` is the page's vertical offset
+/// (`TOP - scroll`). None when `image` is not placed or its bitmap has no caret box yet.
 pub fn formula_caret(
-    placed: &PlacedMath,
-    image: &FormulaImage,
+    layout: &Layout,
+    image: &Arc<FormulaImage>,
     left: f32,
     top: f32,
 ) -> Option<(f32, f32, f32)> {
+    let placed = layout
+        .math
+        .iter()
+        .find(|placed| Arc::ptr_eq(&placed.image, image))?;
     let bitmap = if placed.display {
         &image.display
     } else {
@@ -93,4 +100,55 @@ pub fn formula_caret(
         top + placed.y + caret.top * placed.scale,
         caret.height * placed.scale,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        math::render::{CaretBox, Image},
+        view::layout::PlacedMath,
+    };
+
+    fn formula(caret: Option<CaretBox>) -> Arc<FormulaImage> {
+        let bitmap = || Image {
+            rgba: vec![],
+            width: 0,
+            height: 0,
+            baseline: 0.0,
+            caret,
+        };
+        Arc::new(FormulaImage {
+            latex: "x".into(),
+            inline: bitmap(),
+            display: bitmap(),
+        })
+    }
+
+    #[test]
+    fn formula_caret_maps_the_placed_caret_box_or_finds_nothing() {
+        let image = formula(Some(CaretBox {
+            x: 2.0,
+            top: 3.0,
+            height: 10.0,
+        }));
+        let layout = Layout {
+            math: vec![PlacedMath {
+                image: Arc::clone(&image),
+                display: false,
+                x: 10.0,
+                y: 20.0,
+                scale: 2.0,
+            }],
+            ..Layout::default()
+        };
+        // left + x + caret.x * scale, top + y + caret.top * scale, caret.height * scale.
+        assert_eq!(
+            formula_caret(&layout, &image, 5.0, 100.0),
+            Some((19.0, 126.0, 20.0))
+        );
+        let other = formula(None);
+        assert_eq!(formula_caret(&layout, &other, 5.0, 100.0), None);
+        assert_eq!(formula_caret(&Layout::default(), &image, 5.0, 100.0), None);
+    }
 }

@@ -318,12 +318,7 @@ impl App {
             .find(|formula| formula.id == id)?
             .image
             .as_ref()?;
-        let placed = self
-            .layout
-            .math
-            .iter()
-            .find(|placed| Arc::ptr_eq(&placed.image, image))?;
-        caret::formula_caret(placed, image, left, TOP - self.scroll)
+        caret::formula_caret(&self.layout, image, left, TOP - self.scroll)
     }
 }
 
