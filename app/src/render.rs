@@ -20,6 +20,9 @@ pub fn rect(
     let x1 = ((x + w).ceil() as i32).clamp(0, width as i32) as usize;
     let y0 = (y.floor() as i32).clamp(0, height as i32) as usize;
     let y1 = ((y + h).ceil() as i32).clamp(0, height as i32) as usize;
+    if x1 <= x0 || y1 <= y0 {
+        return;
+    }
     for row in y0..y1 {
         pixels[row * width + x0..row * width + x1].fill(color);
     }
@@ -111,6 +114,9 @@ pub fn page(
         } else {
             &placed.image.inline
         };
+        if image.width == 0 || image.height == 0 {
+            continue;
+        }
         let x0 = ((left + placed.x) * scale).round() as i32;
         let y0 = ((top + placed.y) * scale).round() as i32;
         let factor = scale * placed.scale / 2.0;

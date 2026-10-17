@@ -60,6 +60,7 @@ impl App {
     pub fn new(proxy: EventLoopProxy<Action>) -> Self {
         let path = std::env::args_os()
             .nth(1)
+            .filter(|arg| !arg.to_string_lossy().starts_with("-psn_"))
             .map(PathBuf::from)
             .or_else(file::last);
         let (doc, path) = match path {
@@ -682,6 +683,7 @@ impl ApplicationHandler<Action> for App {
                 self.doc.replace(&text, true);
                 self.changed(true);
             }
+            WindowEvent::Ime(Ime::Disabled) => self.composing = false,
             WindowEvent::Focused(focused) => {
                 self.focused = focused;
                 if !focused {

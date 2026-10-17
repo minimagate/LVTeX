@@ -100,8 +100,10 @@ impl Typesetter {
             None,
         );
         b.shape_until_scroll(&mut self.fonts, false);
-        let run = b.layout_runs().next().expect("one shaped word");
-        let glyphs = run.glyphs.to_vec();
+        let (glyphs, line_w, baseline) = match b.layout_runs().next() {
+            Some(run) => (run.glyphs.to_vec(), run.line_w, run.line_y),
+            None => (vec![], 0.0, LINE_HEIGHT * 0.75),
+        };
         // Ligatures share a cluster; interpolate only at Unicode grapheme boundaries.
         let mut stops = vec![];
         for (i, _) in text
@@ -109,7 +111,7 @@ impl Typesetter {
             .chain(std::iter::once((text.len(), "")))
         {
             let x = if i == text.len() {
-                run.line_w
+                line_w
             } else {
                 glyphs
                     .iter()
@@ -126,8 +128,8 @@ impl Typesetter {
         }
         let word = Word {
             glyphs,
-            width: run.line_w,
-            baseline: run.line_y,
+            width: line_w,
+            baseline,
             stops,
         };
         if self.cache.len() > 8192 {
@@ -239,6 +241,10 @@ impl Typesetter {
                 }
                 let rest = &paragraph[local..];
                 let end = rest.find(ATOM).unwrap_or(rest.len());
+                if end == 0 {
+                    local += ATOM.len();
+                    continue;
+                }
                 for (i, token) in rest[..end].split_word_bound_indices() {
                     let word = self.word(token, level == 1);
                     let parts: Vec<_> = if word.width > width {
@@ -541,5 +547,11 @@ mod tests {
             assert_eq!(l.hit(row, x), i, "byte {i}");
         }
         assert_eq!(l.caret(text.len()).0, l.lines.len() - 1);
+    }
+    #[test]
+    fn stray_atoms_without_formulas_terminate() {
+        let mut t = Typesetter::new();
+        let layout = t.layout(&format!("{ATOM}a{ATOM}"), 300.0);
+        assert!(!layout.lines.is_empty());
     }
 }
