@@ -1,0 +1,4 @@
+interface:
+  display_name: "Editor Math"
+  short_description: "Formula objects, prompts, rendering and fixtures"
+  default_prompt: "Use $editor-math to add or change formula prompts, rendering or the fixture corpus."

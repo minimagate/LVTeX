@@ -1,0 +1,4 @@
+interface:
+  display_name: "Editor Text"
+  short_description: "Text core: buffer, movement, edits, undo and IME"
+  default_prompt: "Use $editor-text to change the text core without touching drawing code."

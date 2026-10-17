@@ -1,0 +1,4 @@
+interface:
+  display_name: "Editor UI"
+  short_description: "Window, menus, files, drawing and visual states"
+  default_prompt: "Use $editor-ui to change the window, menus, file commands or visual design of the editor."
