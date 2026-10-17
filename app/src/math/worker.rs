@@ -216,7 +216,7 @@ impl LocalWorker {
                         }
                         LocalTask::Preview(preview) => {
                             let result = guarded(&mut renderer, |renderer| {
-                                render(renderer, &preview.display_latex)
+                                render_preview(renderer, &preview.display_latex)
                                     .map(Arc::new)
                                     .map_err(Into::into)
                             })
@@ -350,7 +350,22 @@ fn resolve_with(
     Err(last.into())
 }
 
+/// Renders a formula for export, final images and generated math. Every pixel is drawn as ink, so a
+/// formula may use any colour, including the caret sentinel's.
 pub fn render(renderer: &mut Renderer, latex: &str) -> Result<FormulaImage, String> {
+    render_formula(renderer, latex, false)
+}
+
+/// Renders a live preview of a formula being edited. It also extracts and erases the caret marker.
+fn render_preview(renderer: &mut Renderer, latex: &str) -> Result<FormulaImage, String> {
+    render_formula(renderer, latex, true)
+}
+
+fn render_formula(
+    renderer: &mut Renderer,
+    latex: &str,
+    with_caret: bool,
+) -> Result<FormulaImage, String> {
     if latex.is_empty() || latex.len() > 16384 {
         return Err("empty or oversized expression".into());
     }
@@ -365,7 +380,7 @@ pub fn render(renderer: &mut Renderer, latex: &str) -> Result<FormulaImage, Stri
             "#set page(width: auto, height: auto, margin: 2pt, fill: none)\n#set text(font: \"Libertinus Serif\", size: {FONT_SIZE}pt, fill: rgb(\"{TEXT_COLOR:06x}\"))\n#show math.equation: set text(font: \"New Computer Modern Math\")\n{}\n{equation}", mathstral_latex::PRELUDE), 2.0)?;
         let (width, height) = (pixels.width() as usize, pixels.height() as usize);
         let mut rgba = pixels.data().to_vec();
-        let caret = take_caret(&mut rgba, width);
+        let caret = with_caret.then(|| take_caret(&mut rgba, width)).flatten();
         Ok::<_, String>(Image {
             width,
             height,
@@ -381,14 +396,20 @@ pub fn render(renderer: &mut Renderer, latex: &str) -> Result<FormulaImage, Stri
     })
 }
 
-/// Whether a premultiplied pixel is the caret sentinel, with a small tolerance for anti-aliasing:
-/// green is 0 and red and blue equal the alpha.
+/// Whether a premultiplied pixel is the caret sentinel: each channel is within one step of the
+/// sentinel's channel scaled by the pixel's alpha, so anti-aliased edges still match. Pixels with
+/// alpha below 4 are invisible and never match, which keeps faint text fringe out.
 fn is_sentinel(pixel: &[u8]) -> bool {
-    let alpha = pixel[3] as i32;
-    alpha > 0
-        && pixel[1] <= 2
-        && (pixel[0] as i32 - alpha).abs() <= 2
-        && (pixel[2] as i32 - alpha).abs() <= 2
+    let alpha = pixel[3];
+    if alpha < 4 {
+        return false;
+    }
+    let scale = f32::from(alpha) / 255.0;
+    let [_, r, g, b] = CARET_SENTINEL.to_be_bytes();
+    [r, g, b]
+        .into_iter()
+        .zip(&pixel[..3])
+        .all(|(channel, &value)| (f32::from(value) - f32::from(channel) * scale).abs() <= 1.0)
 }
 
 /// Where the math baseline falls inside the `|` bar, as a fraction of the bar's height from its top.
@@ -716,9 +737,9 @@ mod tests {
     fn hand_written_caret_is_located_erased_and_scales_with_script_size() {
         let caret = format!(r"\mathord{{\textcolor{{#{CARET_SENTINEL:06X}}}{{|}}}}");
         let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
-        let base = render(&mut renderer, &format!(r"x{caret}")).unwrap();
-        let script = render(&mut renderer, &format!(r"x^{{2{caret}}}")).unwrap();
-        let plain = render(&mut renderer, "x^2").unwrap();
+        let base = render_preview(&mut renderer, &format!(r"x{caret}")).unwrap();
+        let script = render_preview(&mut renderer, &format!(r"x^{{2{caret}}}")).unwrap();
+        let plain = render_preview(&mut renderer, "x^2").unwrap();
         for image in [&base.inline, &base.display, &script.inline, &script.display] {
             assert!(
                 image
@@ -756,5 +777,41 @@ mod tests {
             base_box.height
         );
         assert!(plain.inline.caret.is_none() && plain.display.caret.is_none());
+    }
+
+    #[test]
+    fn magenta_ink_survives_final_renders_and_previews_still_find_the_caret() {
+        let magenta = r"\textcolor{magenta}{x}+1";
+        let caret = format!(r"\mathord{{\textcolor{{#{CARET_SENTINEL:06X}}}{{|}}}}");
+        let magenta_pixels = |image: &Image| {
+            image
+                .rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|p| **p == [255, 0, 255, 255])
+                .count()
+        };
+        let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
+        let plain = render(&mut renderer, magenta).unwrap();
+        let expected = magenta_pixels(&plain.inline);
+        assert!(expected > 0, "magenta formula has no magenta ink");
+
+        let with_marker = render(&mut renderer, &format!("{magenta}{caret}")).unwrap();
+        assert!(
+            with_marker.inline.caret.is_none(),
+            "final render found a caret"
+        );
+        assert!(
+            magenta_pixels(&with_marker.inline) > 0,
+            "final render erased magenta ink"
+        );
+
+        let preview = render_preview(&mut renderer, &format!("{magenta}{caret}")).unwrap();
+        assert!(preview.inline.caret.is_some(), "preview lost the caret");
+        assert!(
+            magenta_pixels(&preview.inline) > 0,
+            "preview erased magenta ink"
+        );
     }
 }

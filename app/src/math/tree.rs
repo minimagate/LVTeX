@@ -1055,10 +1055,9 @@ mod tests {
             let current = render(&mut renderer, &with_caret);
             let old = render(&mut renderer, &without_ordinary_class);
             assert!(
-                current
-                    .pixels()
-                    .iter()
-                    .any(|pixel| { pixel.alpha() > 0 && pixel.green() == 0 && pixel.red() > 0 }),
+                current.pixels().iter().any(|pixel| {
+                    pixel.alpha() > 0 && pixel.green() <= 2 && pixel.red() > 0 && pixel.blue() > 0
+                }),
                 "caret at {caret_pos} lost its sentinel colour"
             );
             if caret_pos == 0 {
