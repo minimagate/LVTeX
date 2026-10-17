@@ -257,6 +257,7 @@ impl App {
             }
             self.page_dirty = false;
         }
+        let manual_caret = self.manual_caret(left);
         let surface = self.surface.as_mut().unwrap();
         if let Err(error) = surface.resize(
             NonZeroU32::new(width as u32).unwrap(),
@@ -269,48 +270,68 @@ impl App {
             return;
         };
         pixels.copy_from_slice(&self.pixels);
-        let manual_preview_has_caret = self.doc.manual_id().is_some_and(|id| {
-            self.doc
-                .formulas
-                .values()
-                .find(|formula| formula.id == id)
-                .is_some_and(|formula| formula.image.is_some())
-        });
-        let caret_color = if self.math.is_some() {
-            MATH_CARET_COLOR
+        let style = if self.math.is_some() {
+            render::CaretStyle::Math
         } else if self
             .doc
             .open_range()
             .is_some_and(|range| range.start <= self.doc.caret && self.doc.caret <= range.end)
         {
-            AI_CARET_COLOR
+            render::CaretStyle::Prompt
         } else {
-            CARET_COLOR
+            render::CaretStyle::Prose
         };
-        let (caret_top, caret_height) = self.layout.caret_extent(row, self.doc.caret);
-        let caret_y = TOP + caret_top - self.scroll;
-        if self.focused
-            && self.doc.selection().is_empty()
-            && (self.math.is_none() || !manual_preview_has_caret)
-        {
+        let (layout_top, layout_height) = self.layout.caret_extent(row, self.doc.caret);
+        let (caret_x, caret_top, caret_height) =
+            manual_caret.unwrap_or((left + x, TOP + layout_top - self.scroll, layout_height));
+        if self.focused && self.doc.selection().is_empty() {
             render::caret(
                 &mut pixels,
                 width,
                 height,
-                left + x,
-                caret_y,
+                caret_x,
+                caret_top,
                 caret_height,
                 scale,
-                caret_color,
+                style,
             );
         }
         if let Err(error) = pixels.present() {
             eprintln!("Present: {error}");
         }
         self.window.as_ref().unwrap().set_ime_cursor_area(
-            LogicalPosition::new((left + x) as f64, caret_y as f64),
+            LogicalPosition::new(caret_x as f64, caret_top as f64),
             LogicalSize::new(1.0, caret_height as f64),
         );
+    }
+    /// The hand-written caret in window units (x, top, height), from the preview of the formula
+    /// being edited. None until that preview has a caret box, so the layout caret is drawn instead.
+    fn manual_caret(&self, left: f32) -> Option<(f32, f32, f32)> {
+        let id = self.doc.manual_id()?;
+        let image = self
+            .doc
+            .formulas
+            .values()
+            .find(|formula| formula.id == id)?
+            .image
+            .as_ref()?;
+        let placed = self
+            .layout
+            .math
+            .iter()
+            .find(|placed| Arc::ptr_eq(&placed.image, image))?;
+        let bitmap = if placed.display {
+            &image.display
+        } else {
+            &image.inline
+        };
+        let caret = bitmap.caret?;
+        // Same transform as `render::page`: image pt scale by the placed scale.
+        Some((
+            left + placed.x + caret.x * placed.scale,
+            TOP - self.scroll + placed.y + caret.top * placed.scale,
+            caret.height * placed.scale,
+        ))
     }
     fn save(&mut self, save_as: bool) -> bool {
         self.doc.break_group();

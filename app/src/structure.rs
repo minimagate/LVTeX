@@ -1,4 +1,4 @@
-use crate::config::MATH_CARET_COLOR;
+use crate::config::CARET_SENTINEL;
 use std::fmt::Write as _;
 
 /// A sequence of sibling nodes. Every argument of a box is one row.
@@ -658,11 +658,8 @@ fn push_text(out: &mut String, text: &str) {
 }
 
 fn push_caret(out: &mut String) {
-    write!(
-        out,
-        r"\mathord{{\textcolor{{#{MATH_CARET_COLOR:06X}}}{{|}}}}"
-    )
-    .expect("writing caret markup to a String cannot fail");
+    write!(out, r"\mathord{{\textcolor{{#{CARET_SENTINEL:06X}}}{{|}}}}")
+        .expect("writing caret markup to a String cannot fail");
 }
 
 #[derive(Clone, Copy)]
@@ -1369,13 +1366,13 @@ mod tests {
         assert_eq!(
             frac.latex_with_caret(),
             format!(
-                r"\frac{{\mathord{{\textcolor{{#{MATH_CARET_COLOR:06X}}}{{|}}}}\textcolor{{#73716F}}{{\square}}}}{{\textcolor{{#73716F}}{{\square}}}}"
+                r"\frac{{\mathord{{\textcolor{{#{CARET_SENTINEL:06X}}}{{|}}}}\textcolor{{#73716F}}{{\square}}}}{{\textcolor{{#73716F}}{{\square}}}}"
             )
         );
         assert_eq!(frac.latex(), r"\frac{}{}");
         assert_eq!(
             MathTree::new().latex_with_caret(),
-            format!(r"\mathord{{\textcolor{{#{MATH_CARET_COLOR:06X}}}{{|}}}}")
+            format!(r"\mathord{{\textcolor{{#{CARET_SENTINEL:06X}}}{{|}}}}")
         );
         let script = build(|t| {
             sym(t, "x");
@@ -1384,14 +1381,14 @@ mod tests {
         });
         assert_eq!(
             script.latex_with_caret(),
-            format!(r"x^{{2\mathord{{\textcolor{{#{MATH_CARET_COLOR:06X}}}{{|}}}}}}")
+            format!(r"x^{{2\mathord{{\textcolor{{#{CARET_SENTINEL:06X}}}{{|}}}}}}")
         );
     }
 
     #[test]
     fn rendered_caret_adds_no_relation_spacing_to_letter_runs() {
-        let marker = format!(r"\mathord{{\textcolor{{#{MATH_CARET_COLOR:06X}}}{{|}}}}");
-        let old_marker = format!(r"\textcolor{{#{MATH_CARET_COLOR:06X}}}{{|}}");
+        let marker = format!(r"\mathord{{\textcolor{{#{CARET_SENTINEL:06X}}}{{|}}}}");
+        let old_marker = format!(r"\textcolor{{#{CARET_SENTINEL:06X}}}{{|}}");
         let mut letters = build(|tree| {
             for c in "abcd".chars() {
                 sym(tree, &c.to_string());
@@ -1415,8 +1412,8 @@ mod tests {
                 current
                     .pixels()
                     .iter()
-                    .any(|pixel| { pixel.alpha() > 0 && pixel.blue() > pixel.red() }),
-                "caret at {caret_pos} remains sky blue"
+                    .any(|pixel| { pixel.alpha() > 0 && pixel.green() == 0 && pixel.red() > 0 }),
+                "caret at {caret_pos} lost its sentinel colour"
             );
             if caret_pos == 0 {
                 assert_eq!(current.width(), old.width());
@@ -1445,7 +1442,7 @@ mod tests {
                 image
                     .pixels()
                     .iter()
-                    .any(|pixel| { pixel.alpha() > 0 && pixel.blue() > pixel.red() })
+                    .any(|pixel| pixel.alpha() > 0 && pixel.green() == 0 && pixel.red() > 0)
             );
             tree.next_argument();
             let body = mathstral_latex::convert(&tree.latex_with_caret()).unwrap();
@@ -1456,7 +1453,7 @@ mod tests {
                 image
                     .pixels()
                     .iter()
-                    .any(|pixel| { pixel.alpha() > 0 && pixel.blue() > pixel.red() })
+                    .any(|pixel| pixel.alpha() > 0 && pixel.green() == 0 && pixel.red() > 0)
             );
         }
     }
@@ -1744,7 +1741,7 @@ mod tests {
             ("|", "|"),
             (r"\langle", r"\rangle"),
         ];
-        let caret = format!(r"\mathord{{\textcolor{{#{MATH_CARET_COLOR:06X}}}{{|}}}}");
+        let caret = format!(r"\mathord{{\textcolor{{#{CARET_SENTINEL:06X}}}{{|}}}}");
         for seed in 1..=30 {
             let mut rng = Lcg(seed);
             let mut t = MathTree::new();

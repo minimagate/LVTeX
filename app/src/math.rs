@@ -12,12 +12,22 @@ use std::{
     time::Duration,
 };
 
+/// The hand-written caret's box in an image, in pt like `baseline`: the horizontal centre of its
+/// stem, its top edge and its height.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CaretBox {
+    pub x: f32,
+    pub top: f32,
+    pub height: f32,
+}
+
 #[derive(Debug)]
 pub struct Image {
     pub rgba: Vec<u8>,
     pub width: usize,
     pub height: usize,
     pub baseline: f32,
+    pub caret: Option<CaretBox>,
 }
 impl Image {
     pub fn width(&self) -> f32 {
@@ -431,17 +441,73 @@ pub fn render(renderer: &mut Renderer, latex: &str) -> Result<FormulaImage, Stri
         };
         let pixels = renderer.render_source(format!(
             "#set page(width: auto, height: auto, margin: 2pt, fill: none)\n#set text(font: \"Libertinus Serif\", size: {FONT_SIZE}pt, fill: rgb(\"{TEXT_COLOR:06x}\"))\n#show math.equation: set text(font: \"New Computer Modern Math\")\n{}\n{equation}", mathstral_latex::PRELUDE), 2.0)?;
+        let (width, height) = (pixels.width() as usize, pixels.height() as usize);
+        let mut rgba = pixels.data().to_vec();
+        let caret = take_caret(&mut rgba, width);
         Ok::<_, String>(Image {
-            width: pixels.width() as usize,
-            height: pixels.height() as usize,
-            rgba: pixels.data().to_vec(),
+            width,
+            height,
+            rgba,
             baseline: renderer.last_baseline as f32,
+            caret,
         })
     };
     Ok(FormulaImage {
         latex: latex.into(),
         inline: image(false)?,
         display: image(true)?,
+    })
+}
+
+/// Whether a premultiplied pixel is the caret sentinel, with a small tolerance for anti-aliasing:
+/// green is 0 and red and blue equal the alpha.
+fn is_sentinel(pixel: &[u8]) -> bool {
+    let alpha = pixel[3] as i32;
+    alpha > 0
+        && pixel[1] <= 2
+        && (pixel[0] as i32 - alpha).abs() <= 2
+        && (pixel[2] as i32 - alpha).abs() <= 2
+}
+
+/// Where the math baseline falls inside the `|` bar, as a fraction of the bar's height from its top.
+/// Measured in New Computer Modern Math at base size (FONT_SIZE): the bar runs from 2 pt to 21 pt and
+/// the baseline is at 17 pt, so the bar sits from about -0.21 em to +0.79 em.
+const BAR_BASELINE_FROM_TOP: f32 = 15.0 / 19.0;
+/// The prose caret after "A" at base size, cap height to baseline, measured with `Typesetter`. The
+/// math caret takes the same share of its bar's height, so a base-level math caret matches it.
+const PROSE_CAP_CARET: f32 = 12.5;
+
+/// Erases every sentinel pixel and returns the caret for the solid ones. Faint edge pixels are erased
+/// but do not widen the box, so grey text fringe cannot move it. The caret sits on the bar's own
+/// baseline with the prose cap-height proportion of the bar.
+fn take_caret(rgba: &mut [u8], width: usize) -> Option<CaretBox> {
+    let (mut min_x, mut max_x, mut min_y, mut max_y) = (usize::MAX, 0, usize::MAX, 0);
+    let mut solid = false;
+    for (i, pixel) in rgba.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        if !is_sentinel(pixel) {
+            continue;
+        }
+        if pixel[3] >= 32 {
+            let (x, y) = (i % width, i / width);
+            min_x = min_x.min(x);
+            max_x = max_x.max(x);
+            min_y = min_y.min(y);
+            max_y = max_y.max(y);
+            solid = true;
+        }
+        pixel.fill(0);
+    }
+    // Pixels are 2 per pt, so a pixel index divided by 2 is pt.
+    solid.then(|| {
+        let bar_top = min_y as f32 / 2.0;
+        let bar_height = (max_y + 1 - min_y) as f32 / 2.0;
+        let bottom = bar_top + BAR_BASELINE_FROM_TOP * bar_height;
+        let height = bar_height * PROSE_CAP_CARET / FONT_SIZE;
+        CaretBox {
+            x: (min_x + max_x + 1) as f32 / 4.0,
+            top: bottom - height,
+            height,
+        }
     })
 }
 
@@ -855,5 +921,51 @@ mod tests {
             .is_err()
         );
         assert_eq!(calls, 3);
+    }
+
+    #[test]
+    fn hand_written_caret_is_located_erased_and_scales_with_script_size() {
+        let caret = format!(r"\mathord{{\textcolor{{#{CARET_SENTINEL:06X}}}{{|}}}}");
+        let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
+        let base = render(&mut renderer, &format!(r"x{caret}")).unwrap();
+        let script = render(&mut renderer, &format!(r"x^{{2{caret}}}")).unwrap();
+        let plain = render(&mut renderer, "x^2").unwrap();
+        for image in [&base.inline, &base.display, &script.inline, &script.display] {
+            assert!(
+                image
+                    .rgba
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .all(|pixel| !is_sentinel(pixel)),
+                "sentinel pixels remain"
+            );
+        }
+        let base_box = base.inline.caret.expect("base caret");
+        let script_box = script.inline.caret.expect("script caret");
+        let prose = crate::layout::Typesetter::new()
+            .layout("A", 680.0)
+            .caret_extent(0, 1)
+            .1;
+        assert!(
+            (base_box.height - prose).abs() <= 0.5,
+            "base math caret {} vs prose cap caret {prose}",
+            base_box.height
+        );
+        assert!(
+            (base_box.top + base_box.height - base.inline.baseline).abs() <= 0.5,
+            "caret bottom must sit on the baseline"
+        );
+        for (b, image) in [(base_box, &base.inline), (script_box, &script.inline)] {
+            assert!(b.x >= 0.0 && b.x <= image.width());
+            assert!(b.top >= 0.0 && b.top + b.height <= image.height());
+        }
+        assert!(
+            script_box.height < base_box.height,
+            "script {} vs base {}",
+            script_box.height,
+            base_box.height
+        );
+        assert!(plain.inline.caret.is_none() && plain.display.caret.is_none());
     }
 }

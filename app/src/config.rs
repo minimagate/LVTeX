@@ -14,6 +14,9 @@ pub const CODE_COLOR: u32 = 0xB9C3C6;
 pub const LINK_COLOR: u32 = 0x9FB6C9;
 pub const CARET_COLOR: u32 = 0xFF2020;
 pub const MATH_CARET_COLOR: u32 = 0x2F7BFF;
+// Marks the hand-written caret inside a formula's LaTeX. The renderer finds these pixels, records
+// their box and erases them, so this colour is never drawn.
+pub const CARET_SENTINEL: u32 = 0xFF00FF;
 pub const AI_CARET_COLOR: u32 = 0x1FD65F;
 pub const SELECTION_COLOR: u32 = 0x343434;
 pub const PENDING_COLOR: u32 = 0x868583;

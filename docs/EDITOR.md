@@ -46,9 +46,11 @@ dragging anywhere in the window.
   gives an x-height caret. After a space, or at a line start, it runs from cap height. After a
   formula it runs over the formula's box. After a one-line prompt it follows the prompt's last
   letter; after a wrapped prompt, it runs from cap height.
-  The caret is red `#FF2020` in prose, blue `#2F7BFF` in hand-written math, and green `#1FD65F`
-  in an AI prompt. It does not blink or fade.
-- The math caret adds no mathematical operator spacing to the formula.
+  All three carets are this same I-beam and differ only in colour: red `#FF2020` in prose, blue
+  `#2F7BFF` in hand-written math, and green `#1FD65F` in an AI prompt. None blinks or fades.
+- The math caret adds no mathematical operator spacing to the formula. Its bottom sits on the
+  formula's baseline and its height is the prose cap height at the math size at the caret, so a
+  base-level caret matches the prose caret after a capital and a script caret is shorter.
 - Font family and sizes are set in `app/src/config.rs`.
 
 ### Markdown
@@ -125,8 +127,8 @@ the `\prompt\` format for compatibility.
 Typing `\` starts a named command in a new formula. For example, `\alpha` then Enter
 inserts α; press Enter again to close the formula. Pressing ⌘1 (Edit → Insert Formula)
 opens a blank formula for ordinary TeXmacs-style keys such as `x` `^` `2`. The formula previews as
-you type on the local render worker; its caret is blue (`#2F7BFF`), while AI prompt editing uses a green
-caret. Key handling never waits for typesetting. Keys follow
+you type on the local render worker. Its caret is the same I-beam as the prose caret, in blue
+(`#2F7BFF`); AI prompt editing uses a green caret. Key handling never waits for typesetting. Keys follow
 TeXmacs's `math-kbd.scm`.
 
 - Enter closes the formula. With a `\command` pending, Enter confirms the command instead;
@@ -175,8 +177,8 @@ TeXmacs's `math-kbd.scm`.
 - Local formula renders use a separate worker, so saved math and live previews continue while
   Ollama is slow or unavailable. Live previews keep only the newest queued edit; older results
   are discarded. The current LaTeX source stays visible while its preview is pending or fails.
-  A native caret is shown until the first preview bitmap arrives; preview bitmaps contain their
-  own math caret. After closing an edit, its last preview stays visible until the final render
+  A native caret is shown until the first preview arrives. The caret is drawn by the app, not
+  inside the preview bitmap, so it stays the I-beam at the caret's size. After closing an edit, its last preview stays visible until the final render
   replaces it.
 - The system prompt and few-shot examples are in `app/src/math.rs`. They cover integrals,
   sums, fractions, matrices, cases, aligned equations, sets and Greek letters.

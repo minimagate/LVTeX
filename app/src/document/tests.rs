@@ -475,6 +475,7 @@ fn image(latex: &str) -> Arc<FormulaImage> {
         width: 0,
         height: 0,
         baseline: 0.0,
+        caret: None,
     };
     Arc::new(FormulaImage {
         latex: latex.into(),

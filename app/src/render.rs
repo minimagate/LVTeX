@@ -27,6 +27,23 @@ pub fn rect(
         pixels[row * width + x0..row * width + x1].fill(color);
     }
 }
+/// The caret's colour, per editing context. Every caret is the same I-beam; only the colour differs.
+#[derive(Clone, Copy)]
+pub enum CaretStyle {
+    Prose,
+    Math,
+    Prompt,
+}
+impl CaretStyle {
+    pub fn color(self) -> u32 {
+        match self {
+            Self::Prose => CARET_COLOR,
+            Self::Math => MATH_CARET_COLOR,
+            Self::Prompt => AI_CARET_COLOR,
+        }
+    }
+}
+
 // An I-beam caret: a stem centred on `x` with a serif at the top and at the bottom. `x`, `top`
 // and `h` are logical units.
 #[allow(clippy::too_many_arguments)] // mirrors `rect`, which it draws with
@@ -38,8 +55,9 @@ pub fn caret(
     top: f32,
     h: f32,
     scale: f32,
-    color: u32,
+    style: CaretStyle,
 ) {
+    let color = style.color();
     let thick = scale.max(1.0);
     let stem = x * scale;
     // Each serif is 1 logical pt thick and reaches 1.5 pt either side of the stem.
