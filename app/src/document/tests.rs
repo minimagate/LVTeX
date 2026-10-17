@@ -14,17 +14,69 @@ fn backslash_rules() {
         Some(r"1\2 plus a\b")
     );
     assert_eq!(d.text(), format!(r"and\or C:\a\b {ATOM} done"));
+    // Typed backslashes are ordinary prose: they open and close nothing.
     d.move_to(d.rope.len_bytes(), false);
-    type_text(&mut d, r" \unfinished");
-    assert!(d.open_range().is_some());
-    assert!(d.cancel());
-    type_text(&mut d, r"\");
+    type_text(&mut d, r" \unfinished\");
     assert_eq!(d.formulas.len(), 1);
-    assert_eq!(Document::new(&d.markdown()).formulas.len(), 1);
+    assert!(d.open_range().is_none());
+    assert!(d.text().ends_with(r" \unfinished\"));
+    assert_eq!(Document::new(&d.markdown()).text(), d.text());
     let mut d = Document::new("");
     type_text(&mut d, r"\1\2");
-    assert_eq!(d.formulas.len(), 1);
-    assert_eq!(d.text(), format!("{ATOM}2"));
+    assert!(d.formulas.is_empty());
+    assert_eq!(d.text(), r"\1\2");
+    assert_eq!(Document::new(&d.markdown()).text(), r"\1\2");
+}
+#[test]
+fn typed_backslash_is_literal_and_undoable() {
+    let mut d = Document::new("");
+    d.replace(r"a \b c\ d", true);
+    assert!(d.formulas.is_empty());
+    assert!(d.open_range().is_none());
+    assert_eq!(d.text(), r"a \b c\ d");
+    let reopened = Document::new(&d.markdown());
+    assert!(reopened.formulas.is_empty());
+    assert_eq!(reopened.text(), d.text());
+    assert_eq!(reopened.markdown(), d.markdown());
+    d.undo(false);
+    assert_eq!(d.text(), "");
+    assert!(d.open_range().is_none());
+}
+#[test]
+fn typed_backslashes_that_cannot_open_save_without_marker() {
+    let mut d = Document::new("");
+    type_text(&mut d, r"C:\path");
+    assert_eq!(d.markdown(), r"C:\path");
+    let reopened = Document::new(&d.markdown());
+    assert!(reopened.formulas.is_empty());
+    assert_eq!(reopened.text(), r"C:\path");
+}
+#[test]
+fn edits_that_expose_a_backslash_keep_it_literal() {
+    // A space typed before the backslash makes it an opener, so it must be marked.
+    let mut d = Document::new("");
+    type_text(&mut d, r"a\b");
+    d.move_to(1, false);
+    d.replace(" ", true);
+    assert_eq!(d.text(), r"a \b");
+    assert!(d.markdown().contains(LITERAL_BACKSLASH));
+    let reopened = Document::new(&d.markdown());
+    assert!(reopened.formulas.is_empty());
+    assert_eq!(reopened.text(), r"a \b");
+    d.move_to(d.rope.len_bytes(), false);
+    type_text(&mut d, r"\ c\");
+    assert!(d.formulas.is_empty());
+    assert_eq!(d.text(), r"a \b\ c\");
+    // Deleting the letter before a backslash leaves it at the start, where it would open.
+    let mut d = Document::new("");
+    type_text(&mut d, r"x\b");
+    d.anchor = 0;
+    d.caret = 1;
+    d.replace("", false);
+    assert_eq!(d.text(), r"\b");
+    let reopened = Document::new(&d.markdown());
+    assert!(reopened.formulas.is_empty());
+    assert_eq!(reopened.text(), r"\b");
 }
 #[test]
 fn atoms_survive_edits_and_history_and_roundtrip() {
@@ -258,18 +310,17 @@ fn backslashes_round_trip() {
 fn backslash_prompts_round_trip() {
     let mut d = Document::new("");
     type_text(&mut d, r"\cost $5\ and a\b end");
-    assert_eq!(
-        d.formulas.values().next().unwrap().prompt.as_deref(),
-        Some("cost $5")
-    );
+    assert!(d.formulas.is_empty());
+    assert_eq!(d.text(), r"\cost $5\ and a\b end");
     assert_round_trip(&d);
     let mut d = Document::new("");
     type_text(&mut d, r"a\\ \x\");
-    assert_eq!(d.text(), format!(r"a\\ {ATOM}"));
+    assert!(d.formulas.is_empty());
+    assert_eq!(d.text(), r"a\\ \x\");
     assert_round_trip(&d);
     let mut d = Document::new("");
     type_text(&mut d, r"\$5 and x");
-    assert!(d.cancel());
+    assert!(d.open_range().is_none());
     assert_eq!(d.markdown(), r"<!--mathstral:literal-->\\\$5 and x");
     assert_round_trip(&d);
     assert!(Document::new(&d.markdown()).formulas.is_empty());

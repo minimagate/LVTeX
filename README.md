@@ -46,10 +46,10 @@ Renderer benchmarks and their outputs are described in
 
 ## Using Mathstral
 
-- Type **`\`** to start a named command in a new formula. For example, type `\alpha`
-  and press **Enter** to insert α, then press **Enter** again to close the formula.
-- Press **⌘1** (Edit → Insert Formula) to open a blank formula for TeXmacs-style keys,
-  such as `x` `^` `2`; press **Enter** to close it.
+- Press **⌘1** (Edit → Insert Formula) to open a blank hand-written formula for TeXmacs-style
+  keys, such as `x` `^` `2`. Inside it, **`\`** starts a named command: type `\alpha` and
+  press **Enter** to insert α, then press **Enter** again to close the formula.
+  In prose, **`\`** is an ordinary character.
 - Press **⇧⌘1** (Edit → Ask AI for Formula) to describe a formula. Selected text
   becomes the initial prompt. Press **Enter** to submit. While open, the text is dimmed with
   a green caret (centered when a single-line prompt is alone on its line), stays dimmed while

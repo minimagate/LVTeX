@@ -1,11 +1,6 @@
 //! Keyboard, text and mouse input, routed to the document or to the open formula.
 use super::App;
-use crate::{
-    config::*,
-    markdown,
-    math::input::{MathInput, MathKey},
-    math::tree::MathTree,
-};
+use crate::{config::*, markdown, math::input::MathKey};
 use winit::{
     event::{ElementState, KeyEvent},
     keyboard::{Key, ModifiersState, NamedKey},
@@ -169,45 +164,10 @@ impl App {
             self.math_input(text.chars().map(MathKey::Text));
             return;
         }
-        let selection = self.doc.selection();
-        if self.doc.open_range().is_some_and(|range| {
-            range.start <= selection.start
-                && selection.end <= range.end
-                && range.start <= self.doc.caret
-                && self.doc.caret <= range.end
-        }) {
-            self.doc.replace(&text, true);
-            self.goal_x = None;
-            self.changed(true);
-            return;
-        }
-
-        let mut prose = String::new();
-        let mut changed = false;
-        for c in text.chars() {
-            if self.math.is_some() {
-                self.math_input([MathKey::Text(c)]);
-            } else if c == '\\' {
-                if !prose.is_empty() {
-                    self.doc.replace(&prose, true);
-                    prose.clear();
-                }
-                self.doc.open_manual();
-                self.math = Some(MathInput::new(MathTree::new()));
-                self.math_input([MathKey::Text('\\')]);
-                changed = true;
-            } else {
-                prose.push(c);
-            }
-        }
-        if !prose.is_empty() {
-            self.doc.replace(&prose, true);
-            changed = true;
-        }
-        if changed {
-            self.goal_x = None;
-            self.changed(true);
-        }
+        // A typed backslash is ordinary prose; the document keeps it literal.
+        self.doc.replace(&text, true);
+        self.goal_x = None;
+        self.changed(true);
     }
     pub(super) fn mouse_caret(&mut self, extend: bool) {
         self.refresh_layout();

@@ -69,7 +69,9 @@ drawn in the marker color; only the styling changes.
 - Quotes (`>`) are italic.
 - A line of three or more `-`, `*` or `_`, with optional spaces, draws a 1 px rule across the column.
 - Nothing is styled inside an open math prompt. Fenced code blocks, tables and images are not styled.
-- Backslash escapes are not supported. Typing `\` opens the hand-written math editor; use Ask AI for Formula for a natural-language prompt.
+- Backslash escapes are not supported. In prose, `\` is an ordinary character. Insert Formula (⌘1)
+  opens a hand-written formula, where `\` starts a named command; Ask AI for Formula (⇧⌘1) opens a
+  natural-language prompt.
   A literal `*` or `_` that cannot open emphasis, such as in `2 * 3`, stays plain.
 
 ## Basic editing
@@ -126,9 +128,9 @@ the `\prompt\` format for compatibility.
 
 ## Hand-written math
 
-Typing `\` starts a named command in a new formula. For example, `\alpha` then Enter
-inserts α; press Enter again to close the formula. Pressing ⌘1 (Edit → Insert Formula)
-opens a blank formula for ordinary TeXmacs-style keys such as `x` `^` `2`. The formula
+Pressing ⌘1 (Edit → Insert Formula) opens a blank hand-written formula for TeXmacs-style keys
+such as `x` `^` `2`. Inside it, `\` starts a named command: `\alpha` then Enter inserts α, and
+press Enter again to close the formula. In prose, `\` is an ordinary character. The formula
 previews as you type on the local render worker. Its caret is the same I-beam as the prose
 caret, in blue (`#2F7BFF`); AI prompt editing uses a green caret. Key handling never waits
 for typesetting. Keys follow TeXmacs's `math-kbd.scm`.

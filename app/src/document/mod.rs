@@ -196,6 +196,10 @@ impl Document {
         self.redo.clear();
         let range = self.selection();
         self.splice(range.clone(), value);
+        // Typed text is literal, and a deletion can leave a backslash at an opening boundary.
+        if typing || value.is_empty() {
+            self.mark_literal_backslashes(range.start, value.len());
+        }
         self.caret = range.start + value.len();
         self.anchor = self.caret;
         self.close_prompts();
