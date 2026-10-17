@@ -108,6 +108,7 @@ the `\prompt\` format for compatibility.
 - Press Enter to submit the prompt. Escape leaves the prompt text as literal text.
 - Existing `\prompt\` files and copied prompts remain supported.
 - An open prompt is unstyled and dimmed to the pending color `#868583`, the same as a submitted prompt; the green (`#1FD65F`) caret marks prompt editing.
+- An open prompt alone on its line is centered with display spacing while you type it, like a formula alone on its line.
 - A closed prompt is dim until the model returns a formula that renders successfully.
 - A prompt whose generation fails stays as text with a muted red underline. Enter retries it.
 - Inline formulas share the text baseline. A formula alone on its line is centered with

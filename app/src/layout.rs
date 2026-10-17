@@ -198,6 +198,24 @@ impl Para {
         (face, color, style.strike && !span.marker)
     }
 }
+// True when the open prompt starts in this paragraph and covers all of its non-whitespace text.
+fn prompt_alone(paragraph: &str, offset: usize, open: Option<&Range<usize>>) -> bool {
+    let Some(open) = open else {
+        return false;
+    };
+    let Some(start) = open
+        .start
+        .checked_sub(offset)
+        .filter(|&start| start <= paragraph.len())
+    else {
+        return false;
+    };
+    let end = open
+        .end
+        .saturating_sub(offset)
+        .clamp(start, paragraph.len());
+    paragraph[..start].trim().is_empty() && paragraph[end..].trim().is_empty()
+}
 pub struct Typesetter {
     pub fonts: FontSystem,
     swash: SwashCache,
@@ -498,8 +516,10 @@ impl Typesetter {
                 );
                 local += end;
             }
-            let display = boxes.iter().any(|b| b.display);
-            // Display formulas stay centered, so only text paragraphs hang.
+            // A formula alone on its line, or an open prompt that is all the line's text, is centered.
+            let display =
+                boxes.iter().any(|b| b.display) || prompt_alone(paragraph, offset, open.as_ref());
+            // Display rows stay centered, so only text paragraphs hang.
             let hang: f32 = if display || !para.hangs() {
                 0.0
             } else {
@@ -1017,6 +1037,59 @@ mod tests {
         let before: Vec<_> = glyphs.iter().filter(|g| g.x < start).collect();
         assert!(!before.is_empty());
         assert!(before.iter().all(|g| g.color == TEXT_COLOR));
+    }
+
+    #[test]
+    fn open_prompt_alone_on_its_line_is_centered_like_display_math() {
+        let mut t = Typesetter::new();
+        let mut doc = Document::new("before\n\nafter");
+        doc.anchor = 7;
+        doc.caret = 7;
+        doc.open_ai_prompt();
+        doc.replace("x squared", true);
+        let open = doc.open_range().expect("open prompt");
+        let layout = t.document(&doc, 680.0);
+        let (row, _) = layout.caret(open.start);
+        let line = &layout.lines[row];
+        let left = line.stops.first().expect("stops").1;
+        let right = 680.0 - line.stops.last().expect("stops").1;
+        assert!(left > 0.0);
+        assert!((left - right).abs() <= 1.0, "left {left} right {right}");
+        let before = layout.lines[0].height;
+        assert!(line.height > before, "display padding");
+    }
+
+    #[test]
+    fn empty_open_prompt_on_an_empty_line_starts_centered() {
+        let mut t = Typesetter::new();
+        let mut doc = Document::new("before\n\nafter");
+        doc.anchor = 7;
+        doc.caret = 7;
+        doc.open_ai_prompt();
+        let open = doc.open_range().expect("open prompt");
+        let layout = t.document(&doc, 680.0);
+        let (row, _) = layout.caret(open.start);
+        let line = &layout.lines[row];
+        assert_eq!(line.stops.len(), 1);
+        assert!(
+            (line.stops[0].1 - 340.0).abs() <= 1.0,
+            "x {}",
+            line.stops[0].1
+        );
+    }
+
+    #[test]
+    fn open_prompt_inside_a_sentence_stays_inline() {
+        let mut t = Typesetter::new();
+        let mut doc = Document::new("left right");
+        doc.anchor = 4;
+        doc.caret = 4;
+        doc.open_ai_prompt();
+        doc.replace("sum", true);
+        let open = doc.open_range().expect("open prompt");
+        let layout = t.document(&doc, 680.0);
+        let (row, _) = layout.caret(open.start);
+        assert_eq!(layout.lines[row].stops[0].1, 0.0);
     }
 
     #[test]
