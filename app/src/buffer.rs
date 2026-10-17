@@ -13,6 +13,7 @@ use std::{
 use unicode_segmentation::UnicodeSegmentation;
 
 pub const ATOM: &str = "\u{fffc}";
+const ATOM_CHAR: char = '\u{fffc}';
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone)]
 pub struct Formula {
@@ -70,6 +71,9 @@ pub struct Document {
 }
 impl Document {
     pub fn new(text: &str) -> Self {
+        Self::parse(text, true)
+    }
+    fn parse(text: &str, unescape: bool) -> Self {
         let mut d = Self {
             rope: Rope::new(),
             caret: 0,
@@ -82,7 +86,7 @@ impl Document {
             redo: vec![],
             typing: None,
         };
-        let (plain, atoms, cancelled) = decode(text);
+        let (plain, atoms, cancelled) = decode(text, unescape);
         d.rope = Rope::from_str(&plain);
         d.formulas = atoms;
         d.cancelled = cancelled;
@@ -102,12 +106,12 @@ impl Document {
         self.caret.min(self.anchor)..self.caret.max(self.anchor)
     }
     pub fn selected(&self) -> String {
-        self.encode(self.selection())
+        self.encode(self.selection(), false)
     }
     pub fn markdown(&self) -> String {
-        self.encode(0..self.rope.len_bytes())
+        self.encode(0..self.rope.len_bytes(), true)
     }
-    fn encode(&self, range: Range<usize>) -> String {
+    fn encode(&self, range: Range<usize>, escape: bool) -> String {
         let text = self.text();
         let mut result = String::new();
         let mut pos = range.start;
@@ -127,7 +131,8 @@ impl Document {
                         ));
                     }
                 } else {
-                    result.push_str(&f.label());
+                    let label = f.label();
+                    result.push_str(&if escape { escape_label(&label) } else { label });
                 }
                 pos += ATOM.len();
             } else {
@@ -136,8 +141,19 @@ impl Document {
                 if c == '/' && self.cancelled.contains(&pos) {
                     result.push_str("<!--mathstral:literal-->");
                 }
-                result.push(c);
-                pos += c.len_utf8();
+                let next = pos + c.len_utf8();
+                if c == '$' && escape {
+                    result.push_str("\\$");
+                } else if c == '\\'
+                    && escape
+                    && (self.formulas.contains_key(&next) || text[next..].starts_with(['$', '\\']))
+                {
+                    // A backslash that would otherwise escape the next atom or `$`.
+                    result.push_str("\\\\");
+                } else {
+                    result.push(c);
+                }
+                pos = next;
             }
         }
         result
@@ -230,6 +246,12 @@ impl Document {
         }
     }
     pub fn replace(&mut self, value: &str, typing: bool) {
+        // A literal atom char would be mistaken for a formula marker.
+        let stripped = value.replace(ATOM_CHAR, "");
+        if stripped.is_empty() && value.contains(ATOM_CHAR) {
+            return;
+        }
+        let value = stripped.as_str();
         let range = self.selection();
         if range.is_empty() && value.is_empty() {
             return;
@@ -304,7 +326,7 @@ impl Document {
     }
     pub fn paste(&mut self, text: &str) {
         self.record();
-        let imported = Document::new(text);
+        let imported = Document::parse(text, false);
         let range = self.selection();
         let start = range.start;
         let plain = imported.text();
@@ -328,7 +350,7 @@ impl Document {
             let mut open = None;
             let mut found = None;
             for (i, c) in text.char_indices() {
-                if c == '\u{fffc}' {
+                if c == ATOM_CHAR {
                     open = None;
                     continue;
                 }
@@ -366,7 +388,7 @@ impl Document {
         let text = self.text();
         let mut open = None;
         for (i, c) in text.char_indices() {
-            if c == '\u{fffc}' {
+            if c == ATOM_CHAR {
                 open = None;
             }
             if c == '/'
@@ -569,7 +591,21 @@ fn closing_boundary(c: char) -> bool {
     c.is_whitespace() || ".,;:!?)]}(['\"“”‘’".contains(c)
 }
 
-fn decode(source: &str) -> (String, BTreeMap<usize, Formula>, BTreeSet<usize>) {
+fn escape_label(label: &str) -> String {
+    let mut out = String::new();
+    let mut chars = label.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '$' => out.push_str("\\$"),
+            '\\' if matches!(chars.peek(), Some('$' | '\\')) => out.push_str("\\\\"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+// Files use `unescape`; pasted text is taken literally, as before escapes existed.
+fn decode(source: &str, unescape: bool) -> (String, BTreeMap<usize, Formula>, BTreeSet<usize>) {
     let mut text = String::new();
     let mut formulas = BTreeMap::new();
     let mut cancelled = BTreeSet::new();
@@ -581,7 +617,20 @@ fn decode(source: &str) -> (String, BTreeMap<usize, Formula>, BTreeSet<usize>) {
             cancelled.insert(text.len());
             continue;
         }
-        if source.as_bytes()[i] == b'$' && (i == 0 || source.as_bytes()[i - 1] != b'\\') {
+        if unescape {
+            if source[i..].starts_with("\\\\") {
+                text.push('\\');
+                i += 2;
+                continue;
+            }
+            if source[i..].starts_with("\\$") {
+                text.push('$');
+                i += 2;
+                continue;
+            }
+        }
+        if source.as_bytes()[i] == b'$' && (unescape || i == 0 || source.as_bytes()[i - 1] != b'\\')
+        {
             let display = source[i..].starts_with("$$");
             let delimiter = if display { "$$" } else { "$" };
             let start = i + delimiter.len();
@@ -611,7 +660,10 @@ fn decode(source: &str) -> (String, BTreeMap<usize, Formula>, BTreeSet<usize>) {
             }
         }
         let c = source[i..].chars().next().unwrap();
-        text.push(c);
+        // Stray atom chars would be mistaken for formula markers.
+        if c != ATOM_CHAR {
+            text.push(c);
+        }
         i += c.len_utf8();
     }
     (text, formulas, cancelled)
@@ -698,5 +750,107 @@ mod tests {
         assert_eq!(d.text(), "one three");
         d.undo(false);
         assert_eq!(d.selected(), "two");
+    }
+    #[test]
+    fn stray_atom_chars_are_dropped() {
+        let d = Document::new("a\u{fffc}b $x$");
+        assert_eq!(d.text(), format!("ab {ATOM}"));
+        assert_eq!(d.formulas.len(), 1);
+        assert_eq!(d.formulas[&3].latex.as_deref(), Some("x"));
+        let mut d = Document::new("ab");
+        d.move_to(2, false);
+        d.replace("\u{fffc}", true);
+        assert_eq!(d.text(), "ab");
+        assert!(!d.dirty());
+    }
+    #[test]
+    fn dollars_in_prose_survive_save_and_reopen() {
+        let mut d = Document::new("");
+        type_text(&mut d, "I paid $5 and $6");
+        assert_eq!(d.markdown(), "I paid \\$5 and \\$6");
+        let reopened = Document::new(&d.markdown());
+        assert!(reopened.formulas.is_empty());
+        assert_eq!(reopened.text(), "I paid $5 and $6");
+        assert!(!reopened.dirty());
+        let mut d = Document::new("");
+        d.replace("a\\", true);
+        d.replace("$", true);
+        assert_eq!(d.markdown(), "a\\\\\\$");
+        assert_eq!(Document::new(&d.markdown()).text(), "a\\$");
+        let d = Document::new("x /cost \\$5/ y");
+        assert_eq!(
+            d.formulas.values().next().unwrap().prompt.as_deref(),
+            Some("cost $5")
+        );
+        assert_eq!(d.markdown(), "x /cost \\$5/ y");
+        let reopened = Document::new(&d.markdown());
+        assert_eq!(
+            reopened.formulas.values().next().unwrap().prompt.as_deref(),
+            Some("cost $5")
+        );
+        let mut d = Document::new("$5");
+        d.move_to(0, false);
+        d.move_to(d.rope.len_bytes(), true);
+        assert_eq!(d.selected(), "$5");
+    }
+    fn assert_round_trip(d: &Document) {
+        let reopened = Document::new(&d.markdown());
+        assert_eq!(reopened.text(), d.text());
+        assert_eq!(reopened.formulas.len(), d.formulas.len());
+        for (a, b) in d.formulas.values().zip(reopened.formulas.values()) {
+            assert_eq!(a.prompt, b.prompt);
+            assert_eq!(a.latex, b.latex);
+        }
+        assert!(!reopened.dirty());
+    }
+    #[test]
+    fn backslashes_round_trip() {
+        for prose in ["C:\\path", "a\\\\b", "\\$5", "$5 and $6", "end\\"] {
+            let mut d = Document::new("");
+            d.replace(prose, false);
+            assert_eq!(d.text(), prose);
+            assert_round_trip(&d);
+        }
+        let mut d = Document::new("");
+        d.replace("C:\\path", false);
+        assert_eq!(d.markdown(), "C:\\path");
+        let mut d = Document::new("");
+        d.replace("a\\", false);
+        d.replace("$", false);
+        d.replace("x", false);
+        assert_round_trip(&d);
+        let d = Document::new("a \\\\$x$ b");
+        assert_eq!(d.text(), format!("a \\{ATOM} b"));
+        assert_eq!(d.markdown(), "a \\\\$x$ b");
+        assert_round_trip(&d);
+        let d = Document::new("x /cost \\$5/ y");
+        assert_eq!(d.markdown(), "x /cost \\$5/ y");
+        assert_round_trip(&d);
+        assert_eq!(
+            Document::new(&d.markdown())
+                .formulas
+                .values()
+                .next()
+                .unwrap()
+                .prompt
+                .as_deref(),
+            Some("cost $5")
+        );
+    }
+    #[test]
+    fn paste_takes_text_literally() {
+        let mut d = Document::new("");
+        d.paste("\\$5 and $x$");
+        assert_eq!(d.text(), format!("\\$5 and {ATOM}"));
+        assert_eq!(d.formulas.len(), 1);
+    }
+    #[test]
+    fn replacing_with_only_atom_chars_is_a_no_op() {
+        let mut d = Document::new("abc");
+        d.move_to(0, false);
+        d.move_to(3, true);
+        d.replace("\u{fffc}", true);
+        assert_eq!(d.text(), "abc");
+        assert_eq!(d.selected(), "abc");
     }
 }
