@@ -197,8 +197,9 @@ TeXmacs's `math-kbd.scm`.
   that newline remains part of the source when the file is reopened.
 - Prompt source: a comment `<!--mathstral:BASE64URL-->` directly after the formula. The payload
   is the UTF-8 original prompt, encoded in base64url without padding. Markdown readers hide it.
-- The reserved `<!--mathstral:literal-->` comment protects literal backslashes inside prompts,
+- A single `<!--mathstral:literal-->` comment protects literal backslashes inside prompts,
   backslashes cancelled with Escape, and dollar signs in copied prompts from delimiter parsing.
+  Two consecutive comments encode literal marker text.
 - Pending AI prompts are saved as `\prompt\` and resume on open.
 - Literal `$` in prose is saved as `\$`. Reading `\$` produces `$`.
 
