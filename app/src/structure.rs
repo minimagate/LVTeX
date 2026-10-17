@@ -658,8 +658,11 @@ fn push_text(out: &mut String, text: &str) {
 }
 
 fn push_caret(out: &mut String) {
-    write!(out, r"\textcolor{{#{MATH_CARET_COLOR:06X}}}{{|}}")
-        .expect("writing caret markup to a String cannot fail");
+    write!(
+        out,
+        r"\mathord{{\textcolor{{#{MATH_CARET_COLOR:06X}}}{{|}}}}"
+    )
+    .expect("writing caret markup to a String cannot fail");
 }
 
 #[derive(Clone, Copy)]
@@ -1365,19 +1368,95 @@ mod tests {
         });
         assert_eq!(
             frac.latex_with_caret(),
-            r"\frac{\textcolor{#87CEEB}{|}\textcolor{#73716F}{\square}}{\textcolor{#73716F}{\square}}"
+            r"\frac{\mathord{\textcolor{#87CEEB}{|}}\textcolor{#73716F}{\square}}{\textcolor{#73716F}{\square}}"
         );
         assert_eq!(frac.latex(), r"\frac{}{}");
         assert_eq!(
             MathTree::new().latex_with_caret(),
-            r"\textcolor{#87CEEB}{|}"
+            r"\mathord{\textcolor{#87CEEB}{|}}"
         );
         let script = build(|t| {
             sym(t, "x");
             t.make_script(true);
             sym(t, "2");
         });
-        assert_eq!(script.latex_with_caret(), r"x^{2\textcolor{#87CEEB}{|}}");
+        assert_eq!(
+            script.latex_with_caret(),
+            r"x^{2\mathord{\textcolor{#87CEEB}{|}}}"
+        );
+    }
+
+    #[test]
+    fn rendered_caret_adds_no_relation_spacing_to_letter_runs() {
+        let marker = format!(r"\mathord{{\textcolor{{#{MATH_CARET_COLOR:06X}}}{{|}}}}");
+        let old_marker = format!(r"\textcolor{{#{MATH_CARET_COLOR:06X}}}{{|}}");
+        let mut letters = build(|tree| {
+            for c in "abcd".chars() {
+                sym(tree, &c.to_string());
+            }
+        });
+        let mut renderer = mathstral_render::math::Renderer::with_prelude(mathstral_latex::PRELUDE);
+
+        for caret_pos in [0, 2, 4] {
+            letters.pos = caret_pos;
+            let with_caret = letters.latex_with_caret();
+            let without_ordinary_class = with_caret.replace(&marker, &old_marker);
+            let render = |renderer: &mut mathstral_render::math::Renderer, latex: &str| {
+                let body = mathstral_latex::convert(latex).unwrap();
+                renderer
+                    .render_math(&body, true, mathstral_render::math::SCALE)
+                    .unwrap()
+            };
+            let current = render(&mut renderer, &with_caret);
+            let old = render(&mut renderer, &without_ordinary_class);
+            assert!(
+                current
+                    .pixels()
+                    .iter()
+                    .any(|pixel| { pixel.alpha() > 0 && pixel.blue() > pixel.red() }),
+                "caret at {caret_pos} remains sky blue"
+            );
+            if caret_pos == 0 {
+                assert_eq!(current.width(), old.width());
+            } else {
+                assert!(
+                    current.width() < old.width(),
+                    "caret at {caret_pos}: ordinary atom width {}, old width {}",
+                    current.width(),
+                    old.width()
+                );
+            }
+        }
+
+        for mut tree in [
+            build(|tree| {
+                sym(tree, "x");
+                tree.make_script(true);
+            }),
+            build(|tree| tree.make_fraction()),
+        ] {
+            let body = mathstral_latex::convert(&tree.latex_with_caret()).unwrap();
+            let image = renderer
+                .render_math(&body, true, mathstral_render::math::SCALE)
+                .unwrap();
+            assert!(
+                image
+                    .pixels()
+                    .iter()
+                    .any(|pixel| { pixel.alpha() > 0 && pixel.blue() > pixel.red() })
+            );
+            tree.next_argument();
+            let body = mathstral_latex::convert(&tree.latex_with_caret()).unwrap();
+            let image = renderer
+                .render_math(&body, true, mathstral_render::math::SCALE)
+                .unwrap();
+            assert!(
+                image
+                    .pixels()
+                    .iter()
+                    .any(|pixel| { pixel.alpha() > 0 && pixel.blue() > pixel.red() })
+            );
+        }
     }
 
     #[test]
@@ -1663,7 +1742,7 @@ mod tests {
             ("|", "|"),
             (r"\langle", r"\rangle"),
         ];
-        let caret = format!(r"\textcolor{{#{MATH_CARET_COLOR:06X}}}{{|}}");
+        let caret = format!(r"\mathord{{\textcolor{{#{MATH_CARET_COLOR:06X}}}{{|}}}}");
         for seed in 1..=30 {
             let mut rng = Lcg(seed);
             let mut t = MathTree::new();

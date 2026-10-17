@@ -41,6 +41,7 @@ dragging anywhere in the window.
   inline code `#B9C3C6`; links `#9FB6C9`.
 - The caret is solid `#FF0000` in prose, sky blue `#87CEEB` in hand-written math, and green
   `#78C995` in an AI prompt. It does not blink or fade.
+- The math caret adds no mathematical operator spacing to the formula.
 - Font family and sizes are set in `app/src/config.rs`.
 
 ### Markdown
