@@ -9,6 +9,8 @@ mod markdown;
 mod math;
 mod menu;
 mod render;
+#[cfg_attr(not(test), allow(dead_code))] // not wired into the app until the manual-math input slice
+mod structure;
 #[cfg(test)]
 mod verification;
 
