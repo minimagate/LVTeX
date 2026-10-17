@@ -24,7 +24,7 @@ Menus:
 | --- | --- |
 | Mathstral | Hide, Hide Others, Show All, Quit Mathstral (⌘Q) |
 | File | New (⌘N), Open… (⌘O), Close Window (⌘W), Save (⌘S), Save As… (⇧⌘S), Export as PDF… (⌥⌘E) |
-| Edit | Undo (⌘Z), Redo (⇧⌘Z), Cut (⌘X), Copy (⌘C), Paste (⌘V), Select All (⌘A) |
+| Edit | Undo (⌘Z), Redo (⇧⌘Z), Cut (⌘X), Copy (⌘C), Paste (⌘V), Select All (⌘A), Insert Formula (⌘1) |
 | Window | Minimize, Zoom, Enter Full Screen |
 
 Close Window (⌘W) quits the application, the same as Quit.
@@ -101,11 +101,49 @@ Type `\prompt\` to start a prompt.
 - A prompt whose generation fails stays as text with a muted red underline. Enter retries it.
 - Inline formulas share the text baseline. A formula alone on its line is centered with
   display spacing.
-- Backspace just after a formula reopens its original prompt.
+- Backspace just after a formula reopens it. A prompt returns to its prompt text, and a
+  hand-written or imported formula opens in the hand-written editor.
 - Enter at the left edge of a formula reopens it, or retries a failed prompt. Enter after a formula starts a new line.
 - Closing an edit whose text is unchanged reuses the existing rendered result without a model request.
 - Escape inside an open prompt cancels it and keeps the text as literal characters.
 - Formulas are atoms for caret movement and selection. Copy and paste carry the portable file encoding.
+
+## Hand-written math
+
+⌘1 (Edit → Insert Formula) opens an empty formula at the caret. The formula previews as
+you type. Keys follow TeXmacs's `math-kbd.scm`.
+
+- Enter closes the formula. With a `\command` pending, Enter confirms the command instead.
+- Escape cancels a pending `\command`. Otherwise it abandons the edit: a new formula is
+  removed, and a reopened formula returns to its previous source.
+- A click in the text, Save, Open, New, Export as PDF or Quit closes the formula first.
+  Insert Formula, Copy, Cut, Paste and Select All do nothing inside a formula.
+- ⌘Z and ⇧⌘Z undo and redo edits inside the formula.
+- The whole edit is one undo step.
+- Saving stores the formula as plain `$latex$`, with no prompt comment. A formula alone
+  on its line displays.
+
+| Keys | Result |
+| --- | --- |
+| `_` `^` | Subscript and superscript. |
+| `'` | Prime. `"` gives a double prime. |
+| ⌥F | Fraction. The caret starts in the numerator. |
+| ⌥S | Square root. |
+| ⌥⇧S | Nth root. The caret starts in the index. |
+| `(` `[` `{` `\|` | Opens a bracket pair. Typing the closer at the end of the body sets the closing delimiter and steps out. Elsewhere the closer is a plain character. |
+| `a` Tab | Next variant of the symbol before the caret: `a` Tab gives α. Shift Tab steps back. |
+| `<` `=` | ⩽. `<` `=` Tab gives ≤. |
+| `-` `>` | → |
+| `=` `/` | ≠ |
+| ⇧F5, then a key | Big operators and symbols: ⇧F5 `S` gives ∑, ⇧F5 `I` gives ∫. |
+| `\name` Return | Named symbol or command: `\alpha` Return gives α. `\frac` and `\sqrt` make a fraction and a root. |
+| ← → ↑ ↓ | Move through the formula. ↑ and ↓ move between the numerator and denominator, or the index and radicand. |
+| ⌘⌥← / ⌘⌥→ | Previous and next argument of the enclosing box. |
+| ⌘⌥⌫ / ⌘⌥⌦ | Move the caret out of the enclosing box, before or after it. |
+| ⌫ / ⌦ | Backspace after a box enters it, and Backspace removes it once it is empty. Delete mirrors this. |
+| ⌥⌫ | Remove the box before the caret. |
+| ⌃⌫ | Replace the enclosing box by its contents. |
+| ⌘Z / ⇧⌘Z | Undo and redo inside the formula. |
 
 ## Ollama worker
 
@@ -133,6 +171,7 @@ Type `\prompt\` to start a prompt.
 
 - Model and render results do not add undo steps.
 - Redo restores a formula's rendered image when it is available.
+- A hand-written formula edit is one undo step. ⌘Z inside the formula undoes its own edits first.
 
 ## File format
 
@@ -148,10 +187,10 @@ Type `\prompt\` to start a prompt.
 ## Imported math
 
 - A formula in a file with no prompt comment renders directly from its LaTeX source.
-- Opening such a formula for editing asks the model for a plain-English description
-  while the formula is kept. The description then opens as an ordinary prompt.
-- Generated descriptions should be checked, especially for complicated formulas.
-- Imported math renders without Ollama, as do cached prompts.
+- Backspace just after it, or Enter at its left edge, opens it in the hand-written editor.
+  Its LaTeX is parsed into the editor. Syntax the editor does not model stays as typed.
+- Imported math is never sent to the model. Renders of imported math and cached prompts work
+  without Ollama.
 
 ## Verification
 
@@ -164,6 +203,7 @@ cargo test --release --locked --workspace
 The editor tests cover:
 
 - Unicode editing, backslash ambiguity and cancellation.
+- Hand-written formula keys, tree editing and save as plain LaTeX.
 - Atom selection, copy and paste.
 - Undo and redo.
 - Late and deleted results.

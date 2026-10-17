@@ -17,6 +17,7 @@ pub enum Action {
     Copy,
     Paste,
     SelectAll,
+    InsertFormula,
     Quit,
 }
 pub fn install(proxy: EventLoopProxy<Action>) -> Menu {
@@ -78,6 +79,13 @@ pub fn install(proxy: EventLoopProxy<Action>) -> Menu {
             Code::KeyA,
             Modifiers::META,
             Action::SelectAll,
+        ),
+        (
+            &edit,
+            "Insert Formula",
+            Code::Digit1,
+            Modifiers::META,
+            Action::InsertFormula,
         ),
     ] {
         let item = MenuItem::new(label, true, Some(Accelerator::new(modifiers, key)));

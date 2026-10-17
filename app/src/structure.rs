@@ -132,10 +132,6 @@ impl MathTree {
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.root.is_empty()
-    }
-
     pub fn latex(&self) -> String {
         self.emit(false)
     }
@@ -286,20 +282,6 @@ impl MathTree {
             latex: latex.to_string(),
             keys: keys.to_string(),
         });
-    }
-
-    /// The symbol just before the caret, so a key map can replace its LaTeX.
-    pub fn last_symbol_mut(&mut self) -> Option<(&mut String, &mut String)> {
-        let i = self.pos.checked_sub(1)?;
-        match self.cur_mut().get_mut(i)? {
-            Node::Symbol { latex, keys } => Some((latex, keys)),
-            Node::Script { .. }
-            | Node::Prime
-            | Node::Fraction { .. }
-            | Node::Root { .. }
-            | Node::Delimited { .. }
-            | Node::Raw(_) => None,
-        }
     }
 
     /// The keys of the symbols just before the caret, oldest first, at most `limit` of them. A
@@ -1127,7 +1109,7 @@ mod tests {
 
         let mut empty = build(|t| t.make_fraction());
         empty.backspace();
-        assert!(empty.is_empty());
+        assert!(empty.latex().is_empty());
     }
 
     #[test]
@@ -1290,18 +1272,6 @@ mod tests {
             sym(t, "2");
         });
         assert_eq!(script.latex_with_caret(), r"x^{2\textcolor{#FF0000}{|}}");
-    }
-
-    #[test]
-    fn last_symbol_mut_replaces_the_symbol_before_the_caret() {
-        let mut t = build(|t| sym(t, "x"));
-        let (latex, keys) = t.last_symbol_mut().expect("symbol before caret");
-        *latex = r"\alpha".to_string();
-        *keys = "a".to_string();
-        assert_eq!(t.latex(), r"\alpha");
-        assert!(matches!(&t.root[0], Node::Symbol { keys, .. } if keys == "a"));
-        t.make_prime();
-        assert!(t.last_symbol_mut().is_none());
     }
 
     #[test]
@@ -1598,13 +1568,5 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn is_empty_tracks_the_root_row() {
-        let mut t = MathTree::new();
-        assert!(t.is_empty());
-        t.insert_symbol("x", "x");
-        assert!(!t.is_empty());
     }
 }

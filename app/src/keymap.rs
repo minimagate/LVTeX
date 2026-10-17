@@ -114,10 +114,6 @@ impl MathInput {
         tree.latex_with_caret()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.tree.is_empty()
-    }
-
     fn apply(&mut self, key: MathKey) -> Outcome {
         if let Some(outcome) = self.command_key(key) {
             return outcome;
@@ -1063,11 +1059,11 @@ mod tests {
         assert_eq!(input.latex(), "xy");
         input.key(MathKey::Undo);
         input.key(MathKey::Undo);
-        assert!(input.is_empty());
+        assert!(input.latex().is_empty());
         assert_eq!(input.key(MathKey::Undo), Outcome::Ignored);
 
         let mut moved = typed("x←");
         moved.key(MathKey::Undo);
-        assert!(moved.is_empty());
+        assert!(moved.latex().is_empty());
     }
 }

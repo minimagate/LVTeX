@@ -52,8 +52,11 @@ Renderer benchmarks and their outputs are described in
 - Type `\…\` to start a math prompt. An open prompt is tinted; it is dim while the
   model works and turns into a formula when it is ready. If generation fails, the
   prompt stays with a red underline.
+- Press **⌘1** (Edit → Insert Formula) to write a formula by hand with TeXmacs keys,
+  such as `x` `^` `2`. Press **Enter** to close it.
 - Press **Enter** at the left edge of a formula, or **Backspace** just after it, to
-  reopen its prompt and edit it.
+  reopen it. A prompt returns to its prompt text, and a hand-written or imported formula
+  opens in the hand-written editor.
 - Press **Escape** inside an open prompt to keep it as literal text.
 - Markdown styles as you type: headings, bold, italic, `code`, ~~strike~~, links, lists,
   quotes and rules. The markers stay visible. See [docs/EDITOR.md](docs/EDITOR.md#markdown).
@@ -92,8 +95,8 @@ Files are Markdown-compatible text.
 - One model request runs at a time. Other prompts wait in a queue.
 - The model must be installed in Ollama. Without it, new prompts stay pending until
   Ollama is reachable.
-- Imported formulas that have no prompt get a generated description when opened for
-  editing. Check the description, especially for complicated formulas.
+- The hand-written editor models a subset of LaTeX. Syntax it does not model is kept
+  as typed.
 - The app is ad-hoc signed and not notarized.
 - The application binary is about 27 MB, mostly Typst.
 

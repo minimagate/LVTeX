@@ -432,7 +432,6 @@ impl Document {
     }
     // The session's one undo step is recorded at open. Redo is left alone until finish,
     // so cancel can restore it untouched.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn open_manual(&mut self) -> u64 {
         self.undo.push(self.snapshot());
         self.break_group();
@@ -446,7 +445,6 @@ impl Document {
         self.manual = Some(Manual { id, original: None });
         id
     }
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn reopen_manual(&mut self, pos: usize) -> Option<String> {
         let original = self
             .formulas
@@ -468,11 +466,9 @@ impl Document {
         self.anchor = self.caret;
         Some(latex)
     }
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn manual_id(&self) -> Option<u64> {
         self.manual.as_ref().map(|m| m.id)
     }
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn set_manual(&mut self, latex: String, image: Option<Arc<FormulaImage>>) {
         let Some(id) = self.manual_id() else {
             return;
@@ -482,7 +478,6 @@ impl Document {
             f.image = image;
         }
     }
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn finish_manual(&mut self) {
         let Some(edit) = self.manual.take() else {
             return;
@@ -517,7 +512,6 @@ impl Document {
         }
         self.anchor = self.caret;
     }
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn cancel_manual(&mut self) {
         if self.manual.take().is_some()
             && let Some(previous) = self.undo.pop()
@@ -540,7 +534,6 @@ impl Document {
                 id: f.id,
                 prompt: f.prompt.clone(),
                 latex: f.latex.clone(),
-                describe: false,
             })
             .collect()
     }
@@ -567,11 +560,6 @@ impl Document {
             }
         }
         changed
-    }
-    pub fn describe(&mut self, id: u64, prompt: String) -> Option<usize> {
-        let (&pos, f) = self.formulas.iter_mut().find(|(_, f)| f.id == id)?;
-        f.prompt = Some(prompt);
-        Some(pos)
     }
     pub fn move_to(&mut self, position: usize, extend: bool) {
         self.caret = position.min(self.rope.len_bytes());

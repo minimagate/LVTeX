@@ -38,11 +38,9 @@ pub struct Job {
     pub id: u64,
     pub prompt: Option<String>,
     pub latex: Option<String>,
-    pub describe: bool,
 }
 pub enum Reply {
     Connection(bool),
-    Described(u64, Result<String, String>),
     Done(u64, Result<Arc<FormulaImage>, String>),
 }
 pub struct Worker {
@@ -118,12 +116,8 @@ impl Worker {
                             // Imported formulas and cache hits can render without Ollama.
                             let mut rest = std::collections::VecDeque::new();
                             while let Some(job) = pending.pop_front() {
-                                if !job.describe
-                                    && (job.latex.is_some()
-                                        || job
-                                            .prompt
-                                            .as_ref()
-                                            .is_some_and(|p| cache.contains_key(p)))
+                                if job.latex.is_some()
+                                    || job.prompt.as_ref().is_some_and(|p| cache.contains_key(p))
                                 {
                                     let result = guarded(&mut renderer, |renderer| {
                                         resolve_with(&job, renderer, &mut cache, &mut request)
@@ -142,19 +136,6 @@ impl Worker {
                         }
                     }
                     if let Some(job) = pending.pop_front() {
-                        if job.describe {
-                            let latex = job.latex.as_deref().unwrap_or("");
-                            match guarded(&mut renderer, |_| describe(latex, &mut request)) {
-                                Ok(prompt) => send(Reply::Described(job.id, Ok(prompt))),
-                                Err(error) if error.offline => {
-                                    online = false;
-                                    send(Reply::Connection(false));
-                                    pending.push_front(job);
-                                }
-                                Err(error) => send(Reply::Described(job.id, Err(error.message))),
-                            }
-                            continue;
-                        }
                         let result = guarded(&mut renderer, |renderer| {
                             resolve_with(&job, renderer, &mut cache, &mut request)
                         });
@@ -248,21 +229,6 @@ fn resolve_with(
         }
     }
     Err(last.into())
-}
-
-fn describe(
-    latex: &str,
-    mut request: impl FnMut(&Value) -> Result<Value, Error>,
-) -> Result<String, Error> {
-    let response = request(
-        &json!({"model":OLLAMA_MODEL,"stream":false,"keep_alive":KEEP_ALIVE,"options":{"temperature":0,"num_predict":512},
-        "messages":[{"role":"system","content":"Describe this mathematical expression as a concise, precise plain English math-writing prompt. Preserve every symbol, bound, index and equation. Output only the description, with no introduction, delimiters, backslashes, dollar signs or LaTeX commands. For example, \\frac{1}{3} becomes: 1 over 3."},{"role":"user","content":latex}]}),
-    )?;
-    let prompt = response["message"]["content"].as_str().unwrap_or("").trim();
-    if prompt.is_empty() || prompt.contains(['\\', '$', '`']) {
-        return Err("description was not plain text".to_owned().into());
-    }
-    Ok(prompt.to_owned())
 }
 
 pub fn clean(raw: &str) -> String {
@@ -503,7 +469,6 @@ mod tests {
                 id,
                 prompt: Some(format!("square {id}")),
                 latex: None,
-                describe: false,
             });
         }
         let mut ids = std::collections::BTreeSet::new();
@@ -542,7 +507,6 @@ mod tests {
             id: 1,
             prompt: Some("boom".into()),
             latex: None,
-            describe: false,
         });
         assert!(matches!(
             worker.rx.recv_timeout(timeout).unwrap(),
@@ -552,7 +516,6 @@ mod tests {
             id: 2,
             prompt: None,
             latex: Some("x^2".into()),
-            describe: false,
         });
         assert!(matches!(
             worker.rx.recv_timeout(timeout).unwrap(),
@@ -560,14 +523,7 @@ mod tests {
         ));
     }
     #[test]
-    fn imported_edit_descriptions_cannot_expose_latex() {
-        assert_eq!(
-            describe("x^2", |_| Ok(json!({"message":{"content":"x squared"}})))
-                .ok()
-                .as_deref(),
-            Some("x squared")
-        );
-        assert!(describe("x^2", |_| Ok(json!({"message":{"content":"$x^2$"}}))).is_err());
+    fn rendered_latex_cannot_be_prose() {
         assert!(reject_prose("The answer is x squared").is_err());
         assert!(reject_prose(r"\text{otherwise} + \operatorname{variance}(X)").is_ok());
     }
@@ -585,7 +541,6 @@ mod tests {
             id: 1,
             prompt: Some("one third".into()),
             latex: None,
-            describe: false,
         };
         let image = resolve_with(&job, &mut renderer, &mut cache, |request| {
             calls += 1;
@@ -616,7 +571,6 @@ mod tests {
             id: 2,
             prompt: Some("bad".into()),
             latex: None,
-            describe: false,
         };
         let mut calls = 0;
         assert!(

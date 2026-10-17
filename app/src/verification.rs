@@ -1,7 +1,9 @@
 use crate::{
     buffer::{ATOM, Document},
+    keymap::{MathInput, MathKey, Outcome},
     layout::Typesetter,
     markdown, math, render,
+    structure::MathTree,
 };
 use mathstral_render::math::Renderer;
 use std::{sync::Arc, time::Instant};
@@ -207,4 +209,21 @@ fn enter_continues_and_ends_list_items_as_undo_steps() {
     assert_eq!(d.text(), "- a\n- b\n");
     d.undo(false);
     assert_eq!(d.text(), "- a\n- b\n- ");
+}
+
+#[test]
+fn hand_written_formula_saves_as_plain_math() {
+    let mut doc = Document::new("a ");
+    doc.move_to(doc.rope.len_bytes(), false);
+    doc.open_manual();
+    let mut input = MathInput::new(MathTree::new());
+    for c in ['x', '^', '2'] {
+        input.key(MathKey::Text(c));
+    }
+    assert_eq!(input.key(MathKey::Return), Outcome::Close);
+    doc.set_manual(input.latex(), None);
+    doc.finish_manual();
+    assert_eq!(doc.markdown(), "a $x^{2}$");
+    let reopened = Document::new(&doc.markdown());
+    assert_eq!(reopened.markdown(), "a $x^{2}$");
 }

@@ -2,13 +2,16 @@ use crate::{
     buffer::Document,
     config::*,
     export, file,
+    keymap::{MathInput, MathKey, Outcome},
     layout::{Layout, Typesetter},
     markdown,
-    math::{FormulaImage, Job, Reply, Worker},
+    math::{FormulaImage, Reply, Worker},
     menu::{self, Action},
     render,
+    structure::MathTree,
 };
 use cosmic_text::SwashCache;
+use mathstral_render::math::Renderer;
 use std::{
     collections::{HashMap, HashSet},
     num::NonZeroU32,
@@ -20,10 +23,13 @@ use std::{
 use winit::{
     application::ApplicationHandler,
     dpi::{LogicalPosition, LogicalSize},
-    event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent},
+    event::{ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy},
     keyboard::{Key, ModifiersState, NamedKey},
-    platform::macos::{WindowAttributesExtMacOS, WindowExtMacOS},
+    platform::{
+        macos::{WindowAttributesExtMacOS, WindowExtMacOS},
+        modifier_supplement::KeyEventExtModifierSupplement,
+    },
     window::{Window, WindowId},
 };
 
@@ -56,7 +62,8 @@ pub struct App {
     worker: Worker,
     submitted: HashSet<u64>,
     online: bool,
-    describing: Option<u64>,
+    math: Option<MathInput>,
+    math_renderer: Option<Renderer>,
     math_cache: HashMap<String, Arc<FormulaImage>>,
 }
 impl App {
@@ -84,7 +91,8 @@ impl App {
             worker,
             submitted: Default::default(),
             online: true,
-            describing: None,
+            math: None,
+            math_renderer: None,
             math_cache: Default::default(),
             proxy,
             menu: None,
@@ -264,7 +272,7 @@ impl App {
             return;
         };
         pixels.copy_from_slice(&self.pixels);
-        if self.focused && self.doc.selection().is_empty() {
+        if self.focused && self.doc.selection().is_empty() && self.math.is_none() {
             render::rect(
                 &mut pixels,
                 width,
@@ -349,6 +357,26 @@ impl App {
     fn action(&mut self, event_loop: &ActiveEventLoop, action: Action) {
         self.doc.break_group();
         self.goal_x = None;
+        if self.math.is_some() {
+            match action {
+                Action::MathReady => {}
+                Action::Undo | Action::Redo => {
+                    let key = if matches!(action, Action::Undo) {
+                        MathKey::Undo
+                    } else {
+                        MathKey::Redo
+                    };
+                    self.math_input([key]);
+                    return;
+                }
+                Action::InsertFormula
+                | Action::Copy
+                | Action::Cut
+                | Action::Paste
+                | Action::SelectAll => return,
+                _ => self.finish_math(),
+            }
+        }
         match action {
             Action::MathReady => {
                 let mut changed = false;
@@ -374,39 +402,22 @@ impl App {
                             }
                             changed |= self.doc.complete(id, result);
                         }
-                        Reply::Described(id, result) => {
-                            if self.describing == Some(id) {
-                                self.describing = None;
-                                match result {
-                                    Ok(prompt) => {
-                                        let still_on_formula = self
-                                            .doc
-                                            .formula_at_caret(false)
-                                            .or_else(|| self.doc.formula_at_caret(true))
-                                            .is_some_and(|p| self.doc.formulas[&p].id == id);
-                                        if let Some(pos) = self.doc.describe(id, prompt) {
-                                            if still_on_formula {
-                                                self.doc.reopen(pos);
-                                            }
-                                            changed = true;
-                                        }
-                                    }
-                                    Err(_) => {
-                                        if let Some(f) =
-                                            self.doc.formulas.values_mut().find(|f| f.id == id)
-                                        {
-                                            f.failed = true;
-                                            changed = true;
-                                        }
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
                 if changed {
                     self.changed(true);
                     self.reveal = false;
+                }
+            }
+            Action::InsertFormula => {
+                let in_prompt = self
+                    .doc
+                    .open_range()
+                    .is_some_and(|r| r.start <= self.doc.caret && self.doc.caret <= r.end);
+                if !in_prompt {
+                    self.doc.open_manual();
+                    self.math = Some(MathInput::new(MathTree::new()));
+                    self.preview();
                 }
             }
             Action::Quit => {
@@ -484,8 +495,13 @@ impl App {
             }
         }
     }
-    fn key(&mut self, event: winit::event::KeyEvent) {
+    fn key(&mut self, event: KeyEvent) {
         if event.state != ElementState::Pressed || self.composing {
+            return;
+        }
+        if self.math.is_some() {
+            let keys = math_keys(&event, self.modifiers);
+            self.math_input(keys);
             return;
         }
         self.refresh_layout();
@@ -544,7 +560,6 @@ impl App {
                 self.goal_x = None;
             }
             Key::Named(NamedKey::Escape) => {
-                self.describing = None;
                 if self.doc.cancel() {
                     self.changed(true);
                 }
@@ -576,7 +591,8 @@ impl App {
             }
             Key::Named(NamedKey::Enter) if !command => {
                 if let Some(pos) = self.doc.formula_at_caret(false) {
-                    if self.doc.formulas[&pos].failed && self.doc.formulas[&pos].image.is_none() {
+                    let formula = &self.doc.formulas[&pos];
+                    if formula.prompt.is_some() && formula.failed && formula.image.is_none() {
                         self.doc.retry(pos);
                         self.changed(true);
                     } else {
@@ -622,18 +638,64 @@ impl App {
         }
     }
     fn edit_math(&mut self, pos: usize) {
-        if !self.doc.reopen(pos) {
-            let f = &self.doc.formulas[&pos];
-            if self.describing != Some(f.id) {
-                self.describing = Some(f.id);
-                self.worker.submit(Job {
-                    id: f.id,
-                    prompt: None,
-                    latex: f.latex.clone(),
-                    describe: true,
-                });
+        if self.doc.reopen(pos) {
+            self.changed(true);
+        } else if let Some(latex) = self.doc.reopen_manual(pos) {
+            self.math = Some(MathInput::new(MathTree::parse(&latex)));
+            self.preview();
+        }
+    }
+    /// Feeds keys to the open formula. Edits and moves refresh the live image.
+    fn math_input(&mut self, keys: impl IntoIterator<Item = MathKey>) {
+        for key in keys {
+            let Some(input) = self.math.as_mut() else {
+                return;
+            };
+            match input.key(key) {
+                Outcome::Edited | Outcome::Moved => self.preview(),
+                Outcome::Close => {
+                    self.finish_math();
+                    return;
+                }
+                Outcome::Cancel => {
+                    self.math = None;
+                    self.doc.cancel_manual();
+                    self.changed(true);
+                    return;
+                }
+                Outcome::Ignored => {}
             }
         }
+    }
+    /// Renders the open formula and stores its LaTeX and image. A render error keeps the last
+    /// image, so a temporarily unrenderable state does not blank the formula.
+    fn preview(&mut self) {
+        let Some(input) = &self.math else {
+            return;
+        };
+        let renderer = self
+            .math_renderer
+            .get_or_insert_with(|| Renderer::with_prelude(mathstral_latex::PRELUDE));
+        let latex = input.latex();
+        let image = match render_formula(renderer, &input.display_latex()) {
+            Ok(image) => Some(image),
+            Err(_) => self
+                .doc
+                .formulas
+                .values()
+                .find(|f| Some(f.id) == self.doc.manual_id())
+                .and_then(|f| f.image.clone()),
+        };
+        self.doc.set_manual(latex, image);
+        self.changed(true);
+    }
+    /// Stores the formula's LaTeX, lets the worker render it, and closes the edit.
+    fn finish_math(&mut self) {
+        let Some(input) = self.math.take() else {
+            return;
+        };
+        self.doc.set_manual(input.latex(), None);
+        self.doc.finish_manual();
         self.changed(true);
     }
     fn mouse_caret(&mut self, extend: bool) {
@@ -693,6 +755,7 @@ impl ApplicationHandler<Action> for App {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => {
+                self.finish_math();
                 if self.may_discard() {
                     event_loop.exit();
                 }
@@ -712,8 +775,12 @@ impl ApplicationHandler<Action> for App {
             }
             WindowEvent::Ime(Ime::Commit(text)) => {
                 self.composing = false;
-                self.doc.replace(&text, true);
-                self.changed(true);
+                if self.math.is_some() {
+                    self.math_input(text.chars().filter(|c| !c.is_control()).map(MathKey::Text));
+                } else {
+                    self.doc.replace(&text, true);
+                    self.changed(true);
+                }
             }
             WindowEvent::Ime(Ime::Disabled) => self.composing = false,
             WindowEvent::Focused(focused) => {
@@ -740,6 +807,7 @@ impl ApplicationHandler<Action> for App {
                     if self.modifiers.super_key() || self.mouse.1 < 32.0 {
                         let _ = self.window.as_ref().unwrap().drag_window();
                     } else {
+                        self.finish_math();
                         self.dragging = true;
                         self.mouse_caret(self.modifiers.shift_key());
                     }
@@ -779,4 +847,64 @@ impl ApplicationHandler<Action> for App {
                 .map_or(ControlFlow::Wait, ControlFlow::WaitUntil),
         );
     }
+}
+
+/// Renders a formula for the live preview, on the UI thread.
+fn render_formula(renderer: &mut Renderer, latex: &str) -> Result<Arc<FormulaImage>, String> {
+    crate::math::render(renderer, latex).map(Arc::new)
+}
+
+/// The keys a key press means inside a formula. Command shortcuts other than the ones listed
+/// are menu actions and map to nothing.
+fn math_keys(event: &KeyEvent, modifiers: ModifiersState) -> Vec<MathKey> {
+    let shift = modifiers.shift_key();
+    let command = modifiers.super_key();
+    let option = modifiers.alt_key();
+    let control = modifiers.control_key();
+    // Option types brackets and symbols on some layouts, so only the keys the map binds become Alt.
+    let base = match event.key_without_modifiers() {
+        Key::Character(base) => base.chars().next().map(|c| c.to_ascii_lowercase()),
+        _ => None,
+    };
+    if option
+        && !command
+        && !control
+        && let Some(key @ ('f' | 's')) = base
+    {
+        return vec![MathKey::Alt { key, shift }];
+    }
+    let key = match event.logical_key {
+        Key::Named(NamedKey::Backspace) if command && option => MathKey::ExitLeft,
+        Key::Named(NamedKey::Delete) if command && option => MathKey::ExitRight,
+        Key::Named(NamedKey::ArrowLeft) if command && option => MathKey::PreviousArgument,
+        Key::Named(NamedKey::ArrowRight) if command && option => MathKey::NextArgument,
+        Key::Named(_) if command => return Vec::new(),
+        Key::Named(NamedKey::Enter) => MathKey::Return,
+        Key::Named(NamedKey::Escape) => MathKey::Escape,
+        Key::Named(NamedKey::Tab) if shift => MathKey::ShiftTab,
+        Key::Named(NamedKey::Tab) => MathKey::Tab,
+        Key::Named(NamedKey::Backspace) if option => MathKey::StructuredBackspace,
+        Key::Named(NamedKey::Backspace) if control => MathKey::Unwrap,
+        Key::Named(NamedKey::Backspace) => MathKey::Backspace,
+        Key::Named(NamedKey::Delete) => MathKey::Delete,
+        Key::Named(NamedKey::ArrowLeft) => MathKey::Left,
+        Key::Named(NamedKey::ArrowRight) => MathKey::Right,
+        Key::Named(NamedKey::ArrowUp) => MathKey::Up,
+        Key::Named(NamedKey::ArrowDown) => MathKey::Down,
+        Key::Named(NamedKey::F5) if shift => MathKey::SymbolPrefix,
+        Key::Named(NamedKey::Space) => MathKey::Text(' '),
+        Key::Named(_) => return Vec::new(),
+        _ if command || control => return Vec::new(),
+        _ => {
+            return event
+                .text
+                .as_deref()
+                .unwrap_or("")
+                .chars()
+                .filter(|c| !c.is_control())
+                .map(MathKey::Text)
+                .collect();
+        }
+    };
+    vec![key]
 }
