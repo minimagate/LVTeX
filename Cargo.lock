@@ -1910,7 +1910,7 @@ dependencies = [
 
 [[package]]
 name = "mathstral"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arboard",
  "base64 0.22.1",
@@ -1929,7 +1929,7 @@ dependencies = [
 
 [[package]]
 name = "mathstral-latex"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "mathstral-render",
  "mitex",
@@ -1938,7 +1938,7 @@ dependencies = [
 
 [[package]]
 name = "mathstral-render"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "tiny-skia 0.12.0",
  "typst",
