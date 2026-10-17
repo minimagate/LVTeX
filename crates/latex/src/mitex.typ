@@ -4,6 +4,21 @@
 // definitions that already render the project's formulas, so those stay unchanged,
 // plus fixes for names that Typst 0.15 no longer provides.
 #let mitex-scope = package.scope + (
+  // MiTeX's standard `textcolor` command only accepts its named color map.
+  // Keep that lookup, and add the hex form used by editor structural carets.
+  "colortext": (texcolor, body) => {
+    let name = get-tex-str(texcolor)
+    let named = mitex-color-map.at(lower(name), default: none)
+    let hex = if name.starts-with("#") { name.slice(1) } else { "" }
+    let color = if named != none {
+      named
+    } else if hex.matches(regex("^[0-9a-fA-F]{6}$")).len() == 1 {
+      rgb(hex)
+    } else {
+      none
+    }
+    if color != none { text(fill: color, body) } else { body }
+  },
   // `std.sym`, because the vendored prelude shadows `sym` with its own helper.
   "diff": std.sym.partial,
   "angle": symbol("∠", ("l", "⟨"), ("r", "⟩"), ("arc", "∡"), ("spheric", "∢")),

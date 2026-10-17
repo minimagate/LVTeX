@@ -335,6 +335,43 @@ mod tests {
         }
     }
 
+    #[test]
+    fn textcolor_renders_hex_named_and_malformed_colors_safely() {
+        let mut renderer = Renderer::with_prelude(PRELUDE);
+        let render = |renderer: &mut Renderer, latex: &str| {
+            let body = convert(latex).unwrap();
+            renderer.render_math(&body, true, SCALE).unwrap()
+        };
+
+        for (latex, expected) in [
+            (r"\textcolor{#87CEEB}{|}", [135_u8, 206, 235]),
+            (r"\textcolor{red}{x}", [255_u8, 0, 0]),
+        ] {
+            let image = render(&mut renderer, latex);
+            let pixel = image
+                .pixels()
+                .iter()
+                .filter(|pixel| pixel.alpha() > 0)
+                .max_by_key(|pixel| pixel.alpha())
+                .expect("colored glyph has visible pixels");
+            let alpha = u32::from(pixel.alpha());
+            for (actual, expected) in [pixel.red(), pixel.green(), pixel.blue()]
+                .into_iter()
+                .zip(expected)
+            {
+                let unpremultiplied = u32::from(actual) * 255 / alpha;
+                assert!(
+                    unpremultiplied.abs_diff(u32::from(expected)) <= 2,
+                    "{latex}: expected RGB {expected:?}, got premultiplied pixel {pixel:?}"
+                );
+            }
+        }
+
+        let malformed = render(&mut renderer, r"\textcolor{not-a-color}{x}");
+        let plain = render(&mut renderer, "x");
+        assert_eq!(malformed.pixels(), plain.pixels());
+    }
+
     /// Spec items that cannot render in math mode with the generic or in-context samples, with the reason.
     const SPEC_ALLOWLIST: &[(&str, &str)] = &[
         (
