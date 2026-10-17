@@ -166,7 +166,7 @@ impl Para {
     // Face, color and strikethrough for the bytes that start at `at`.
     fn look(&self, at: usize) -> (Face, u32, bool) {
         if self.open.as_ref().is_some_and(|r| r.contains(&at)) {
-            return (Face::Regular, TEXT_COLOR, false);
+            return (Face::Regular, PENDING_COLOR, false);
         }
         let base = face_of(self.bold, self.italic);
         if at < self.marker {
@@ -993,6 +993,30 @@ mod tests {
         assert!(row(&done, 0).iter().all(|g| g.color == MARKER_COLOR));
         let todo = t.layout("- [ ] todo", 680.0);
         assert!(row(&todo, 0)[6..].iter().all(|g| g.color == TEXT_COLOR));
+    }
+
+    #[test]
+    fn open_ai_prompt_is_dimmed_like_a_pending_prompt() {
+        let mut t = Typesetter::new();
+        let mut doc = Document::new("left right");
+        doc.anchor = 4;
+        doc.caret = 4;
+        doc.open_ai_prompt();
+        doc.replace("sum", true);
+        let open = doc.open_range().expect("open prompt");
+        let layout = t.document(&doc, 680.0);
+        let (_, start) = layout.caret(open.start);
+        let (_, end) = layout.caret(open.end);
+        let glyphs = row(&layout, 0);
+        let inside: Vec<_> = glyphs
+            .iter()
+            .filter(|g| g.x >= start && g.x < end)
+            .collect();
+        assert!(!inside.is_empty());
+        assert!(inside.iter().all(|g| g.color == PENDING_COLOR));
+        let before: Vec<_> = glyphs.iter().filter(|g| g.x < start).collect();
+        assert!(!before.is_empty());
+        assert!(before.iter().all(|g| g.color == TEXT_COLOR));
     }
 
     #[test]
