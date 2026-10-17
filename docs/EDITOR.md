@@ -76,8 +76,6 @@ Type `\prompt\` to start a prompt.
 - Backslashes open at a word start and close at punctuation, whitespace or the end of the text.
 - Internal backslashes are text, not delimiters: `C:\dir\file` and `a\b\` do not start prompts.
 - Earlier `/prompt/` text is plain text.
-- When the next typed character continues a denominator, a just-closed `\1\` is reopened
-  as the still-open `\1\2`.
 - An open prompt has a subtle green tint and underline.
 - A closed prompt is dim until the model returns a formula that renders successfully.
 - A prompt whose generation fails stays as text with a muted red underline. Enter retries it.

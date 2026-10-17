@@ -22,7 +22,6 @@ pub struct Formula {
     pub latex: Option<String>,
     pub image: Option<Arc<FormulaImage>>,
     pub failed: bool,
-    provisional: bool,
 }
 impl Formula {
     fn new(prompt: Option<String>, latex: Option<String>) -> Self {
@@ -32,7 +31,6 @@ impl Formula {
             latex,
             image: None,
             failed: false,
-            provisional: false,
         }
     }
     pub fn label(&self) -> String {
@@ -91,9 +89,6 @@ impl Document {
         d.formulas = atoms;
         d.cancelled = cancelled;
         d.close_prompts();
-        for f in d.formulas.values_mut() {
-            f.provisional = false;
-        }
         d.caret = 0;
         d.anchor = 0;
         d.saved = d.markdown();
@@ -267,22 +262,6 @@ impl Document {
             self.undo.push(self.snapshot());
         }
         self.redo.clear();
-        // A backslash at EOF closes immediately, but a subsequently typed denominator
-        // reinterprets it as an internal backslash, even if rendering already finished.
-        if range.is_empty()
-            && value.chars().next().is_some_and(|c| !closing_boundary(c))
-            && let Some((&pos, f)) = self.formulas.range(..self.caret).next_back()
-            && pos + ATOM.len() == self.caret
-            && f.provisional
-        {
-            let label = f.label();
-            self.splice(pos..pos + ATOM.len(), &label);
-            self.caret = pos + label.len();
-            self.anchor = self.caret;
-        }
-        for f in self.formulas.values_mut() {
-            f.provisional = false;
-        }
         let mut range = self.selection();
         let text_before = self.text();
         let completes_edit = value == "\\"
@@ -339,9 +318,6 @@ impl Document {
         self.caret = start + plain.len();
         self.anchor = self.caret;
         self.close_prompts();
-        for f in self.formulas.values_mut() {
-            f.provisional = false;
-        }
     }
     fn close_prompts(&mut self) {
         loop {
@@ -374,10 +350,9 @@ impl Document {
             let Some((start, end, prompt)) = found else {
                 break;
             };
-            let mut f = Formula::new(Some(prompt), None);
-            f.provisional = end == self.caret;
             self.splice(start..end, ATOM);
-            self.formulas.insert(start, f);
+            self.formulas
+                .insert(start, Formula::new(Some(prompt), None));
         }
     }
     pub fn open_range(&self) -> Option<Range<usize>> {
@@ -677,15 +652,15 @@ mod tests {
         }
     }
     #[test]
-    fn backslash_rules_and_provisional_fraction() {
-        let mut d = Document::new("");
-        type_text(&mut d, r"and\or C:\a\b \1\2 plus a\b\ done");
+    fn backslash_rules() {
+        let mut d = Document::new(r"and\or C:\a\b \1\2 plus a\b\ done");
         assert_eq!(d.formulas.len(), 1);
         assert_eq!(
             d.formulas.values().next().unwrap().prompt.as_deref(),
             Some(r"1\2 plus a\b")
         );
         assert_eq!(d.text(), format!(r"and\or C:\a\b {ATOM} done"));
+        d.move_to(d.rope.len_bytes(), false);
         type_text(&mut d, r" \unfinished");
         assert!(d.open_range().is_some());
         assert!(d.cancel());
@@ -693,16 +668,9 @@ mod tests {
         assert_eq!(d.formulas.len(), 1);
         assert_eq!(Document::new(&d.markdown()).formulas.len(), 1);
         let mut d = Document::new("");
-        type_text(&mut d, r"\1\");
+        type_text(&mut d, r"\1\2");
         assert_eq!(d.formulas.len(), 1);
-        type_text(&mut d, "2");
-        assert!(d.formulas.is_empty());
-        assert_eq!(d.text(), r"\1\2");
-        type_text(&mut d, r"\");
-        assert_eq!(
-            d.formulas.values().next().unwrap().prompt.as_deref(),
-            Some(r"1\2")
-        );
+        assert_eq!(d.text(), format!("{ATOM}2"));
     }
     #[test]
     fn atoms_survive_edits_and_history_and_roundtrip() {
@@ -861,9 +829,9 @@ mod tests {
         assert_eq!(d.text(), format!(r"a\\ {ATOM}"));
         assert_round_trip(&d);
         let mut d = Document::new("");
-        type_text(&mut d, r"\$5 and \x");
+        type_text(&mut d, r"\$5 and x");
         assert!(d.cancel());
-        assert_eq!(d.markdown(), r"<!--mathstral:literal-->\\\$5 and \x");
+        assert_eq!(d.markdown(), r"<!--mathstral:literal-->\\\$5 and x");
         assert_round_trip(&d);
         assert!(Document::new(&d.markdown()).formulas.is_empty());
         let d = Document::new("/x/ and /y");
