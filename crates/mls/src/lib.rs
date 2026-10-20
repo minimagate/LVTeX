@@ -1,12 +1,13 @@
 //! MLS: classify each block of a document, formalize it into Lean and check it with the Lean REPL.
 
-#![allow(dead_code)] // Until the worker uses every module.
-
 mod openrouter;
 mod pipeline;
 mod repl;
 mod rules;
 mod worker;
+
+pub use pipeline::{Details, Dot, Mls, Paragraph};
+pub use worker::Worker;
 
 /// The decision model that labels each paragraph (OpenRouter id, pinned).
 pub const JEV_MODEL: &str = "typesafe/jev-1.13";

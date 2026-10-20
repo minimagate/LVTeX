@@ -1,0 +1,292 @@
+//! Worker tests. The scripted document test needs the Lean project built; run it with
+//! `cargo test --release -p mathstral-mls scripted_documents -- --ignored --nocapture`.
+
+use super::Worker;
+use crate::openrouter::{CHAT_URL, DECISIONS_URL};
+use crate::{Failure, Formal, Job, Label, Mls, Paragraph, Reply, Status};
+use documents::{DOCUMENTS, Line, assert_outcome, drive, lean_project, lean_ready};
+use serde_json::{Value, json};
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    thread,
+    time::{Duration, Instant},
+};
+
+#[path = "../fixtures/documents.rs"]
+mod documents;
+
+const TIMEOUT: Duration = Duration::from_secs(10);
+
+fn reply(worker: &Worker) -> Reply {
+    worker
+        .rx
+        .recv_timeout(TIMEOUT)
+        .expect("a reply within 10 seconds")
+}
+
+fn jev(label: Label) -> Value {
+    json!({"answers": {"kind": {"type": "choice", "choice": label.name()}}})
+}
+
+/// A Haiku chat completion whose content is the formalization `lean`.
+fn haiku(lean: &str) -> Value {
+    let content = json!({"lean": lean, "lean_name": null, "assumptions": ["A plain sentence."]});
+    json!({"choices": [{"finish_reason": "stop", "message": {"content": content.to_string()}}]})
+}
+
+fn formalize(label: Label, text: &str) -> Job {
+    Job::Formalize {
+        block: 3,
+        version: 9,
+        label,
+        text: text.to_string(),
+        prose: None,
+        lean_above: Vec::new(),
+        names_above: Vec::new(),
+        statement: None,
+    }
+}
+
+/// A request that fails the way an unreachable service does.
+fn no_request(_url: &str, _body: &Value) -> Result<Value, Failure> {
+    Err(Failure {
+        message: "no request expected".to_string(),
+        service: true,
+    })
+}
+
+#[test]
+fn classify_reports_the_label_jev_chose() {
+    let worker = Worker::with_request(
+        PathBuf::new(),
+        || {},
+        |url, body| {
+            assert_eq!(url, DECISIONS_URL);
+            assert_eq!(body["state"]["paragraph"], "Lemma. Every group is nice.");
+            Ok(jev(Label::Statement))
+        },
+    );
+    worker.submit(Job::Classify {
+        paragraph: 7,
+        text: "Lemma. Every group is nice.".to_string(),
+        proof_open: false,
+    });
+    match reply(&worker) {
+        Reply::Classified {
+            paragraph,
+            text,
+            proof_open,
+            result,
+        } => {
+            assert_eq!(paragraph, 7);
+            assert_eq!(text, "Lemma. Every group is nice.");
+            assert!(!proof_open);
+            assert_eq!(result, Ok(Label::Statement));
+        }
+        other => panic!("expected a classification, got {other:?}"),
+    }
+}
+
+#[test]
+fn formalize_rejects_an_axiom_without_a_service_failure() {
+    let worker = Worker::with_request(PathBuf::new(), || {}, |_, _| Ok(haiku("axiom answer : ℕ")));
+    worker.submit(formalize(Label::Definition, "Assume an answer exists."));
+    match reply(&worker) {
+        Reply::Formalized {
+            block,
+            version,
+            statement_version,
+            result,
+        } => {
+            assert_eq!((block, version, statement_version), (3, 9, None));
+            assert_eq!(
+                result,
+                Err(Failure {
+                    message: "The Lean declares an axiom.".to_string(),
+                    service: false,
+                })
+            );
+        }
+        other => panic!("expected a formalization, got {other:?}"),
+    }
+}
+
+#[test]
+fn formalize_passes_an_accepted_formalization_through() {
+    let worker = Worker::with_request(
+        PathBuf::new(),
+        || {},
+        |_, _| Ok(haiku("def answer : ℕ := 42")),
+    );
+    worker.submit(formalize(Label::Definition, "Let the answer be 42."));
+    match reply(&worker) {
+        Reply::Formalized { result, .. } => assert_eq!(
+            result,
+            Ok(Formal {
+                lean: "def answer : ℕ := 42".to_string(),
+                lean_name: None,
+                assumptions: vec!["A plain sentence.".to_string()],
+            })
+        ),
+        other => panic!("expected a formalization, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_request_failure_is_passed_through_as_a_service_failure() {
+    let unreachable = Failure {
+        message: "OpenRouter is unreachable: no route".to_string(),
+        service: true,
+    };
+    let failure = unreachable.clone();
+    let worker = Worker::with_request(PathBuf::new(), || {}, move |_, _| Err(failure.clone()));
+    worker.submit(Job::Classify {
+        paragraph: 1,
+        text: "Anything.".to_string(),
+        proof_open: false,
+    });
+    match reply(&worker) {
+        Reply::Classified { result, .. } => assert_eq!(result, Err(unreachable)),
+        other => panic!("expected a classification, got {other:?}"),
+    }
+}
+
+#[test]
+fn check_without_a_lean_project_is_a_service_failure() {
+    let worker = Worker::with_request(
+        PathBuf::from("/nonexistent/mathstral-mls-project"),
+        || {},
+        no_request,
+    );
+    worker.submit(Job::Check {
+        block: 1,
+        version: 1,
+        lean: "def answer : ℕ := 42".to_string(),
+        base: 0,
+    });
+    match reply(&worker) {
+        Reply::Checked {
+            block: 1,
+            version: 1,
+            base: 0,
+            result: Err(failure),
+        } => {
+            assert!(failure.service, "{}", failure.message);
+            assert!(
+                failure.message.starts_with("No Lean project"),
+                "{}",
+                failure.message
+            );
+        }
+        other => panic!("expected a failed check, got {other:?}"),
+    }
+}
+
+#[test]
+fn replies_come_back_in_submission_order_with_one_wake_each() {
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let counted = wakes.clone();
+    let worker = Worker::with_request(
+        PathBuf::new(),
+        move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+        },
+        |_, _| Ok(jev(Label::Skip)),
+    );
+    for paragraph in 1..=3u64 {
+        worker.submit(Job::Classify {
+            paragraph,
+            text: format!("Paragraph {paragraph}."),
+            proof_open: false,
+        });
+    }
+    let order: Vec<u64> = (0..3)
+        .map(|_| match reply(&worker) {
+            Reply::Classified { paragraph, .. } => paragraph,
+            other => panic!("expected a classification, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(order, [1, 2, 3]);
+    // The wake follows each send, so it may land a moment after the reply is received.
+    let deadline = Instant::now() + TIMEOUT;
+    while wakes.load(Ordering::SeqCst) < 3 {
+        assert!(Instant::now() < deadline, "wake was not called three times");
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(wakes.load(Ordering::SeqCst), 3);
+}
+
+/// The lean name of a formalization: the word after its declaration keyword.
+fn lean_name(lean: &str) -> Option<&str> {
+    lean.split_whitespace().nth(1)
+}
+
+fn line_with_text(lines: &'static [Line], text: &str) -> Result<&'static Line, Failure> {
+    lines
+        .iter()
+        .find(|line| line.text == text)
+        .ok_or_else(|| Failure {
+            message: format!("the scripted model has no paragraph {text:?}"),
+            service: true,
+        })
+}
+
+/// The scripted model for one document: Jev's label for each paragraph, and Haiku's Lean for the
+/// block whose first paragraph is in the prompt.
+fn scripted(
+    lines: &'static [Line],
+) -> impl FnMut(&str, &Value) -> Result<Value, Failure> + Send + 'static {
+    move |url, body| {
+        if url == DECISIONS_URL {
+            let text = body["state"]["paragraph"].as_str().unwrap_or_default();
+            Ok(jev(line_with_text(lines, text)?.label))
+        } else if url == CHAT_URL {
+            let prompt = body["messages"][1]["content"]
+                .as_array()
+                .and_then(|parts| parts.last())
+                .and_then(|part| part["text"].as_str())
+                .unwrap_or_default();
+            let block = prompt.split_once("Block:\n").map_or("", |(_, block)| block);
+            let first = block.split("\n\n").next().unwrap_or_default();
+            let line = line_with_text(lines, first)?;
+            let lean = line.lean.ok_or_else(|| Failure {
+                message: format!("the scripted model has no Lean for {first:?}"),
+                service: true,
+            })?;
+            let content = json!({
+                "lean": lean,
+                "lean_name": lean_name(lean),
+                "assumptions": line.assumptions,
+            });
+            Ok(json!({"choices": [{"finish_reason": "stop",
+                "message": {"content": content.to_string()}}]}))
+        } else {
+            no_request(url, body)
+        }
+    }
+}
+
+#[test]
+#[ignore = "needs the Lean project in lean/ built (lake build Mathlib REPL)"]
+fn scripted_documents_end_with_their_dots() {
+    let project = lean_project();
+    if !lean_ready(&project) {
+        eprintln!(
+            "skipping: the Lean REPL is not built in {} (run `lake build Mathlib REPL` there)",
+            project.display()
+        );
+        return;
+    }
+    for document in &DOCUMENTS {
+        let worker = Worker::with_request(project.clone(), || {}, scripted(document.lines));
+        let mut mls = Mls::new();
+        let lines: Vec<&str> = document.lines.iter().map(|line| line.text).collect();
+        drive(&mut mls, &worker, &lines)
+            .unwrap_or_else(|error| panic!("{}: {error}", document.name));
+        assert_outcome(&mls, document);
+    }
+}
