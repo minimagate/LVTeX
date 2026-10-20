@@ -60,8 +60,9 @@ impl Repl {
         }
         // The REPL is started directly, not through `lake env`: killing `lake` would leave the REPL
         // running as an orphan. Lake only supplies the search path and sysroot the REPL needs.
-        let lean_path = lake_env(project, "LEAN_PATH")?;
-        let lean_sysroot = lake_env(project, "LEAN_SYSROOT")?;
+        let lake_bin = lake();
+        let lean_path = lake_env(&lake_bin, project, "LEAN_PATH")?;
+        let lean_sysroot = lake_env(&lake_bin, project, "LEAN_SYSROOT")?;
         let mut command = Command::new(project.join(REPL_BINARY));
         // Model-written Lean runs in this process, so it gets no API key or other secret.
         clear_env(&mut command);
@@ -157,9 +158,10 @@ fn lake() -> PathBuf {
 }
 
 /// Reads one variable of the Lake project's build environment, such as `LEAN_PATH`, with
-/// `lake env printenv`. Lake prints the value on one line.
-fn lake_env(project: &Path, name: &str) -> Result<String, Failure> {
-    let mut command = Command::new(lake());
+/// `lake env printenv`, run with the `lake` executable at `lake_bin`. Lake prints the value on one
+/// line.
+fn lake_env(lake_bin: &Path, project: &Path, name: &str) -> Result<String, Failure> {
+    let mut command = Command::new(lake_bin);
     clear_env(&mut command);
     let output = command
         .arg("env")
@@ -169,7 +171,13 @@ fn lake_env(project: &Path, name: &str) -> Result<String, Failure> {
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()
-        .map_err(|error| service(format!("Cannot start Lean: {error}")))?;
+        .map_err(|error| match error.kind() {
+            io::ErrorKind::NotFound => service(
+                "Lean is not installed: `lake` was not found. Install elan and build the Lean project (see README)."
+                    .to_string(),
+            ),
+            _ => service(format!("Cannot start Lean: {error}")),
+        })?;
     let not_set = || {
         service(format!(
             "The Lean project at {} does not set {name}.",

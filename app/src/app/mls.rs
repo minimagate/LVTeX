@@ -1,5 +1,6 @@
 //! Lean checking: syncing lines to MLS, applying its replies, and the dots and panel.
 use super::*;
+use crate::view::layout::Line;
 use mathstral_mls::{Mls, Paragraph, Status};
 use std::path::{Path, PathBuf};
 use winit::window::CursorIcon;
@@ -22,6 +23,9 @@ pub(super) struct Panel {
     pinned: bool,
     show_lean: bool,
     area: (f32, f32, f32, f32),
+    /// The area that keeps an unpinned panel open: the dot's side of the paragraph, from its first
+    /// row to the panel, with a margin.
+    hold: (f32, f32, f32, f32),
     toggle: Option<(f32, f32, f32, f32)>,
 }
 
@@ -32,6 +36,7 @@ impl Panel {
             pinned,
             show_lean: false,
             area: (0.0, 0.0, 0.0, 0.0),
+            hold: (0.0, 0.0, 0.0, 0.0),
             toggle: None,
         }
     }
@@ -201,6 +206,12 @@ impl App {
         Some((TOP + top - self.scroll, height))
     }
 
+    /// The top and height, in logical window coordinates, of a paragraph's last visual row.
+    fn last_row(&self, paragraph: usize) -> Option<(f32, f32)> {
+        let (top, height) = last_document_row(&self.mls_lines, &self.layout, paragraph)?;
+        Some((TOP + top - self.scroll, height))
+    }
+
     /// The x of every dot's centre, in logical window coordinates.
     fn dot_x(left: f32) -> f32 {
         // The minimum keeps the dot on screen in a very narrow window.
@@ -224,6 +235,12 @@ impl App {
     ) {
         let now = Instant::now();
         let view = height as f32 / scale;
+        // The open panel, once laid out, covers the dots beneath it.
+        let panel = self
+            .panel
+            .as_ref()
+            .map(|panel| panel.area)
+            .filter(|area| area.2 > 0.0);
         for fade in self.fades.values() {
             let (Some(color), alpha) = shown(fade, now) else {
                 continue;
@@ -242,6 +259,9 @@ impl App {
                 continue;
             };
             if y + DOT_RADIUS < 0.0 || y - DOT_RADIUS > view {
+                continue;
+            }
+            if panel.is_some_and(|area| contains(area, x, y)) {
                 continue;
             }
             render::dot(
@@ -340,7 +360,7 @@ impl App {
         Some((rows, toggle))
     }
 
-    /// Paints the open panel over the cached page, beside the dot's row, and records its areas.
+    /// Paints the open panel over the cached page, below the dot's paragraph, and records its areas.
     pub(super) fn draw_panel(
         &mut self,
         width: usize,
@@ -362,6 +382,9 @@ impl App {
             return;
         };
         let Some((row_top, row_height)) = self.first_row(paragraph) else {
+            return;
+        };
+        let Some((last_top, last_height)) = self.last_row(paragraph) else {
             return;
         };
         let Some((rows, toggle)) = self.panel_rows(key, show_lean) else {
@@ -387,11 +410,27 @@ impl App {
         }
         let (w, h) = (inner + 2.0 * PANEL_PADDING, content + 2.0 * PANEL_PADDING);
         let view = height as f32 / scale;
-        let mut y = row_top + row_height + PANEL_GAP;
-        if y + h > view - PANEL_EDGE {
+        let mut y = last_top + last_height + PANEL_GAP;
+        let below = y + h <= view - PANEL_EDGE;
+        if !below {
             y = (row_top - PANEL_GAP - h).max(PANEL_EDGE);
         }
         let x = left - PANEL_PADDING;
+        // The hold runs from the dot's side of the paragraph to the panel, so the pointer can cross
+        // the text between them. Below the paragraph it spans from the first row's top to the panel's
+        // bottom; placed above, from the panel's top to the first row's bottom.
+        let (hold_top, hold_bottom) = if below {
+            (row_top, y + h)
+        } else {
+            (y, row_top + row_height)
+        };
+        let hold_left = Self::dot_x(left) - DOT_HIT_RADIUS;
+        let hold = (
+            hold_left,
+            hold_top - PANEL_BRIDGE,
+            x + w - hold_left,
+            hold_bottom - hold_top + 2.0 * PANEL_BRIDGE,
+        );
         render::rounded_rect(
             &mut self.pixels,
             width,
@@ -426,6 +465,7 @@ impl App {
         });
         if let Some(panel) = self.panel.as_mut() {
             panel.area = (x, y, w, h);
+            panel.hold = hold;
             panel.toggle = toggle;
         }
     }
@@ -452,7 +492,7 @@ impl App {
             // A new panel has no area until it is first drawn, so the pointer that opened it is not
             // inside it yet. It is still opening, so it stays.
             let opening = panel.area.2 == 0.0;
-            let keep = opening || contains(bridged(panel.area), x, y);
+            let keep = opening || contains(panel.hold, x, y);
             (panel.key, panel.pinned, keep)
         });
         match (open, dot) {
@@ -561,13 +601,33 @@ fn lean_path(document: &Path) -> PathBuf {
     document.with_file_name(format!("{stem}.mls.lean"))
 }
 
-/// The top and height, in document coordinates, of a paragraph's first visual row. `lines` are the
-/// paragraphs' byte ranges, and `layout` must be typeset from the same text.
+/// The layout's visual rows of a paragraph: those that start inside its byte range, in order.
+/// `lines` are the paragraphs' byte ranges, and `layout` must be typeset from the same text.
+fn paragraph_rows<'a>(lines: &[Range<usize>], layout: &'a Layout, paragraph: usize) -> &'a [Line] {
+    let Some(range) = lines.get(paragraph) else {
+        return &[];
+    };
+    let rows = &layout.lines;
+    let first = rows.partition_point(|line| line.start < range.start);
+    let count = rows[first..].partition_point(|line| line.start <= range.end);
+    &rows[first..first + count]
+}
+
+/// The top and height, in document coordinates, of a paragraph's first visual row.
 fn document_row(lines: &[Range<usize>], layout: &Layout, paragraph: usize) -> Option<(f32, f32)> {
     let start = lines.get(paragraph)?.start;
-    let rows = &layout.lines;
-    let line = rows.get(rows.partition_point(|line| line.start < start))?;
-    (line.start == start).then_some((line.top, line.height))
+    let row = paragraph_rows(lines, layout, paragraph).first()?;
+    (row.start == start).then_some((row.top, row.height))
+}
+
+/// The top and height, in document coordinates, of a paragraph's last visual row.
+fn last_document_row(
+    lines: &[Range<usize>],
+    layout: &Layout,
+    paragraph: usize,
+) -> Option<(f32, f32)> {
+    let row = paragraph_rows(lines, layout, paragraph).last()?;
+    Some((row.top, row.height))
 }
 
 fn status_color(status: Status) -> u32 {
@@ -609,11 +669,6 @@ fn mix(from: u32, to: u32, t: f32) -> u32 {
 
 fn contains((left, top, w, h): (f32, f32, f32, f32), x: f32, y: f32) -> bool {
     x >= left && x < left + w && y >= top && y < top + h
-}
-
-/// A panel's area extended up and down, so the pointer can cross the gap from a dot to its panel.
-fn bridged((left, top, w, h): (f32, f32, f32, f32)) -> (f32, f32, f32, f32) {
-    (left, top - PANEL_BRIDGE, w, h + 2.0 * PANEL_BRIDGE)
 }
 
 #[cfg(test)]

@@ -180,3 +180,14 @@ fn the_repl_inherits_only_the_allowed_environment() {
         assert!(REPL_ENV.contains(&name), "{name} is inherited");
     }
 }
+
+#[test]
+fn a_missing_lake_says_lean_is_not_installed() {
+    let lake = Path::new("/nonexistent/mathstral-test/lake");
+    let failure = lake_env(lake, Path::new("."), "LEAN_PATH").expect_err("lake_env should fail");
+    assert!(failure.service);
+    assert_eq!(
+        failure.message,
+        "Lean is not installed: `lake` was not found. Install elan and build the Lean project (see README)."
+    );
+}
