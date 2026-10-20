@@ -100,7 +100,7 @@ impl App {
         }
         match action {
             Action::MathReady => self.apply_math_replies(),
-            Action::MlsReady => self.apply_mls_replies(),
+            Action::MlsReady => {} // Applied before the undo group breaks, above.
             Action::InsertFormula => {
                 let in_prompt = self
                     .doc

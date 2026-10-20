@@ -44,11 +44,25 @@ pub const DOT_FAILED: u32 = 0xA9605C;
 pub const DOT_RADIUS: f32 = 3.0;
 // Distance of the dot's centre left of the column.
 pub const DOT_GUTTER: f32 = 22.0;
+// Smallest gap between a dot's edge and the window's left edge.
+pub const DOT_EDGE: f32 = 6.0;
+// How far from a dot's centre the pointer still counts as on it, in logical pixels.
+pub const DOT_HIT_RADIUS: f32 = 10.0;
+// Time between frames while a dot fades.
+pub const DOT_FRAME_MS: u64 = 16;
 pub const DOT_FADE_MS: u64 = 240;
 pub const PANEL_COLOR: u32 = 0x1C1C1C;
 pub const PANEL_MAX_WIDTH: f32 = 460.0;
 pub const PANEL_PADDING: f32 = 18.0;
 pub const PANEL_RADIUS: f32 = 8.0;
+// Space between a dot's row and the panel beneath it, and between panel rows.
+pub const PANEL_GAP: f32 = 6.0;
+// Space above the Lean toggle and above the Lean.
+pub const PANEL_SECTION_GAP: f32 = 12.0;
+// Smallest distance the panel keeps from the window's top and bottom edges.
+pub const PANEL_EDGE: f32 = 12.0;
+// How far the panel's area reaches past its top and bottom while the pointer crosses to a dot.
+pub const PANEL_BRIDGE: f32 = 12.0;
 pub const PANEL_TEXT_SCALE: f32 = 0.84;
 pub const PANEL_CODE_SCALE: f32 = 0.74;
 pub const PANEL_ERROR_COLOR: u32 = 0xB58682;

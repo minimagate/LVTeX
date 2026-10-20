@@ -1,21 +1,8 @@
 //! Lean checking: syncing lines to MLS, applying its replies, and the dots and panel.
 use super::*;
-use mathstral_mls::{Mls, Paragraph, Status};
+use mathstral_mls::{Paragraph, Status};
 use std::path::{Path, PathBuf};
 use winit::window::CursorIcon;
-
-/// Time between frames while a dot fades.
-const FRAME: Duration = Duration::from_millis(16);
-/// How far from a dot's centre the pointer still counts as on it, in logical pixels.
-const HIT_RADIUS: f32 = 10.0;
-/// Space between a dot's row and the panel beneath it, and between panel rows.
-const GAP: f32 = 6.0;
-/// Space above the Lean toggle and above the Lean.
-const SECTION_GAP: f32 = 12.0;
-/// Smallest distance the panel keeps from the window's top and bottom edges.
-const EDGE: f32 = 12.0;
-/// How far the panel's area reaches past its top and bottom while the pointer crosses to a dot.
-const BRIDGE: f32 = 12.0;
 
 /// A dot's colour on its way from one state to the next. `None` is no dot.
 pub(super) struct Fade {
@@ -23,6 +10,9 @@ pub(super) struct Fade {
     from: Option<u32>,
     to: Option<u32>,
     start: Instant,
+    /// The dot's centre height in document coordinates, kept from the last sync while the dot was
+    /// live. A dot that goes away fades out there.
+    anchor: Option<f32>,
 }
 
 /// The open panel, for the dot with `key`. Areas are (x, y, w, h) in logical window coordinates,
@@ -75,6 +65,12 @@ pub(super) fn lean_project() -> PathBuf {
 impl App {
     /// Gives MLS the document's paragraphs after an edit or a caret move.
     pub(super) fn sync_mls(&mut self) {
+        // The old paragraph indices still match `mls_lines` and the layout, so read the anchors now.
+        // A dot that has already gone keeps its anchor: its index no longer names its paragraph.
+        for fade in self.fades.values_mut().filter(|fade| fade.to.is_some()) {
+            fade.anchor = document_row(&self.mls_lines, &self.layout, fade.paragraph)
+                .map(|(top, height)| top + height / 2.0);
+        }
         let caret = self.doc.caret;
         let mut paragraphs = Vec::new();
         let mut ranges = Vec::new();
@@ -122,7 +118,9 @@ impl App {
                 fade.paragraph = dot.paragraph;
                 continue;
             }
-            let from = self.fades.get(&dot.key).and_then(|fade| shown(fade, now).0);
+            let prior = self.fades.get(&dot.key);
+            let from = prior.and_then(|fade| shown(fade, now).0);
+            let anchor = prior.and_then(|fade| fade.anchor);
             self.fades.insert(
                 dot.key,
                 Fade {
@@ -130,6 +128,7 @@ impl App {
                     from,
                     to,
                     start: now,
+                    anchor,
                 },
             );
             started = true;
@@ -174,7 +173,7 @@ impl App {
         let now = Instant::now();
         let due = *self.frame_due.get_or_insert(now);
         if now >= due {
-            self.frame_due = Some(now + FRAME);
+            self.frame_due = Some(now + Duration::from_millis(DOT_FRAME_MS));
             self.redraw();
         }
         self.frame_due
@@ -198,20 +197,20 @@ impl App {
 
     /// The top and height, in logical window coordinates, of a paragraph's first visual row.
     fn first_row(&self, paragraph: usize) -> Option<(f32, f32)> {
-        let start = self.mls_lines.get(paragraph)?.start;
-        let lines = &self.layout.lines;
-        let line = lines.get(lines.partition_point(|line| line.start < start))?;
-        (line.start == start).then_some((TOP + line.top - self.scroll, line.height))
+        let (top, height) = document_row(&self.mls_lines, &self.layout, paragraph)?;
+        Some((TOP + top - self.scroll, height))
+    }
+
+    /// The x of every dot's centre, in logical window coordinates.
+    fn dot_x(left: f32) -> f32 {
+        // The minimum keeps the dot on screen in a very narrow window.
+        (left - DOT_GUTTER).max(DOT_RADIUS + DOT_EDGE)
     }
 
     /// The centre of a paragraph's dot, in logical window coordinates.
     fn dot_center(&self, paragraph: usize, left: f32) -> Option<(f32, f32)> {
         let (top, height) = self.first_row(paragraph)?;
-        // The minimum keeps the dot on screen in a very narrow window.
-        Some((
-            (left - DOT_GUTTER).max(DOT_RADIUS + 6.0),
-            top + height / 2.0,
-        ))
+        Some((Self::dot_x(left), top + height / 2.0))
     }
 
     /// Paints the dots that are visible, or fading, over the frame.
@@ -232,7 +231,14 @@ impl App {
             if alpha <= 0.0 {
                 continue;
             }
-            let Some((x, y)) = self.dot_center(fade.paragraph, left) else {
+            let center = match fade.to {
+                Some(_) => self.dot_center(fade.paragraph, left),
+                // A dot that has gone stays where it was, whatever its index now names.
+                None => fade
+                    .anchor
+                    .map(|anchor| (Self::dot_x(left), TOP + anchor - self.scroll)),
+            };
+            let Some((x, y)) = center else {
                 continue;
             };
             if y + DOT_RADIUS < 0.0 || y - DOT_RADIUS > view {
@@ -258,7 +264,7 @@ impl App {
             .iter()
             .find(|dot| {
                 self.dot_center(dot.paragraph, left)
-                    .is_some_and(|(cx, cy)| (cx - x).hypot(cy - y) <= HIT_RADIUS)
+                    .is_some_and(|(cx, cy)| (cx - x).hypot(cy - y) <= DOT_HIT_RADIUS)
             })
             .map(|dot| dot.key)
     }
@@ -294,7 +300,7 @@ impl App {
                 false,
                 PANEL_TEXT_SCALE,
                 QUOTE_COLOR,
-                GAP,
+                PANEL_GAP,
             ));
         }
         let mut toggle = None;
@@ -312,14 +318,14 @@ impl App {
                 false,
                 PANEL_CODE_SCALE,
                 MARKER_COLOR,
-                SECTION_GAP,
+                PANEL_SECTION_GAP,
             ));
         }
         if show_lean {
-            let mut gap = SECTION_GAP;
+            let mut gap = PANEL_SECTION_GAP;
             if let Some(lean) = &details.lean {
                 rows.push(row(lean.clone(), true, PANEL_CODE_SCALE, CODE_COLOR, gap));
-                gap = GAP;
+                gap = PANEL_GAP;
             }
             if let Some(error) = &details.error {
                 rows.push(row(
@@ -381,9 +387,9 @@ impl App {
         }
         let (w, h) = (inner + 2.0 * PANEL_PADDING, content + 2.0 * PANEL_PADDING);
         let view = height as f32 / scale;
-        let mut y = row_top + row_height + GAP;
-        if y + h > view - EDGE {
-            y = (row_top - GAP - h).max(EDGE);
+        let mut y = row_top + row_height + PANEL_GAP;
+        if y + h > view - PANEL_EDGE {
+            y = (row_top - PANEL_GAP - h).max(PANEL_EDGE);
         }
         let x = left - PANEL_PADDING;
         render::rounded_rect(
@@ -442,10 +448,13 @@ impl App {
         self.refresh_layout();
         let (x, y) = self.mouse;
         let dot = self.dot_at(x, y);
-        let open = self
-            .panel
-            .as_ref()
-            .map(|panel| (panel.key, panel.pinned, contains(bridged(panel.area), x, y)));
+        let open = self.panel.as_ref().map(|panel| {
+            // A new panel has no area until it is first drawn, so the pointer that opened it is not
+            // inside it yet. It is still opening, so it stays.
+            let opening = panel.area.2 == 0.0;
+            let keep = opening || contains(bridged(panel.area), x, y);
+            (panel.key, panel.pinned, keep)
+        });
         match (open, dot) {
             (Some((_, true, _)), _) => {}
             (Some((key, false, _)), Some(dot)) if key == dot => {}
@@ -505,7 +514,7 @@ impl App {
     }
 
     pub(super) fn reset_mls(&mut self) {
-        self.mls = Mls::new();
+        self.mls.reset();
         self.dots.clear();
         self.fades.clear();
         self.panel = None;
@@ -513,16 +522,38 @@ impl App {
         self.mls_fresh = true;
     }
 
-    /// Writes the Lean beside the saved document, when any block has Lean.
-    pub(super) fn save_lean(&self, path: &Path) {
+    /// Writes the Lean beside the saved document, at `lean_path`. It is written when some block has
+    /// Lean, or when that file already exists, so it follows the last block's removal. Otherwise
+    /// nothing is written.
+    pub(super) fn save_lean(&self, document: &Path) {
+        let document = std::fs::canonicalize(document).unwrap_or_else(|_| document.to_path_buf());
+        let path = lean_path(&document);
         let lean = self.mls.lean_file();
-        if !lean.contains("-- mathstral:block") {
+        if !lean.contains("-- mathstral:block") && !path.exists() {
             return;
         }
-        if let Err(error) = file::write(&path.with_extension("lean"), lean) {
+        if let Err(error) = file::write(&path, lean) {
             file::error("Could not save the Lean file.", error);
         }
     }
+}
+
+/// The Lean file beside a document: `notes.md` gives `notes.mls.lean`. The `.mls` infix keeps it
+/// from being the document itself, or a `Main.lean` the user keeps beside `Main.md`.
+fn lean_path(document: &Path) -> PathBuf {
+    let stem = document
+        .file_stem()
+        .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned());
+    document.with_file_name(format!("{stem}.mls.lean"))
+}
+
+/// The top and height, in document coordinates, of a paragraph's first visual row. `lines` are the
+/// paragraphs' byte ranges, and `layout` must be typeset from the same text.
+fn document_row(lines: &[Range<usize>], layout: &Layout, paragraph: usize) -> Option<(f32, f32)> {
+    let start = lines.get(paragraph)?.start;
+    let rows = &layout.lines;
+    let line = rows.get(rows.partition_point(|line| line.start < start))?;
+    (line.start == start).then_some((line.top, line.height))
 }
 
 fn status_color(status: Status) -> u32 {
@@ -568,7 +599,7 @@ fn contains((left, top, w, h): (f32, f32, f32, f32), x: f32, y: f32) -> bool {
 
 /// A panel's area extended up and down, so the pointer can cross the gap from a dot to its panel.
 fn bridged((left, top, w, h): (f32, f32, f32, f32)) -> (f32, f32, f32, f32) {
-    (left, top - BRIDGE, w, h + 2.0 * BRIDGE)
+    (left, top - PANEL_BRIDGE, w, h + 2.0 * PANEL_BRIDGE)
 }
 
 #[cfg(test)]

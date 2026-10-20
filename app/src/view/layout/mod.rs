@@ -122,7 +122,7 @@ impl Typesetter {
                         let word = self.word(&label, Face::Regular, 1.0);
                         // Pending prompts remain readable and wrap as text inside a single atom.
                         let pending = if word.width > width {
-                            Some(self.layout_plain_label(&label, width))
+                            Some(self.plain(&label, width, false, 1.0, PENDING_COLOR))
                         } else {
                             None
                         };
@@ -375,13 +375,13 @@ impl Typesetter {
                 0.0,
                 cap,
             );
-            out.lines.last_mut().unwrap().end = offset + paragraph.len();
+            out.lines
+                .last_mut()
+                .expect("Self::line pushes a row for every paragraph")
+                .end = offset + paragraph.len();
             offset += paragraph.len() + 1;
         }
         out
-    }
-    fn layout_plain_label(&mut self, label: &str, width: f32) -> Layout {
-        self.plain(label, width, false, 1.0, PENDING_COLOR)
     }
     // Places one visual row. `indent` is where the row's first box starts, used by hanging
     // rows; centered display rows ignore it.

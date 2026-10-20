@@ -7,6 +7,7 @@ fn fade(from: Option<u32>, to: Option<u32>, start: Instant) -> Fade {
         from,
         to,
         start,
+        anchor: None,
     }
 }
 
@@ -71,4 +72,31 @@ fn mix_returns_its_ends_and_blends_between_them() {
     assert_eq!(mix(DOT_CHECKING, DOT_VERIFIED, 0.0), DOT_CHECKING);
     assert_eq!(mix(DOT_CHECKING, DOT_VERIFIED, 1.0), DOT_VERIFIED);
     assert_eq!(mix(0x000000, 0xFFFFFF, 0.5), 0x808080);
+}
+
+#[test]
+fn lean_path_sits_beside_the_document() {
+    assert_eq!(
+        lean_path(Path::new("/docs/notes.md")),
+        PathBuf::from("/docs/notes.mls.lean")
+    );
+    assert_eq!(
+        lean_path(Path::new("/docs/proof.lean")),
+        PathBuf::from("/docs/proof.mls.lean")
+    );
+    assert_eq!(
+        lean_path(Path::new("/docs/Meeting 2026.10.20")),
+        PathBuf::from("/docs/Meeting 2026.10.mls.lean")
+    );
+}
+
+#[test]
+fn lean_path_never_names_the_document_or_a_users_own_lean_file() {
+    for document in ["/docs/x.lean", "/docs/x.md", "/docs/Main.md"] {
+        assert_ne!(lean_path(Path::new(document)), Path::new(document));
+    }
+    assert_ne!(
+        lean_path(Path::new("/docs/Main.md")),
+        Path::new("/docs/Main.lean")
+    );
 }
