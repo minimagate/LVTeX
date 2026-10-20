@@ -14,6 +14,7 @@ use std::{
 };
 
 /// Runs MLS jobs one at a time on its own thread, in the order submitted.
+#[derive(Debug)]
 pub struct Worker {
     tx: mpsc::Sender<Job>,
     pub rx: mpsc::Receiver<Reply>,
@@ -134,8 +135,9 @@ fn run(
     }
 }
 
-/// Checks `lean` on the REPL, starting the REPL on first use. A service failure drops the REPL,
-/// so the next check starts a fresh one.
+/// Checks `lean` on the REPL, starting the REPL on first use. Any failed check drops the REPL: a
+/// service failure means it is gone, and a timed-out one must be killed, since its answer may
+/// still arrive. The next check then starts a fresh one.
 fn check(
     repl: &mut Option<Repl>,
     project: &Path,
@@ -147,7 +149,7 @@ fn check(
     }
     let live = repl.as_mut().expect("the REPL was started above");
     let result = live.check(lean, base);
-    if matches!(&result, Err(failure) if failure.service) {
+    if result.is_err() {
         *repl = None;
     }
     result

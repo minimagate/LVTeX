@@ -62,7 +62,7 @@ fn checked_key(key: Option<&str>) -> Result<&str, Failure> {
             ));
         }
     };
-    // Such a key is not a bearer token, and a quote or backslash would break the quoted curl config line.
+    // A key with these characters would break the quoted curl header or config line.
     if key
         .chars()
         .any(|c| matches!(c, '"' | '\\') || c.is_whitespace() || c.is_control())
@@ -139,9 +139,11 @@ pub(crate) fn post(url: &str, body: &Value) -> Result<Value, Failure> {
     let config = curl_config(url, key, &body.to_string());
     // Spawned above with piped stdin, so the handle is always present.
     let mut stdin = child.stdin.take().expect("stdin was piped at spawn");
-    stdin
-        .write_all(config.as_bytes())
-        .map_err(|error| service_failure(format!("curl failed: {error}")))?;
+    if let Err(error) = stdin.write_all(config.as_bytes()) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(service_failure(format!("curl failed: {error}")));
+    }
     drop(stdin);
     let output = child
         .wait_with_output()

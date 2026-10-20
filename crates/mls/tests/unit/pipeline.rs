@@ -612,6 +612,173 @@ fn splitting_a_paragraph_keeps_the_ids_of_the_paragraphs_around_it() {
     assert!(keys.contains(&e), "{keys:?}");
 }
 
+/// The message of a check that ran past its deadline.
+const TIMED_OUT: &str = "Lean took longer than 60 s on this block.";
+
+/// The mock worker, except that the check of block `slow` times out.
+fn times_out(slow: u64) -> impl Fn(&Job) -> Reply {
+    move |job| match job {
+        Job::Check {
+            block,
+            version,
+            base,
+            ..
+        } if *block == slow => Reply::Checked {
+            block: *block,
+            version: *version,
+            base: *base,
+            result: Err(Failure {
+                message: TIMED_OUT.to_string(),
+                service: false,
+            }),
+        },
+        _ => answer(job),
+    }
+}
+
+#[test]
+fn a_skip_edit_above_a_checked_statement_keeps_its_dots_while_it_is_classified() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Hello.", "Def d.", "Lemma a."]));
+    run(&mut mls, answer);
+    assert_eq!(statuses(&mls), [(1, Status::Verified), (2, Status::Sorry)]);
+
+    mls.sync(&paras(&["Hello there.", "Def d.", "Lemma a."]));
+    let classify = mls.next_job().expect("the edited paragraph is classified");
+    assert!(matches!(&classify, Job::Classify { text, .. } if text == "Hello there."));
+    assert_eq!(statuses(&mls), [(1, Status::Verified), (2, Status::Sorry)]);
+
+    assert!(mls.apply(answer(&classify)));
+    assert!(
+        mls.next_job().is_none(),
+        "no Lean above the statement changed"
+    );
+    assert_eq!(statuses(&mls), [(1, Status::Verified), (2, Status::Sorry)]);
+}
+
+#[test]
+fn reset_while_busy_keeps_the_next_job_held_until_the_old_reply_is_applied() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def d."]));
+    let job = mls.next_job().expect("the paragraph is classified");
+    mls.reset();
+    assert!(
+        mls.next_job().is_none(),
+        "a job for the old document is still in flight"
+    );
+    assert!(
+        !mls.apply(answer(&job)),
+        "the old document's reply is stale"
+    );
+    mls.sync(&paras(&["Def e."]));
+    assert!(matches!(
+        mls.next_job(),
+        Some(Job::Classify { text, .. }) if text == "Def e."
+    ));
+}
+
+#[test]
+fn blocks_above_a_failed_label_still_get_their_jobs() {
+    fn fails_on_hello(job: &Job) -> Reply {
+        match job {
+            Job::Classify {
+                paragraph,
+                text,
+                proof_open,
+            } if text == "Hello." => Reply::Classified {
+                paragraph: *paragraph,
+                text: text.clone(),
+                proof_open: *proof_open,
+                result: Err(Failure {
+                    message: MISSING_KEY.to_string(),
+                    service: true,
+                }),
+            },
+            _ => answer(job),
+        }
+    }
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def d.", "Hello."]));
+    let jobs = run(&mut mls, fails_on_hello);
+    assert_eq!(kinds(&jobs), ["classify", "classify", "formalize", "check"]);
+    // The frontier's dot comes first in the plan, so the order of the dots is not checked.
+    let dots = statuses(&mls);
+    assert_eq!(dots.len(), 2, "{dots:?}");
+    assert!(dots.contains(&(0, Status::Verified)), "{dots:?}");
+    assert!(dots.contains(&(1, Status::Failed)), "{dots:?}");
+}
+
+#[test]
+fn a_timed_out_check_clears_the_other_checks_so_they_run_again() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def d.", "Lemma a."]));
+    let (d, a) = (id_of(&mls, 0), id_of(&mls, 1));
+    let jobs = run(&mut mls, times_out(a));
+
+    assert!(
+        matches!(jobs.last(), Some(Job::Check { block, .. }) if *block == d),
+        "the definition is checked on the new REPL: {jobs:?}"
+    );
+    assert_eq!(statuses(&mls), [(0, Status::Verified), (1, Status::Failed)]);
+    assert_eq!(
+        mls.details(a).and_then(|details| details.error),
+        Some(TIMED_OUT.to_string())
+    );
+}
+
+#[test]
+fn a_timed_out_check_is_not_checked_again_when_the_block_above_changes() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def d.", "Lemma a."]));
+    let a = id_of(&mls, 1);
+    run(&mut mls, times_out(a));
+
+    mls.sync(&paras(&["Def e.", "Lemma a."]));
+    let jobs = run(&mut mls, answer);
+    assert!(
+        jobs.iter()
+            .all(|job| !matches!(job, Job::Check { block, .. } if *block == a)),
+        "{jobs:?}"
+    );
+    assert_eq!(statuses(&mls), [(0, Status::Verified), (1, Status::Failed)]);
+}
+
+#[test]
+fn a_stale_lost_repl_still_clears_the_checks_on_the_next_change() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def d.", "Lemma a."]));
+    let (d, a) = (id_of(&mls, 0), id_of(&mls, 1));
+    let Job::Check { version, base, .. } = run_until(
+        &mut mls,
+        |job| matches!(job, Job::Check { block, .. } if *block == a),
+    ) else {
+        panic!("the statement is checked")
+    };
+    let lost = Reply::Checked {
+        block: a,
+        version,
+        base,
+        result: Err(Failure {
+            message: REPL_DOWN.to_string(),
+            service: true,
+        }),
+    };
+
+    mls.sync(&paras(&["Def d.", "Lemma a2."]));
+    assert!(
+        !mls.apply(lost),
+        "the reply is for the statement's old text"
+    );
+
+    mls.sync(&paras(&["Def d.", "Lemma a2.", "Skip me."]));
+    let jobs = run(&mut mls, answer);
+    assert!(
+        jobs.iter()
+            .any(|job| matches!(job, Job::Check { block, .. } if *block == d)),
+        "the lost REPL's checks run again: {jobs:?}"
+    );
+}
+
 #[test]
 fn paragraph_ids_are_unique_across_documents() {
     let lines = ["Def d.", "Lemma a."];

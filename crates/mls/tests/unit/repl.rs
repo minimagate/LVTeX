@@ -123,3 +123,60 @@ fn start_fails_when_the_repl_is_not_built() {
     assert!(failure.service);
     assert!(failure.message.contains("not built"), "{}", failure.message);
 }
+
+/// A REPL whose child is `sh -c script`, so the reply loop can be tested without Lake.
+fn fake_repl(script: &str) -> Repl {
+    let mut child = Command::new("sh")
+        .args(["-c", script])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sh runs");
+    let stdin = child.stdin.take().expect("stdin is piped");
+    let stdout = child.stdout.take().expect("stdout is piped");
+    Repl {
+        child,
+        stdin,
+        lines: spawn_reader(stdout),
+        base: 0,
+    }
+}
+
+#[test]
+fn an_answer_that_is_late_fails_with_the_late_failure() {
+    let mut repl = fake_repl("exec sleep 30");
+    let late = Failure {
+        message: "too late".to_string(),
+        service: false,
+    };
+    let answer = repl.send(
+        &json!({"cmd": "x"}),
+        Duration::from_millis(100),
+        late.clone(),
+    );
+    assert_eq!(answer, Err(late));
+}
+
+#[test]
+fn a_repl_that_exits_without_answering_is_stopped() {
+    let mut repl = fake_repl("read line; exit 0");
+    let late = Failure {
+        message: "too late".to_string(),
+        service: false,
+    };
+    let answer = repl.send(&json!({"cmd": "x"}), Duration::from_secs(10), late);
+    assert_eq!(answer, Err(service("Lean stopped.".to_string())));
+}
+
+#[test]
+fn the_repl_inherits_only_the_allowed_environment() {
+    let mut command = Command::new("env");
+    clear_env(&mut command);
+    let output = command.output().expect("env runs");
+    let printed = String::from_utf8(output.stdout).expect("env prints UTF-8");
+    for line in printed.lines() {
+        let name = line.split('=').next().unwrap_or_default();
+        assert!(REPL_ENV.contains(&name), "{name} is inherited");
+    }
+}

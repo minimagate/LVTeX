@@ -33,7 +33,7 @@ pub struct Details {
     pub service: bool,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Mls {
     paras: Vec<Para>,
     blocks: Vec<Block>,
@@ -52,6 +52,7 @@ fn next() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
+#[derive(Debug)]
 struct Para {
     id: u64,
     text: String,
@@ -59,12 +60,14 @@ struct Para {
     label: Option<Labelled>,
 }
 
+#[derive(Debug)]
 struct Labelled {
     text: String,
     proof_open: bool,
     result: Result<Label, Failure>,
 }
 
+#[derive(Debug)]
 struct Block {
     /// Id of its first paragraph.
     id: u64,
@@ -76,7 +79,7 @@ struct Block {
     text: String,
     /// Definition, Statement or Proof; never Skip.
     label: Label,
-    /// False while a proof is still open at the end of the document or at the frontier.
+    /// False while a proof is still open at the end of the document or where segmentation stops.
     closed: bool,
     /// The settled text of the last settled paragraph before `first`, when that paragraph is
     /// labelled Skip. Unsettled paragraphs are ignored.
@@ -90,8 +93,10 @@ struct Block {
     check: Option<(u64, Result<Checked, Failure>)>,
 }
 
-/// Where the labels stop being usable: the first paragraph that needs a label, or that failed.
-#[derive(Default)]
+/// Where segmentation stops. A `Classify` frontier is the first paragraph that needs a label; its
+/// job runs before any other. `Failed` is a paragraph whose label failed, with no such paragraph
+/// above it.
+#[derive(Default, Debug)]
 enum Frontier {
     #[default]
     Done,
@@ -149,6 +154,15 @@ fn settled_text(para: &Para) -> &str {
 impl Mls {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Forgets the document: its paragraphs, blocks, parked records, frontier and lost REPL. A job
+    /// for the old document may still be in flight, so `busy` stays set until its reply is applied.
+    pub fn reset(&mut self) {
+        *self = Self {
+            busy: self.busy,
+            ..Self::default()
+        };
     }
 
     /// Takes the paragraphs after an edit or a caret move. A paragraph keeps its identity while
@@ -251,16 +265,26 @@ impl Mls {
                 {
                     Ok(label) => *label,
                     Err(_) => {
-                        frontier = Frontier::Failed { index: i };
+                        // A Classify frontier above stays: its job runs first.
+                        if matches!(frontier, Frontier::Done) {
+                            frontier = Frontier::Failed { index: i };
+                        }
                         break;
                     }
                 },
                 _ => {
+                    // The first paragraph that needs a label is the frontier. Until it has a label
+                    // it counts as Skip, so the blocks below keep their dots. A second one stops.
+                    if !matches!(frontier, Frontier::Done) {
+                        break;
+                    }
                     frontier = Frontier::Classify {
                         index: i,
                         proof_open,
                     };
-                    break;
+                    open_proof = None;
+                    prev = None;
+                    continue;
                 }
             };
             match (label, open_proof) {
@@ -270,15 +294,20 @@ impl Mls {
                     block.text.push_str(text);
                 }
                 (Label::Skip, _) => open_proof = None,
-                _ => {
+                (Label::Definition | Label::Statement | Label::Proof, _) => {
                     open_proof = None;
-                    let statement = match (label, new.last()) {
-                        (Label::Proof, Some(b)) if b.label == Label::Statement => Some(b.id),
-                        _ => None,
+                    let statement = match label {
+                        Label::Proof => new
+                            .last()
+                            .filter(|b| b.label == Label::Statement)
+                            .map(|b| b.id),
+                        Label::Definition | Label::Statement | Label::Skip => None,
                     };
                     let prose = match prev {
                         Some((Label::Skip, skip)) => Some(skip.to_string()),
-                        _ => None,
+                        Some((Label::Definition | Label::Statement | Label::Proof, _)) | None => {
+                            None
+                        }
                     };
                     new.push(Block {
                         id: para.id,
@@ -350,8 +379,9 @@ impl Mls {
         job
     }
 
-    /// Applies a worker's reply. Returns false, and changes nothing, when the reply is stale:
-    /// the paragraph or block it was computed for has changed since.
+    /// Applies a worker's reply. Returns false when the reply is stale: the paragraph or block it
+    /// was computed for has changed since. A failed check still clears the checks that a lost REPL
+    /// invalidates, even when its own reply is stale.
     pub fn apply(&mut self, reply: Reply) -> bool {
         self.busy = false;
         match reply {
@@ -398,6 +428,18 @@ impl Mls {
                 base,
                 result,
             } => {
+                match &result {
+                    // The REPL is gone. The next changed document retries (see `retry_services`).
+                    Err(failure) if failure.service => self.repl_lost = true,
+                    // A timeout kills the REPL, so every environment that a check was made on is
+                    // gone. This block's own check is set below, when its reply is current.
+                    Err(_) => {
+                        for b in self.blocks.iter_mut().chain(self.parked.values_mut()) {
+                            b.check = None;
+                        }
+                    }
+                    Ok(_) => {}
+                }
                 let Some(b) = self
                     .blocks
                     .iter_mut()
@@ -405,9 +447,6 @@ impl Mls {
                 else {
                     return false;
                 };
-                if matches!(&result, Err(f) if f.service) {
-                    self.repl_lost = true;
-                }
                 b.check = Some((base, result));
                 true
             }
@@ -455,7 +494,6 @@ impl Mls {
     /// label, it wins over a pending Formalize or Check of an earlier block, so the earlier
     /// block waits its turn behind the labelling that the frontier needs.
     fn plan(&self) -> Plan {
-        let no_jobs = matches!(self.frontier, Frontier::Failed { .. });
         let mut dots = Vec::new();
         let mut job = match self.frontier {
             Frontier::Classify { index, proof_open } => Some(Job::Classify {
@@ -463,7 +501,7 @@ impl Mls {
                 text: settled_text(&self.paras[index]).to_string(),
                 proof_open,
             }),
-            _ => None,
+            Frontier::Done | Frontier::Failed { .. } => None,
         };
         if let Frontier::Failed { index } = self.frontier {
             // The frontier is only Failed for a paragraph whose label is an error.
@@ -505,7 +543,7 @@ impl Mls {
                         continue;
                     }
                 },
-                _ => None,
+                (Label::Definition | Label::Statement | Label::Skip, _) => None,
             };
             let base = stmt.as_ref().map_or(chain, |s| s.base);
 
@@ -520,21 +558,19 @@ impl Mls {
                     continue;
                 }
                 _ => {
-                    if !no_jobs {
-                        job.get_or_insert_with(|| Job::Formalize {
-                            block: b.id,
-                            version: b.version,
-                            label: b.label,
-                            text: b.text.clone(),
-                            prose: b.prose.clone(),
-                            lean_above: lean
-                                .iter()
-                                .map(|(id, _, lean)| (*id, lean.clone()))
-                                .collect(),
-                            names_above: names.clone(),
-                            statement: stmt.as_ref().map(|s| (s.version, s.lean.clone())),
-                        });
-                    }
+                    job.get_or_insert_with(|| Job::Formalize {
+                        block: b.id,
+                        version: b.version,
+                        label: b.label,
+                        text: b.text.clone(),
+                        prose: b.prose.clone(),
+                        lean_above: lean
+                            .iter()
+                            .map(|(id, _, lean)| (*id, lean.clone()))
+                            .collect(),
+                        names_above: names.clone(),
+                        statement: stmt.as_ref().map(|s| (s.version, s.lean.clone())),
+                    });
                     pending = true;
                     dots.push(dot(b.first, b.id, Status::Checking));
                     continue;
@@ -542,76 +578,83 @@ impl Mls {
             };
 
             match &b.check {
-                Some((checked_base, result)) if *checked_base == base => match result {
-                    Err(failure) => {
-                        dots.push(failed(b.first, b.id, &failure.message, failure.service));
-                        halted |= failure.service;
-                    }
-                    Ok(Checked { env, outcome }) => match (b.label, outcome) {
-                        (_, Outcome::Failed(message)) => {
-                            dots.push(failed(b.first, b.id, message, false));
+                // A timed-out check counts as current whatever its base. Re-checking it would
+                // hang again, so it waits for the block's text to change.
+                Some((checked_base, result))
+                    if *checked_base == base || matches!(result, Err(f) if !f.service) =>
+                {
+                    match result {
+                        Err(failure) => {
+                            dots.push(failed(b.first, b.id, &failure.message, failure.service));
+                            halted |= failure.service;
                         }
-                        (Label::Definition, Outcome::Sorry) => {
-                            let error = "The definition uses sorry.";
-                            dots.push(failed(b.first, b.id, error, false));
-                        }
-                        (Label::Proof, Outcome::Sorry) => {
-                            let error = "The proof uses sorry.";
-                            dots.push(failed(b.first, b.id, error, false));
-                        }
-                        (Label::Definition, Outcome::Verified) => {
-                            dots.push(dot(b.first, b.id, Status::Verified));
-                            chain = *env;
-                            names.extend(declared_names(&formal.lean));
-                            lean.push((b.id, Label::Definition, formal.lean.clone()));
-                        }
-                        (Label::Statement, _) => {
-                            dots.push(dot(b.first, b.id, Status::Sorry));
-                            chain = *env;
-                            names.extend(declared_names(&formal.lean));
-                            lean.push((b.id, Label::Statement, formal.lean.clone()));
-                            statements.insert(
-                                b.id,
-                                Stated {
-                                    base,
-                                    version: b.version,
-                                    lean: formal.lean.clone(),
-                                    dot: dots.len() - 1,
-                                },
-                            );
-                        }
-                        (Label::Proof, Outcome::Verified) => {
-                            dots.push(dot(b.first, b.id, Status::Verified));
-                            if let Some(statement) = &stmt {
-                                dots[statement.dot].status = Status::Verified;
+                        Ok(Checked { env, outcome }) => match (b.label, outcome) {
+                            (
+                                Label::Definition | Label::Statement | Label::Proof | Label::Skip,
+                                Outcome::Failed(message),
+                            ) => {
+                                dots.push(failed(b.first, b.id, message, false));
                             }
-                            chain = *env;
-                            // The proof restates its statement, so it replaces the statement's Lean.
-                            if let Some(entry) =
-                                lean.iter_mut().find(|(id, _, _)| Some(*id) == b.statement)
-                            {
-                                *entry = (b.id, Label::Proof, formal.lean.clone());
+                            (Label::Definition, Outcome::Sorry) => {
+                                let error = "The definition uses sorry.";
+                                dots.push(failed(b.first, b.id, error, false));
                             }
-                            for name in declared_names(&formal.lean) {
-                                if !names.contains(&name) {
-                                    names.push(name);
+                            (Label::Proof, Outcome::Sorry) => {
+                                let error = "The proof uses sorry.";
+                                dots.push(failed(b.first, b.id, error, false));
+                            }
+                            (Label::Definition, Outcome::Verified) => {
+                                dots.push(dot(b.first, b.id, Status::Verified));
+                                chain = *env;
+                                names.extend(declared_names(&formal.lean));
+                                lean.push((b.id, Label::Definition, formal.lean.clone()));
+                            }
+                            (Label::Statement, _) => {
+                                dots.push(dot(b.first, b.id, Status::Sorry));
+                                chain = *env;
+                                names.extend(declared_names(&formal.lean));
+                                lean.push((b.id, Label::Statement, formal.lean.clone()));
+                                statements.insert(
+                                    b.id,
+                                    Stated {
+                                        base,
+                                        version: b.version,
+                                        lean: formal.lean.clone(),
+                                        dot: dots.len() - 1,
+                                    },
+                                );
+                            }
+                            (Label::Proof, Outcome::Verified) => {
+                                dots.push(dot(b.first, b.id, Status::Verified));
+                                if let Some(statement) = &stmt {
+                                    dots[statement.dot].status = Status::Verified;
+                                }
+                                chain = *env;
+                                // The proof restates its statement, so it replaces the statement's Lean.
+                                if let Some(entry) =
+                                    lean.iter_mut().find(|(id, _, _)| Some(*id) == b.statement)
+                                {
+                                    *entry = (b.id, Label::Proof, formal.lean.clone());
+                                }
+                                for name in declared_names(&formal.lean) {
+                                    if !names.contains(&name) {
+                                        names.push(name);
+                                    }
                                 }
                             }
-                        }
-                        (Label::Skip, _) => {
-                            dots.push(failed(b.first, b.id, "Unexpected label.", false));
-                        }
-                    },
-                },
-                _ => {
-                    if !no_jobs {
-                        job.get_or_insert_with(|| Job::Check {
-                            block: b.id,
-                            version: b.version,
-                            lean: formal.lean.clone(),
-                            base,
-                        });
+                            (Label::Skip, _) => {
+                                dots.push(failed(b.first, b.id, "Unexpected label.", false));
+                            }
+                        },
                     }
+                }
+                _ => {
+                    job.get_or_insert_with(|| Job::Check {
+                        block: b.id,
+                        version: b.version,
+                        lean: formal.lean.clone(),
+                        base,
+                    });
                     pending = true;
                     dots.push(dot(b.first, b.id, Status::Checking));
                 }

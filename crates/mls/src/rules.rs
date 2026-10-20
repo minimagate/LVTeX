@@ -4,7 +4,8 @@ use crate::{Formal, Label};
 
 /// Removes `--` line comments (keeping their newline) and nested `/- -/` block
 /// comments, including doc comments. A block comment leaves one space, so the
-/// tokens on either side stay apart.
+/// tokens on either side stay apart. String and char literals are copied as they
+/// are, so a `--` or `/-` inside one is text, as it is for Lean.
 fn strip_comments(lean: &str) -> String {
     let mut out = String::with_capacity(lean.len());
     let mut rest = lean;
@@ -26,6 +27,13 @@ fn strip_comments(lean: &str) -> String {
             depth = 1;
             out.push(' ');
             rest = tail;
+        } else if c == '"' {
+            let len = string_len(rest);
+            out.push_str(&rest[..len]);
+            rest = &rest[len..];
+        } else if let Some(len) = char_literal_len(rest, out.chars().next_back()) {
+            out.push_str(&rest[..len]);
+            rest = &rest[len..];
         } else {
             out.push(c);
             rest = &rest[c.len_utf8()..];
@@ -34,8 +42,79 @@ fn strip_comments(lean: &str) -> String {
     out
 }
 
+/// The byte length of the string literal at the start of `text`, which begins with `"`. An
+/// unescaped `"` ends it and a backslash escapes the next byte. A string left open runs to the
+/// end, as it does in Lean.
+fn string_len(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let mut i = 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            b'"' => return i + 1,
+            _ => i += 1,
+        }
+    }
+    bytes.len()
+}
+
+/// The byte length of the char literal at the start of `text`, such as `'a'`, `'"'` or `'\n'`.
+/// A `'` right after an identifier character is part of a name (`f'`), not a literal.
+fn char_literal_len(text: &str, before: Option<char>) -> Option<usize> {
+    let body = text.strip_prefix('\'')?;
+    if before.is_some_and(is_ident_char) {
+        return None;
+    }
+    let mut chars = body.chars();
+    let first = chars.next()?;
+    let width = if first == '\\' {
+        first.len_utf8() + chars.next()?.len_utf8()
+    } else {
+        first.len_utf8()
+    };
+    body[width..].starts_with('\'').then_some(width + 2)
+}
+
 fn is_ident_char(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '_' | '.' | '\'' | '!' | '?')
+}
+
+/// Words whose code runs or changes limits while Lean elaborates a block. The REPL only
+/// elaborates. Meta-programming (`run_cmd`, `elab`, `macro`, `syntax`) and `initialize` run
+/// code. `set_option` changes the limits that bound elaboration. `unsafe`, `implemented_by`
+/// and `extern` bypass the kernel's checks. `native_decide` trusts the compiler, and `import`
+/// loads other code.
+const FORBIDDEN_WORDS: &[&str] = &[
+    "run_cmd",
+    "run_elab",
+    "run_meta",
+    "run_tac",
+    "elab",
+    "elab_rules",
+    "macro",
+    "macro_rules",
+    "syntax",
+    "declare_syntax_cat",
+    "initialize",
+    "builtin_initialize",
+    "set_option",
+    "native_decide",
+    "unsafe",
+    "implemented_by",
+    "extern",
+    "import",
+];
+
+/// The first `#` command in `code`, such as `#eval`: a `#` followed by a letter. Such commands
+/// print, run or exit while Lean elaborates.
+fn hash_command(code: &str) -> Option<&str> {
+    code.match_indices('#').find_map(|(start, _)| {
+        let rest = &code[start + 1..];
+        rest.starts_with(char::is_alphabetic).then(|| {
+            let len = rest.find(|c: char| !is_ident_char(c)).unwrap_or(rest.len());
+            &code[start..start + 1 + len]
+        })
+    })
 }
 
 /// Maximal runs of identifier characters.
@@ -145,6 +224,13 @@ pub(crate) fn reject(
             return Err("The proof uses sorry.".to_string());
         }
         Label::Definition | Label::Proof | Label::Skip => {}
+    }
+    // After the sorry rules, so a statement that breaks them keeps its own message.
+    if let Some(command) = hash_command(&code) {
+        return Err(format!("The Lean uses `{command}`, which is not allowed."));
+    }
+    if let Some(word) = FORBIDDEN_WORDS.iter().find(|word| has_word(&code, word)) {
+        return Err(format!("The Lean uses `{word}`, which is not allowed."));
     }
     let statement_names = statement.map(declared_names).unwrap_or_default();
     for name in declared_names(&formal.lean) {

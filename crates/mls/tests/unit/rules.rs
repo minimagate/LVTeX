@@ -29,10 +29,6 @@ fn names(names: &[&str]) -> Vec<String> {
     names.iter().map(|name| name.to_string()).collect()
 }
 
-fn normalized(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
 fn check_cases(cases: &[Case<'_>]) {
     for &(label, lean, above, statement, expected) in cases {
         let got = reject(label, &formal(lean), &names(above), statement).err();
@@ -51,13 +47,27 @@ fn strip_comments_removes_line_block_and_doc_comments() {
         ("no comments here", "no comments here"),
     ];
     for (input, expected) in cases {
-        assert_eq!(normalized(&strip_comments(input)), expected, "{input:?}");
+        assert_eq!(normalize(&strip_comments(input)), expected, "{input:?}");
     }
 }
 
 #[test]
 fn strip_comments_keeps_the_newline_after_a_line_comment() {
     assert_eq!(strip_comments("x -- note\ny"), "x \ny");
+}
+
+#[test]
+fn strip_comments_copies_string_and_char_literals_verbatim() {
+    let cases = [
+        ("\"a -- b\" c", "\"a -- b\" c"),
+        ("\"/- open\" x", "\"/- open\" x"),
+        ("\"a \\\" -- b\" c", "\"a \\\" -- b\" c"),
+        ("'\"' -- note\nx", "'\"' x"),
+        ("\"unclosed -- x", "\"unclosed -- x"),
+    ];
+    for (input, expected) in cases {
+        assert_eq!(normalize(&strip_comments(input)), expected, "{input:?}");
+    }
 }
 
 #[test]
@@ -315,6 +325,99 @@ fn proof_must_keep_the_header_of_its_statement() {
             &[],
             Some("theorem t : True := by sorry"),
             Some(CHANGED),
+        ),
+    ]);
+}
+
+#[test]
+fn an_axiom_after_a_string_that_looks_like_a_comment_is_rejected() {
+    check_cases(&[(
+        Label::Definition,
+        "def s : String := \"/-\"\naxiom bogus : False\ndef e : String := \"-/\"",
+        &[],
+        None,
+        Some(AXIOM),
+    )]);
+}
+
+#[test]
+fn a_string_literal_is_not_a_comment_in_a_statement_header() {
+    check_cases(&[(
+        Label::Proof,
+        "theorem foo (n : ℕ) : n = 0 ∨ (\"--\" = \"--\" ∧ True) := by simp",
+        &[],
+        Some("theorem foo (n : ℕ) : n = 0 ∨ (\"--\" = \"--\" ∧ n = 1)\n  := by sorry"),
+        Some(CHANGED),
+    )]);
+}
+
+#[test]
+fn a_string_literal_is_not_a_comment_in_a_proof_header() {
+    check_cases(&[(
+        Label::Proof,
+        "theorem t : \"a\" = \" := by trivial\"",
+        &[],
+        Some("theorem t : \"a\" = \"--\"\n  := by sorry"),
+        Some(CHANGED),
+    )]);
+}
+
+#[test]
+fn a_quote_char_literal_does_not_open_a_string() {
+    check_cases(&[(
+        Label::Definition,
+        "def c : Char := '\"'\n-- axiom here\ndef d : Nat := 1",
+        &[],
+        None,
+        None,
+    )]);
+}
+
+#[test]
+fn rejects_commands_that_run_code_or_change_limits() {
+    check_cases(&[
+        (
+            Label::Definition,
+            "def d := 1\n#eval d",
+            &[],
+            None,
+            Some("The Lean uses `#eval`, which is not allowed."),
+        ),
+        (
+            Label::Definition,
+            "run_cmd logInfo \"hi\"",
+            &[],
+            None,
+            Some("The Lean uses `run_cmd`, which is not allowed."),
+        ),
+        (
+            Label::Definition,
+            "set_option maxHeartbeats 0 in\ndef d := 1",
+            &[],
+            None,
+            Some("The Lean uses `set_option`, which is not allowed."),
+        ),
+        (
+            Label::Definition,
+            "unsafe def d := 1",
+            &[],
+            None,
+            Some("The Lean uses `unsafe`, which is not allowed."),
+        ),
+        (
+            Label::Proof,
+            "theorem t : True := by native_decide",
+            &[],
+            None,
+            Some("The Lean uses `native_decide`, which is not allowed."),
+        ),
+        (Label::Definition, "def xs := #[1, 2]", &[], None, None),
+        (
+            Label::Definition,
+            "-- macro here\ndef d := 1",
+            &[],
+            None,
+            None,
         ),
     ]);
 }
