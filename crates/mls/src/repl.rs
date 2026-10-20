@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::{Checked, Failure, Outcome};
 
-/// Where `lake build REPL` leaves the REPL binary, relative to the project.
+/// Where `lake build Mathlib repl` leaves the REPL binary, relative to the project.
 const REPL_BINARY: &str = ".lake/packages/REPL/.lake/build/bin/repl";
 /// The only environment variables the REPL inherits.
 const REPL_ENV: [&str; 10] = [
@@ -54,16 +54,20 @@ impl Repl {
         }
         if !project.join(REPL_BINARY).is_file() {
             return Err(service(format!(
-                "The Lean REPL is not built. Run `lake build Mathlib REPL` in {}.",
+                "The Lean REPL is not built. Run `lake build Mathlib repl` in {}.",
                 project.display()
             )));
         }
-        let mut command = Command::new(lake());
+        // The REPL is started directly, not through `lake env`: killing `lake` would leave the REPL
+        // running as an orphan. Lake only supplies the search path and sysroot the REPL needs.
+        let lean_path = lake_env(project, "LEAN_PATH")?;
+        let lean_sysroot = lake_env(project, "LEAN_SYSROOT")?;
+        let mut command = Command::new(project.join(REPL_BINARY));
         // Model-written Lean runs in this process, so it gets no API key or other secret.
         clear_env(&mut command);
         let mut child = command
-            .arg("env")
-            .arg(project.join(REPL_BINARY))
+            .env("LEAN_PATH", lean_path)
+            .env("LEAN_SYSROOT", lean_sysroot)
             .current_dir(project)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -150,6 +154,36 @@ fn lake() -> PathBuf {
         .map(|home| PathBuf::from(home).join(".elan/bin/lake"))
         .filter(|path| path.is_file())
         .unwrap_or_else(|| PathBuf::from("lake"))
+}
+
+/// Reads one variable of the Lake project's build environment, such as `LEAN_PATH`, with
+/// `lake env printenv`. Lake prints the value on one line.
+fn lake_env(project: &Path, name: &str) -> Result<String, Failure> {
+    let mut command = Command::new(lake());
+    clear_env(&mut command);
+    let output = command
+        .arg("env")
+        .arg("printenv")
+        .arg(name)
+        .current_dir(project)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|error| service(format!("Cannot start Lean: {error}")))?;
+    let not_set = || {
+        service(format!(
+            "The Lean project at {} does not set {name}.",
+            project.display()
+        ))
+    };
+    if !output.status.success() {
+        return Err(not_set());
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if value.is_empty() {
+        return Err(not_set());
+    }
+    Ok(value)
 }
 
 /// Clears the inherited environment, then passes through the `REPL_ENV` variables that are set.

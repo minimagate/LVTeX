@@ -271,12 +271,12 @@ fn scripted(
 }
 
 #[test]
-#[ignore = "needs the Lean project in lean/ built (lake build Mathlib REPL)"]
+#[ignore = "needs the Lean project in lean/ built (lake build Mathlib repl)"]
 fn scripted_documents_end_with_their_dots() {
     let project = lean_project();
     if !lean_ready(&project) {
         eprintln!(
-            "skipping: the Lean REPL is not built in {} (run `lake build Mathlib REPL` there)",
+            "skipping: the Lean REPL is not built in {} (run `lake build Mathlib repl` there)",
             project.display()
         );
         return;

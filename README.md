@@ -150,7 +150,7 @@ installed:
 ```sh
 cd lean
 lake exe cache get            # downloads prebuilt Mathlib
-lake build Mathlib REPL
+lake build Mathlib repl
 ```
 
 A source build of Mathlib without the cache takes hours. Mathstral uses `lean/`
