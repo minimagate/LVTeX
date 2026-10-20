@@ -19,6 +19,7 @@ impl App {
         let Some(path) = path else { return false };
         match file::write(&path, self.doc.markdown()) {
             Ok(()) => {
+                self.save_lean(&path);
                 self.path = Some(path);
                 self.doc.mark_saved();
                 file::remember(self.path.as_deref());
@@ -69,6 +70,11 @@ impl App {
         }
     }
     pub(super) fn action(&mut self, event_loop: &ActiveEventLoop, action: Action) {
+        // Background results are not user actions: they keep the undo group and goal column.
+        if let Action::MlsReady = action {
+            self.apply_mls_replies();
+            return;
+        }
         self.doc.break_group();
         self.goal_x = None;
         if self.math.is_some() {
@@ -94,6 +100,7 @@ impl App {
         }
         match action {
             Action::MathReady => self.apply_math_replies(),
+            Action::MlsReady => self.apply_mls_replies(),
             Action::InsertFormula => {
                 let in_prompt = self
                     .doc
@@ -126,6 +133,7 @@ impl App {
                     self.path = None;
                     self.scroll = 0.0;
                     file::remember(None);
+                    self.reset_mls();
                     self.changed(true);
                 }
             }
@@ -140,6 +148,7 @@ impl App {
                             self.path = Some(path);
                             self.scroll = 0.0;
                             file::remember(self.path.as_deref());
+                            self.reset_mls();
                             self.changed(true);
                         }
                         Err(error) => file::error("Could not open the document.", error),

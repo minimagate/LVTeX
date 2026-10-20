@@ -94,7 +94,6 @@ impl Document {
     /// Each non-blank line as text for checking: formulas become `$latex$` (display ones
     /// `$$latex$$`), without prompt comments or escapes. A line is not ready while a formula in
     /// it has no LaTeX yet, is being edited, or an AI prompt is open in it.
-    #[allow(dead_code)] // Used by Lean checking, wired up next.
     pub fn paragraphs(&self) -> Vec<(Range<usize>, String, bool)> {
         let text = self.text();
         let open = self.open_range();

@@ -20,5 +20,6 @@ rfd = "=0.17.2"
 arboard = { version = "=3.7.0", default-features = false }
 mathstral-latex.workspace = true
 mathstral-render.workspace = true
+mathstral-mls.workspace = true
 serde_json.workspace = true
 base64 = "=0.22.1"

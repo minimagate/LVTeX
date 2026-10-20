@@ -6,6 +6,7 @@ use winit::event_loop::EventLoopProxy;
 #[derive(Clone, Copy, Debug)]
 pub enum Action {
     MathReady,
+    MlsReady,
     New,
     Open,
     Save,

@@ -34,3 +34,23 @@ pub const MATH_CACHE_LIMIT: usize = 512;
 pub const OLLAMA_MODEL: &str = "gemma4:e4b";
 pub const OLLAMA_ADDRESS: &str = "127.0.0.1:11434";
 pub const KEEP_ALIVE: &str = "30m";
+
+// Lean checking: status dots and their panel.
+// Muted so the dots sit quietly on the background.
+pub const DOT_CHECKING: u32 = 0x4E4D4B;
+pub const DOT_SORRY: u32 = 0xA88B5A;
+pub const DOT_VERIFIED: u32 = 0x6F9A72;
+pub const DOT_FAILED: u32 = 0xA9605C;
+pub const DOT_RADIUS: f32 = 3.0;
+// Distance of the dot's centre left of the column.
+pub const DOT_GUTTER: f32 = 22.0;
+pub const DOT_FADE_MS: u64 = 240;
+pub const PANEL_COLOR: u32 = 0x1C1C1C;
+pub const PANEL_MAX_WIDTH: f32 = 460.0;
+pub const PANEL_PADDING: f32 = 18.0;
+pub const PANEL_RADIUS: f32 = 8.0;
+pub const PANEL_TEXT_SCALE: f32 = 0.84;
+pub const PANEL_CODE_SCALE: f32 = 0.74;
+pub const PANEL_ERROR_COLOR: u32 = 0xB58682;
+// The Lake project with Mathlib and the REPL; MATHSTRAL_LEAN_PROJECT overrides it.
+pub const LEAN_PROJECT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../lean");

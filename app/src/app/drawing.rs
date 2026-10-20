@@ -4,7 +4,7 @@ use std::num::NonZeroU32;
 
 impl App {
     pub(super) fn draw(&mut self) {
-        let (width, height, scale, left, _) = self.dimensions();
+        let (width, height, scale, left, column) = self.dimensions();
         if width == 0 || height == 0 {
             return;
         }
@@ -65,21 +65,28 @@ impl App {
                 let start = height.saturating_sub((44.0 * scale) as usize) * width;
                 self.pixels[start..].copy_from_slice(&band[start..]);
             }
+            if self.panel.is_some() {
+                self.draw_panel(width, height, scale, left, column);
+            }
             self.page_dirty = false;
         }
         let manual_caret = self.manual_caret(left);
-        let surface = self.surface.as_mut().unwrap();
+        // Taken out of self so the dots can be drawn from &self into the frame.
+        let mut surface = self.surface.take().unwrap();
         if let Err(error) = surface.resize(
             NonZeroU32::new(width as u32).unwrap(),
             NonZeroU32::new(height as u32).unwrap(),
         ) {
+            self.surface = Some(surface);
             eprintln!("Resize: {error}");
             return;
         }
-        let Ok(mut pixels) = surface.buffer_mut() else {
+        let Some(mut pixels) = surface.buffer_mut().ok() else {
+            self.surface = Some(surface);
             return;
         };
         pixels.copy_from_slice(&self.pixels);
+        self.draw_dots(&mut pixels, width, height, scale, left);
         let style = if self.math.is_some() {
             caret::CaretStyle::Math
         } else if self
@@ -109,6 +116,7 @@ impl App {
         if let Err(error) = pixels.present() {
             eprintln!("Present: {error}");
         }
+        self.surface = Some(surface);
         self.window.as_ref().unwrap().set_ime_cursor_area(
             LogicalPosition::new(caret_x as f64, caret_top as f64),
             LogicalSize::new(1.0, caret_height as f64),

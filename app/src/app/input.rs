@@ -72,6 +72,9 @@ impl App {
                 self.goal_x = None;
             }
             Key::Named(NamedKey::Escape) => {
+                if self.close_panel() {
+                    return;
+                }
                 if self.doc.cancel() {
                     self.changed(true);
                 }

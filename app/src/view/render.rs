@@ -186,7 +186,6 @@ pub fn page(
 }
 /// An anti-aliased filled circle centred at (`x`, `y`), in physical pixels, blended over the buffer with `alpha` in 0..=1.
 #[allow(clippy::too_many_arguments)] // mirrors `rect`: buffer, size, geometry, colour and alpha
-#[allow(dead_code)] // Used by the Lean status dots, wired up next.
 pub fn dot(
     pixels: &mut [u32],
     width: usize,
@@ -213,7 +212,6 @@ pub fn dot(
 }
 /// An anti-aliased filled rectangle with rounded corners, in physical pixels.
 #[allow(clippy::too_many_arguments)] // mirrors `rect`, plus the corner radius
-#[allow(dead_code)] // Used by the Lean status dots, wired up next.
 pub fn rounded_rect(
     pixels: &mut [u32],
     width: usize,
@@ -247,7 +245,6 @@ pub fn rounded_rect(
     }
 }
 // Mixes `color` into `pixel` by `coverage`, per channel, rounded to the nearest value.
-#[allow(dead_code)] // Used by the Lean status dots, wired up next.
 fn blend(pixel: &mut u32, color: u32, coverage: f32) {
     let coverage = coverage.clamp(0.0, 1.0);
     let old = *pixel;
