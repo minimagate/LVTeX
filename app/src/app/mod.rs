@@ -104,7 +104,7 @@ impl App {
         let mls_worker = mathstral_mls::Worker::new(mls::lean_project(), move || {
             let _ = mls_wake.send_event(Action::MlsReady);
         });
-        Self {
+        let mut app = Self {
             worker,
             mls: mathstral_mls::Mls::new(),
             mls_worker,
@@ -143,7 +143,11 @@ impl App {
             composing: false,
             window_geometry: file::window_geometry(),
             size_save_at: None,
+        };
+        if let Some(path) = app.path.clone() {
+            app.restore_mls(&path);
         }
+        app
     }
     fn capture_window_geometry(&mut self) {
         let Some(window) = &self.window else {

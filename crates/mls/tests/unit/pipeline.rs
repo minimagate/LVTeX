@@ -221,14 +221,18 @@ fn a_statement_then_its_proof_is_formalized_and_checked_in_order() {
         statuses(&mls),
         [(0, Status::Verified), (1, Status::Verified)]
     );
-    let file = mls.lean_file();
+    let file = mls.twin();
     assert!(
         file.contains(&format!(
             "\n-- mathstral:block {proof} proof\ntheorem t{statement} : True := by trivial\n"
         )),
         "{file}"
     );
-    assert!(!file.contains("by sorry"), "{file}");
+    let lean = file
+        .split(MEMORY_OPEN)
+        .next()
+        .expect("the Lean comes first");
+    assert!(!lean.contains("by sorry"), "{file}");
 }
 
 #[test]
@@ -789,4 +793,216 @@ fn paragraph_ids_are_unique_across_documents() {
     for index in 0..lines.len() {
         assert_ne!(id_of(&first, index), id_of(&second, index));
     }
+}
+
+/// A fresh `Mls` that restores `twin` and then syncs `lines`, not yet run.
+fn restored(twin: &str, lines: &[&str]) -> Mls {
+    let mut mls = Mls::new();
+    mls.restore(twin);
+    mls.sync(&paras(lines));
+    mls
+}
+
+/// The formalize jobs' blocks, in order.
+fn formalized(jobs: &[Job]) -> Vec<u64> {
+    jobs.iter()
+        .filter_map(|job| match job {
+            Job::Formalize { block, .. } => Some(*block),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_twin_restores_labels_and_formals_so_a_reopened_document_only_checks() {
+    let lines = ["Hello there.", "Def d.", "Lemma a.", "Proof. ok ∎"];
+    let mut first = Mls::new();
+    first.sync(&paras(&lines));
+    run(&mut first, answer);
+
+    let mut second = restored(&first.twin(), &lines);
+    let jobs = run(&mut second, answer);
+    assert_eq!(kinds(&jobs), ["check", "check", "check"]);
+    assert_eq!(statuses(&second), statuses(&first));
+}
+
+#[test]
+fn an_edited_paragraph_is_the_only_one_classified_after_restore() {
+    let lines = ["Hello there.", "Def d.", "Lemma a.", "Proof. ok ∎"];
+    let mut first = Mls::new();
+    first.sync(&paras(&lines));
+    run(&mut first, answer);
+
+    let mut second = restored(
+        &first.twin(),
+        &["Hello there.", "Def e.", "Lemma a.", "Proof. ok ∎"],
+    );
+    let jobs = run(&mut second, answer);
+    let classified: Vec<&str> = jobs
+        .iter()
+        .filter_map(|job| match job {
+            Job::Classify { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(classified, ["Def e."]);
+    assert_eq!(formalized(&jobs), [id_of(&second, 1)]);
+}
+
+#[test]
+fn a_proof_is_formalized_again_when_its_statement_changes_after_restore() {
+    let lines = ["Def d.", "Lemma a.", "Proof. ok ∎"];
+    let mut first = Mls::new();
+    first.sync(&paras(&lines));
+    run(&mut first, answer);
+
+    let mut second = restored(&first.twin(), &["Def d.", "Lemma b.", "Proof. ok ∎"]);
+    let jobs = run(&mut second, answer);
+    assert_eq!(
+        formalized(&jobs),
+        [id_of(&second, 1), id_of(&second, 2)],
+        "the changed statement and its proof are formalized; the definition is restored"
+    );
+}
+
+#[test]
+fn lean_with_comment_delimiters_and_quotes_round_trips_through_the_twin() {
+    const LEAN: &str = "def s := \"a \\\"q\\\" -/ /- b\"";
+    fn with_lean(job: &Job) -> Reply {
+        match job {
+            Job::Formalize { block, version, .. } => Reply::Formalized {
+                block: *block,
+                version: *version,
+                statement_version: None,
+                result: Ok(Formal {
+                    lean: LEAN.to_string(),
+                    lean_name: Some("s".to_string()),
+                    assumptions: vec!["x : Nat".to_string()],
+                }),
+            },
+            _ => answer(job),
+        }
+    }
+    let lines = ["Def d."];
+    let mut first = Mls::new();
+    first.sync(&paras(&lines));
+    run(&mut first, with_lean);
+    let twin = first.twin();
+
+    let memory = twin
+        .split(MEMORY_OPEN)
+        .nth(1)
+        .expect("the twin has a memory comment");
+    assert_eq!(
+        (memory.matches("/-").count(), memory.matches("-/").count()),
+        (0, 1),
+        "only the memory's own end closes its comment: {twin}"
+    );
+
+    let mut second = restored(&twin, &lines);
+    let jobs = run(&mut second, answer);
+    assert_eq!(kinds(&jobs), ["check"]);
+    assert_eq!(
+        second.details(id_of(&second, 0)).and_then(|d| d.lean),
+        Some(LEAN.to_string())
+    );
+}
+
+#[test]
+fn a_rejected_formal_is_restored_as_a_failed_dot_without_a_request() {
+    const REJECTED: &str = "The model reply was not Lean.";
+    fn rejects(job: &Job) -> Reply {
+        match job {
+            Job::Formalize { block, version, .. } => Reply::Formalized {
+                block: *block,
+                version: *version,
+                statement_version: None,
+                result: Err(Failure {
+                    message: REJECTED.to_string(),
+                    service: false,
+                }),
+            },
+            _ => answer(job),
+        }
+    }
+    let lines = ["Def d."];
+    let mut first = Mls::new();
+    first.sync(&paras(&lines));
+    run(&mut first, rejects);
+    assert_eq!(statuses(&first), [(0, Status::Failed)]);
+
+    let mut second = restored(&first.twin(), &lines);
+    let jobs = run(&mut second, answer);
+    assert!(jobs.is_empty(), "{:?}", kinds(&jobs));
+    assert_eq!(statuses(&second), [(0, Status::Failed)]);
+    assert_eq!(
+        second.details(id_of(&second, 0)).and_then(|d| d.error),
+        Some(REJECTED.to_string())
+    );
+}
+
+#[test]
+fn a_missing_or_malformed_memory_restores_nothing() {
+    let lines = ["Hello.", "Def d.", "Lemma a."];
+    let mut first = Mls::new();
+    first.sync(&paras(&lines));
+    run(&mut first, answer);
+    let twin = first.twin();
+    assert!(twin.contains("\"version\":1"), "{twin}");
+
+    let mut baseline = Mls::new();
+    baseline.sync(&paras(&lines));
+    let expected = kinds(&run(&mut baseline, answer));
+
+    let lean_only = &twin[..twin.rfind(MEMORY_OPEN).expect("the twin has a memory")];
+    let cases = [
+        ("no memory comment", lean_only.to_string()),
+        (
+            "garbage memory",
+            format!("{lean_only}{MEMORY_OPEN}not json\n-/\n"),
+        ),
+        (
+            "wrong version",
+            twin.replace("\"version\":1", "\"version\":2"),
+        ),
+        (
+            "no closing delimiter",
+            twin.trim_end_matches("-/\n").to_string(),
+        ),
+    ];
+    for (name, text) in cases {
+        let mut mls = Mls::new();
+        mls.restore(&text);
+        mls.sync(&paras(&lines));
+        assert_eq!(kinds(&run(&mut mls, answer)), expected, "{name}");
+    }
+}
+
+#[test]
+fn a_twin_starts_with_the_mathlib_import_and_ends_with_the_memory_comment() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Hello."]));
+    run(&mut mls, answer);
+    let twin = mls.twin();
+    assert!(twin.starts_with("import Mathlib\n"), "{twin}");
+    assert!(twin.ends_with("\n-/\n"), "{twin}");
+}
+
+#[test]
+fn an_undone_edit_reuses_the_remembered_label_and_formal() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def d.", "Lemma a."]));
+    run(&mut mls, answer);
+    mls.sync(&paras(&["Def d.", "Lemma a2."]));
+    run(&mut mls, answer);
+
+    mls.sync(&paras(&["Def d.", "Lemma a."]));
+    let jobs = run(&mut mls, answer);
+    assert!(
+        jobs.iter()
+            .all(|job| !matches!(job, Job::Classify { .. } | Job::Formalize { .. })),
+        "{:?}",
+        kinds(&jobs)
+    );
+    assert_eq!(statuses(&mls), [(0, Status::Verified), (1, Status::Sorry)]);
 }

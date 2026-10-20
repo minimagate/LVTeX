@@ -80,8 +80,9 @@ using that cache, prefix `CARGO_HOME="$PWD/.cargo-home"` and add `--offline`.
   pin the models. The key comes from `OPENROUTER_API_KEY` and must never be logged,
   printed, written or passed as an argument; the Lean REPL runs without it. The
   Lean project defaults to `lean/` (`LEAN_PROJECT` in `app/src/config.rs`;
-  `MATHSTRAL_LEAN_PROJECT` overrides it). Saving writes `<name>.mls.lean` beside
-  the document.
+  `MATHSTRAL_LEAN_PROJECT` overrides it). Saving writes the document's Lean twin
+  `<name>.mls.lean` (Lean plus a JSON memory comment, `version` 1); opening restores
+  labels and Lean from it. Its format is a compatibility boundary.
 - Edition 2024; minimum Rust version is `workspace.package.rust-version` (1.92).
   Exact-pin external dependencies with `=`. Share repeated dependencies through
   `[workspace.dependencies]` and commit `Cargo.lock`.

@@ -136,8 +136,11 @@ wrote. The assumptions panel is how you check that it does.
 
 A missing key, an unreachable OpenRouter or a Lean project that is not built shows
 as one red dot whose panel explains what to do; the next edit retries. Saving
-also writes the Lean that checked, with a `-- mathstral:block <id>` comment per
-block, to `<name>.mls.lean` beside the document. MLS needs no Ollama.
+also writes the document's Lean twin, `<name>.mls.lean`, beside it: the Lean that
+checked, with a `-- mathstral:block <id>` comment per block, and a final
+`mathstral:memory` comment that remembers each paragraph's label and each block's
+Lean. Opening the document re-uses them, so unchanged text needs no model calls;
+Lean re-checks every block. MLS needs no Ollama.
 
 The Lean project is [`lean/`](lean): Lean 4.35.0 with Mathlib and the
 [Lean REPL](https://github.com/leanprover-community/repl), pinned in

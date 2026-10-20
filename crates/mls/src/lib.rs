@@ -15,7 +15,7 @@ pub const JEV_MODEL: &str = "typesafe/jev-1.13";
 pub const HAIKU_MODEL: &str = "anthropic/claude-haiku-5.5";
 
 /// What a paragraph is, which decides how its Lean is checked.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Label {
     Definition,
     Statement,

@@ -145,10 +145,11 @@ impl App {
                     match file::read(&path) {
                         Ok(text) => {
                             self.doc = Document::new(&text);
-                            self.path = Some(path);
                             self.scroll = 0.0;
-                            file::remember(self.path.as_deref());
                             self.reset_mls();
+                            self.restore_mls(&path);
+                            self.path = Some(path);
+                            file::remember(self.path.as_deref());
                             self.changed(true);
                         }
                         Err(error) => file::error("Could not open the document.", error),

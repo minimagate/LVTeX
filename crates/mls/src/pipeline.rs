@@ -4,6 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::mem::take;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use serde_json::{Value, json};
+
 use crate::rules::declared_names;
 use crate::{Checked, Failure, Formal, Job, Label, Outcome, Reply, Status};
 
@@ -40,10 +42,26 @@ pub struct Mls {
     /// Records of blocks that are not in `blocks`, by id. An edit above them then reuses their
     /// formalization and check instead of redoing them. `plan` and `apply` never read them.
     parked: HashMap<u64, Block>,
+    /// What Jev and Haiku said, by text, so an unchanged paragraph or block never asks again, in
+    /// this session or after reopening (see `twin`). Only accepted answers are remembered.
+    labels: HashMap<(String, bool), Label>,
+    /// The formalization, or a non-service rejection, of each block by its key.
+    formals: HashMap<FormalKey, Result<Formal, String>>,
     frontier: Frontier,
     busy: bool,
     repl_lost: bool,
 }
+
+/// What decides a block's formal: its label, its text and, for a proof, the Lean of its statement.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct FormalKey {
+    label: Label,
+    text: String,
+    statement: Option<String>,
+}
+
+/// Opens the memory comment at the end of a twin. Its JSON is written on the lines after it.
+const MEMORY_OPEN: &str = "/- mathstral:memory\n";
 
 /// A fresh id for a paragraph or a version. Global, so a new `Mls` never reuses an id still in flight.
 static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -151,13 +169,73 @@ fn settled_text(para: &Para) -> &str {
         .expect("the pipeline only stops at settled paragraphs")
 }
 
+/// The key a block's formal is remembered under. A proof's key carries the Lean of its statement,
+/// so a proof is not restored against a statement that has changed. None when that statement has
+/// no formal Lean yet.
+fn formal_key(blocks: &[Block], block: &Block) -> Option<FormalKey> {
+    let statement = match block.label {
+        Label::Definition | Label::Statement | Label::Skip => None,
+        Label::Proof => {
+            let statement = blocks.iter().find(|b| Some(b.id) == block.statement)?;
+            match &statement.formal {
+                Some(Ok(formal)) => Some(formal.lean.clone()),
+                Some(Err(_)) | None => return None,
+            }
+        }
+    };
+    Some(FormalKey {
+        label: block.label,
+        text: block.text.clone(),
+        statement,
+    })
+}
+
+/// A JSON string, or null for None. Anything else is malformed, and so is a missing value.
+fn nullable(value: Option<&Value>) -> Option<Option<String>> {
+    match value? {
+        Value::Null => Some(None),
+        Value::String(text) => Some(Some(text.clone())),
+        _ => None,
+    }
+}
+
+fn label_entry(entry: &Value) -> Option<((String, bool), Label)> {
+    let text = entry.get("text")?.as_str()?.to_owned();
+    let proof_open = entry.get("proof_open")?.as_bool()?;
+    let label = Label::from_name(entry.get("label")?.as_str()?)?;
+    Some(((text, proof_open), label))
+}
+
+fn formal_entry(entry: &Value) -> Option<(FormalKey, Result<Formal, String>)> {
+    let key = FormalKey {
+        label: Label::from_name(entry.get("label")?.as_str()?)?,
+        text: entry.get("text")?.as_str()?.to_owned(),
+        statement: nullable(entry.get("statement"))?,
+    };
+    let value = match entry.get("rejected") {
+        Some(message) => Err(message.as_str()?.to_owned()),
+        None => Ok(Formal {
+            lean: entry.get("lean")?.as_str()?.to_owned(),
+            lean_name: nullable(entry.get("lean_name"))?,
+            assumptions: entry
+                .get("assumptions")?
+                .as_array()?
+                .iter()
+                .map(|assumption| assumption.as_str().map(str::to_owned))
+                .collect::<Option<_>>()?,
+        }),
+    };
+    Some((key, value))
+}
+
 impl Mls {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Forgets the document: its paragraphs, blocks, parked records, frontier and lost REPL. A job
-    /// for the old document may still be in flight, so `busy` stays set until its reply is applied.
+    /// Forgets the document: its paragraphs, blocks, parked records, remembered answers, frontier
+    /// and lost REPL. A job for the old document may still be in flight, so `busy` stays set until
+    /// its reply is applied.
     pub fn reset(&mut self) {
         *self = Self {
             busy: self.busy,
@@ -243,9 +321,12 @@ impl Mls {
     }
 
     /// Rebuilds the blocks and the frontier from the paragraphs. A block reuses the record with
-    /// its id, from `blocks` or else `parked`, when its text and label are unchanged.
+    /// its id, from `blocks` or else `parked`, when its text and label are unchanged. A paragraph
+    /// with no usable label takes the one remembered for its text, and a block with no formal takes
+    /// the one remembered for its key.
     fn segment(&mut self) {
         let paras = &self.paras;
+        let labels = &self.labels;
         let mut old: HashMap<u64, Block> = take(&mut self.blocks)
             .into_iter()
             .map(|block| (block.id, block))
@@ -255,6 +336,8 @@ impl Mls {
         let mut open_proof: Option<usize> = None;
         let mut prev: Option<(Label, &str)> = None;
         let mut frontier = Frontier::Done;
+        // Labels remembered for paragraphs with no usable one. They are stored once the walk ends.
+        let mut remembered: Vec<(usize, Labelled)> = Vec::new();
         for (i, para) in paras.iter().enumerate() {
             let Some(text) = para.settled.as_deref() else {
                 continue;
@@ -272,20 +355,34 @@ impl Mls {
                         break;
                     }
                 },
-                _ => {
-                    // The first paragraph that needs a label is the frontier. Until it has a label
-                    // it counts as Skip, so the blocks below keep their dots. A second one stops.
-                    if !matches!(frontier, Frontier::Done) {
-                        break;
+                _ => match labels.get(&(text.to_owned(), proof_open)).copied() {
+                    Some(label) => {
+                        remembered.push((
+                            i,
+                            Labelled {
+                                text: text.to_owned(),
+                                proof_open,
+                                result: Ok(label),
+                            },
+                        ));
+                        label
                     }
-                    frontier = Frontier::Classify {
-                        index: i,
-                        proof_open,
-                    };
-                    open_proof = None;
-                    prev = None;
-                    continue;
-                }
+                    None => {
+                        // The first paragraph that needs a label is the frontier. Until it has a
+                        // label it counts as Skip, so the blocks below keep their dots. A second
+                        // one stops.
+                        if !matches!(frontier, Frontier::Done) {
+                            break;
+                        }
+                        frontier = Frontier::Classify {
+                            index: i,
+                            proof_open,
+                        };
+                        open_proof = None;
+                        prev = None;
+                        continue;
+                    }
+                },
             };
             match (label, open_proof) {
                 (Label::Proof, Some(b)) => {
@@ -352,6 +449,33 @@ impl Mls {
                 }
             }
         }
+        for (index, labelled) in remembered {
+            self.paras[index].label = Some(labelled);
+        }
+
+        // A block with no formal takes the one remembered for its key. A statement comes before its
+        // proof, so a proof sees a statement restored above it.
+        for i in 0..new.len() {
+            if new[i].formal.is_some() {
+                continue;
+            }
+            let Some(key) = formal_key(&new, &new[i]) else {
+                continue;
+            };
+            let Some(known) = self.formals.get(&key) else {
+                continue;
+            };
+            let statement_version = new[i]
+                .statement
+                .and_then(|id| new.iter().find(|b| b.id == id))
+                .map(|b| b.version);
+            let block = &mut new[i];
+            block.formal = Some(known.clone().map_err(|message| Failure {
+                message,
+                service: false,
+            }));
+            block.statement_version = statement_version;
+        }
 
         let mut kept: HashMap<u64, Block> = parked
             .into_iter()
@@ -396,6 +520,9 @@ impl Mls {
                 }) else {
                     return false;
                 };
+                if let Ok(label) = &result {
+                    self.labels.insert((text.clone(), proof_open), *label);
+                }
                 para.label = Some(Labelled {
                     text,
                     proof_open,
@@ -410,16 +537,18 @@ impl Mls {
                 statement_version,
                 result,
             } => {
-                let Some(b) = self
+                let Some(index) = self
                     .blocks
-                    .iter_mut()
-                    .find(|b| b.id == block && b.version == version)
+                    .iter()
+                    .position(|b| b.id == block && b.version == version)
                 else {
                     return false;
                 };
+                let b = &mut self.blocks[index];
                 b.formal = Some(result);
                 b.statement_version = statement_version;
                 b.check = None;
+                self.remember_formal(index);
                 true
             }
             Reply::Checked {
@@ -476,17 +605,114 @@ impl Mls {
         Some(details)
     }
 
-    /// The Lean of every block that checked, in document order, for saving.
-    pub fn lean_file(&self) -> String {
-        let mut file = String::from("import Mathlib\n");
+    /// Remembers block `index`'s formal under its key, unless its failure is a service's.
+    fn remember_formal(&mut self, index: usize) {
+        let block = &self.blocks[index];
+        let value = match &block.formal {
+            Some(Ok(formal)) => Ok(formal.clone()),
+            Some(Err(failure)) if !failure.service => Err(failure.message.clone()),
+            Some(Err(_)) | None => return,
+        };
+        if let Some(key) = formal_key(&self.blocks, block) {
+            self.formals.insert(key, value);
+        }
+    }
+
+    /// The Lean that checked, then what MLS remembers, so the file is a twin of the document.
+    /// `restore` reads the memory back, so reopening the document asks no model about unchanged
+    /// text. Lean still checks every block again.
+    pub fn twin(&self) -> String {
+        let mut twin = String::from("import Mathlib\n");
         for (id, label, lean) in self.plan().lean {
-            file.push_str(&format!(
+            twin.push_str(&format!(
                 "\n-- mathstral:block {id} {}\n{}\n",
                 label.name(),
                 lean.trim_end()
             ));
         }
-        file
+        twin.push('\n');
+        twin.push_str(MEMORY_OPEN);
+        twin.push_str(&self.memory());
+        twin.push_str("\n-/\n");
+        twin
+    }
+
+    /// The memory comment's JSON, on one line. Each `-` becomes the JSON escape for hyphen-minus,
+    /// so the JSON never contains `-/`, which would close the comment early, or `/-`, which Lean
+    /// reads as a nested comment that the closing `-/` cannot end. Every `-` in the memory is
+    /// inside a JSON string, as it has no negative numbers, so the escape keeps the JSON valid.
+    fn memory(&self) -> String {
+        let labels: Vec<Value> = self
+            .paras
+            .iter()
+            .filter(|para| para.settled.is_some())
+            .filter_map(|para| match &para.label {
+                Some(Labelled {
+                    text,
+                    proof_open,
+                    result: Ok(label),
+                }) => Some(json!({
+                    "text": text,
+                    "proof_open": proof_open,
+                    "label": label.name(),
+                })),
+                _ => None,
+            })
+            .collect();
+        let formals: Vec<Value> = self
+            .blocks
+            .iter()
+            .filter_map(|block| {
+                let key = formal_key(&self.blocks, block)?;
+                match &block.formal {
+                    Some(Ok(formal)) => Some(json!({
+                        "label": key.label.name(),
+                        "text": key.text,
+                        "statement": key.statement,
+                        "lean": formal.lean,
+                        "lean_name": formal.lean_name,
+                        "assumptions": formal.assumptions,
+                    })),
+                    Some(Err(failure)) if !failure.service => Some(json!({
+                        "label": key.label.name(),
+                        "text": key.text,
+                        "statement": key.statement,
+                        "rejected": failure.message,
+                    })),
+                    Some(Err(_)) | None => None,
+                }
+            })
+            .collect();
+        json!({"version": 1, "labels": labels, "formals": formals})
+            .to_string()
+            .replace('-', "\\u002d")
+    }
+
+    /// Restores the labels and formalizations that `twin` remembers. Call it on a fresh or reset
+    /// `Mls`, before the first `sync`. A twin without a version 1 memory changes nothing, and an
+    /// entry that is malformed is skipped.
+    pub fn restore(&mut self, twin: &str) {
+        let Some(start) = twin.rfind(MEMORY_OPEN) else {
+            return;
+        };
+        let body = &twin[start + MEMORY_OPEN.len()..];
+        let Some(end) = body.find("\n-/") else {
+            return;
+        };
+        let Ok(memory) = serde_json::from_str::<Value>(&body[..end]) else {
+            return;
+        };
+        if memory.get("version").and_then(Value::as_u64) != Some(1) {
+            return;
+        }
+        let (Some(labels), Some(formals)) = (
+            memory.get("labels").and_then(Value::as_array),
+            memory.get("formals").and_then(Value::as_array),
+        ) else {
+            return;
+        };
+        self.labels.extend(labels.iter().filter_map(label_entry));
+        self.formals.extend(formals.iter().filter_map(formal_entry));
     }
 
     /// Walks the closed blocks in document order and works out the next job, the dots and the

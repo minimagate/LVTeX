@@ -1,6 +1,6 @@
 //! Lean checking: syncing lines to MLS, applying its replies, and the dots and panel.
 use super::*;
-use mathstral_mls::{Paragraph, Status};
+use mathstral_mls::{Mls, Paragraph, Status};
 use std::path::{Path, PathBuf};
 use winit::window::CursorIcon;
 
@@ -522,20 +522,34 @@ impl App {
         self.mls_fresh = true;
     }
 
-    /// Writes the Lean beside the saved document, at `lean_path`. It is written when some block has
-    /// Lean, or when that file already exists, so it follows the last block's removal. Otherwise
-    /// nothing is written.
+    /// Writes the document's Lean twin, at `lean_path`: the Lean that checked and what MLS
+    /// remembers (see `Mls::twin`). It is written when there is something to remember, or when
+    /// that file already exists, so it follows the last removal. Otherwise nothing is written.
     pub(super) fn save_lean(&self, document: &Path) {
-        let document = std::fs::canonicalize(document).unwrap_or_else(|_| document.to_path_buf());
-        let path = lean_path(&document);
-        let lean = self.mls.lean_file();
-        if !lean.contains("-- mathstral:block") && !path.exists() {
+        let path = twin_path(document);
+        let twin = self.mls.twin();
+        // An empty document's twin has no blocks and no memory.
+        if twin == Mls::new().twin() && !path.exists() {
             return;
         }
-        if let Err(error) = file::write(&path, lean) {
+        if let Err(error) = file::write(&path, twin) {
             file::error("Could not save the Lean file.", error);
         }
     }
+
+    /// Restores what MLS remembers from the document's Lean twin, when there is one. Call it on a
+    /// fresh or reset MLS, before the first sync. A missing or unreadable twin changes nothing.
+    pub(super) fn restore_mls(&mut self, document: &Path) {
+        if let Ok(twin) = file::read(&twin_path(document)) {
+            self.mls.restore(&twin);
+        }
+    }
+}
+
+/// The document's Lean twin, beside the document as it is on disk.
+fn twin_path(document: &Path) -> PathBuf {
+    let document = std::fs::canonicalize(document).unwrap_or_else(|_| document.to_path_buf());
+    lean_path(&document)
 }
 
 /// The Lean file beside a document: `notes.md` gives `notes.mls.lean`. The `.mls` infix keeps it
