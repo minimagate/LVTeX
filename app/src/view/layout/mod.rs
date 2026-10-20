@@ -317,57 +317,71 @@ impl Typesetter {
             at = next;
         }
     }
-    fn layout_plain_label(&mut self, label: &str, width: f32) -> Layout {
+    /// Plain text without Markdown or math: lines split at '\n', each wrapped at word boundaries to `width`.
+    pub fn plain(&mut self, text: &str, width: f32, mono: bool, scale: f32, color: u32) -> Layout {
         // No parsing here: a prompt may contain literal dollar signs and backslashes.
+        let face = if mono { Face::Mono } else { Face::Regular };
+        let line_height = LINE_HEIGHT * scale;
+        let baseline = self.word("M", face, scale).baseline;
+        let cap = (self.references(face, scale).1, 0.0);
         let mut out = Layout::default();
-        let mut row = Vec::new();
-        let mut x = 0.0;
-        let baseline = self.word("M", Face::Regular, 1.0).baseline;
-        let cap = (self.references(Face::Regular, 1.0).1, 0.0);
-        for (start, part) in label.split_word_bound_indices() {
-            let word = self.word(part, Face::Regular, 1.0);
-            if x > 0.0 && x + word.width > width {
-                Self::line(
-                    &mut out,
-                    std::mem::take(&mut row),
-                    0,
-                    baseline,
-                    LINE_HEIGHT,
-                    width,
-                    false,
-                    0.0,
-                    cap,
-                );
-                x = 0.0;
+        let mut offset = 0;
+        for paragraph in text.split('\n') {
+            let mut row = Vec::new();
+            let mut x = 0.0;
+            let mut start = offset;
+            for (at, part) in paragraph.split_word_bound_indices() {
+                let word = self.word(part, face, scale);
+                if x > 0.0 && x + word.width > width {
+                    Self::line(
+                        &mut out,
+                        std::mem::take(&mut row),
+                        start,
+                        baseline,
+                        line_height,
+                        width,
+                        false,
+                        0.0,
+                        cap,
+                    );
+                    start = offset + at;
+                    x = 0.0;
+                }
+                x += word.width;
+                row.push(BoxItem {
+                    start: offset + at,
+                    end: offset + at + part.len(),
+                    width: word.width,
+                    ascent: word.baseline,
+                    descent: line_height - word.baseline,
+                    word: Some(word),
+                    math: None,
+                    scale: 1.0,
+                    display: false,
+                    color,
+                    mark: None,
+                    strike: false,
+                });
             }
-            x += word.width;
-            row.push(BoxItem {
+            // An empty paragraph still gets a row of the line height.
+            Self::line(
+                &mut out,
+                row,
                 start,
-                end: start + part.len(),
-                width: word.width,
-                ascent: word.baseline,
-                descent: LINE_HEIGHT - word.baseline,
-                word: Some(word),
-                math: None,
-                scale: 1.0,
-                display: false,
-                color: PENDING_COLOR,
-                mark: None,
-                strike: false,
-            });
+                baseline,
+                line_height,
+                width,
+                false,
+                0.0,
+                cap,
+            );
+            out.lines.last_mut().unwrap().end = offset + paragraph.len();
+            offset += paragraph.len() + 1;
         }
-        Self::line(
-            &mut out,
-            row,
-            0,
-            baseline,
-            LINE_HEIGHT,
-            width,
-            false,
-            0.0,
-            cap,
-        );
         out
+    }
+    fn layout_plain_label(&mut self, label: &str, width: f32) -> Layout {
+        self.plain(label, width, false, 1.0, PENDING_COLOR)
     }
     // Places one visual row. `indent` is where the row's first box starts, used by hanging
     // rows; centered display rows ignore it.
