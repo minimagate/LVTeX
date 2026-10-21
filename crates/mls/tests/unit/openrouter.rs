@@ -33,6 +33,7 @@ fn formal(lean: &str, lean_name: Option<&str>, assumptions: &[&str]) -> Formal {
         lean: lean.to_string(),
         lean_name: lean_name.map(str::to_string),
         assumptions: assumptions.iter().map(|text| text.to_string()).collect(),
+        uses: Vec::new(),
     }
 }
 

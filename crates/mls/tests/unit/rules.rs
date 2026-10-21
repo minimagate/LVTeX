@@ -22,6 +22,7 @@ fn formal(lean: &str) -> Formal {
         lean: lean.to_string(),
         lean_name: None,
         assumptions: Vec::new(),
+        uses: Vec::new(),
     }
 }
 
@@ -420,4 +421,33 @@ fn rejects_commands_that_run_code_or_change_limits() {
             None,
         ),
     ]);
+}
+
+#[test]
+fn uses_lists_the_names_above_that_the_lean_relies_on() {
+    let cases: &[(&str, &[&str], &[&str])] = &[
+        (
+            "theorem t4 : d1 = d1 := trivial",
+            &["IsEven", "IsEvenNat", "d1"],
+            &["d1"],
+        ),
+        (
+            "theorem t4 : IsEvenNat 2 := trivial",
+            &["IsEven", "IsEvenNat"],
+            &["IsEvenNat"],
+        ),
+        (
+            "-- d1 is a comment\ntheorem t4 : True := trivial",
+            &["d1"],
+            &[],
+        ),
+        ("/- t2 -/ theorem t4 : True := trivial", &["t2"], &[]),
+        ("theorem t2 : t3 = t3 := trivial", &["t2", "t3"], &["t3"]),
+        ("theorem t2 : True := by trivial", &["t2"], &[]),
+        ("def x := d1 + t3", &["t3", "d1"], &["t3", "d1"]),
+        ("def x := d1", &["d1", "d1"], &["d1"]),
+    ];
+    for &(lean, above, expected) in cases {
+        assert_eq!(uses(lean, &names(above)), names(expected), "{lean:?}");
+    }
 }

@@ -323,6 +323,7 @@ pub(crate) fn parse_formal(response: &Value) -> Result<Formal, Failure> {
         lean,
         lean_name,
         assumptions,
+        uses: Vec::new(),
     })
 }
 

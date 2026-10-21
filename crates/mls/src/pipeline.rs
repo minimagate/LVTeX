@@ -26,6 +26,9 @@ pub struct Dot {
     pub key: u64,
     pub status: Status,
     error: Option<String>,
+    /// Why the dot is in its state when it has no error text, such as a name it relies on that
+    /// does not check.
+    note: Option<String>,
     service: bool,
 }
 
@@ -36,6 +39,29 @@ pub struct Details {
     pub lean: Option<String>,
     pub error: Option<String>,
     pub service: bool,
+    /// The names from the blocks above that the block's Lean uses.
+    pub uses: Vec<String>,
+    /// The dot's note (see `Dot`).
+    pub note: Option<String>,
+}
+
+/// A definition or statement in the document's dependency chart. A proof adds what it uses to its
+/// statement's node.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Node {
+    /// The key of the block's dot.
+    pub key: u64,
+    /// The block's first paragraph.
+    pub paragraph: usize,
+    /// Definition or Statement.
+    pub label: Label,
+    /// The Lean name, or else the start of the block's text.
+    pub name: String,
+    pub status: Status,
+    /// The keys of the nodes above that it uses, in document order.
+    pub uses: Vec<u64>,
+    /// 0 for a node that uses no other; otherwise one more than the deepest node it uses.
+    pub level: usize,
 }
 
 #[derive(Default, Debug)]
@@ -164,6 +190,8 @@ struct Plan {
     job: Option<Job>,
     dots: Vec<Dot>,
     lean: Vec<(u64, Label, String)>,
+    /// The keys of the chart nodes that each closed block with a formal uses, by block id.
+    edges: HashMap<u64, Vec<u64>>,
 }
 
 /// A statement whose Lean compiled, for the proof that follows it.
@@ -183,6 +211,7 @@ fn dot(paragraph: usize, last: usize, key: u64, status: Status) -> Dot {
         key,
         status,
         error: None,
+        note: None,
         service: false,
     }
 }
@@ -194,7 +223,91 @@ fn failed(paragraph: usize, last: usize, key: u64, error: &str, service: bool) -
         key,
         status: Status::Failed,
         error: Some(error.to_string()),
+        note: None,
         service,
+    }
+}
+
+/// A dot with no error text and a note saying why its status is what it is.
+fn noted(paragraph: usize, last: usize, key: u64, status: Status, note: String) -> Dot {
+    Dot {
+        paragraph,
+        last,
+        key,
+        status,
+        error: None,
+        note: Some(note),
+        service: false,
+    }
+}
+
+/// The status of the most recent dot with `key`.
+fn latest_status(dots: &[Dot], key: u64) -> Option<Status> {
+    dots.iter().rev().find(|d| d.key == key).map(|d| d.status)
+}
+
+/// The first name in `uses` whose block is still Sorry. Lean accepts a block that calls such a
+/// name, but the block is not proved until that one is.
+fn unproved_use<'a>(
+    uses: &'a [String],
+    declared: &HashMap<String, u64>,
+    dots: &[Dot],
+) -> Option<&'a str> {
+    uses.iter()
+        .find(|name| {
+            declared
+                .get(*name)
+                .and_then(|key| latest_status(dots, *key))
+                == Some(Status::Sorry)
+        })
+        .map(String::as_str)
+}
+
+/// The key of the chart node a block belongs to. A proof belongs to the statement it proves.
+fn node_key(block: &Block) -> u64 {
+    match block.label {
+        Label::Proof => block.statement.unwrap_or(block.id),
+        Label::Definition | Label::Statement | Label::Skip => block.id,
+    }
+}
+
+/// The Lean name of a definition or statement, else the name it declares, else the start of its text.
+fn node_name(block: &Block) -> String {
+    if let Some(Ok(formal)) = &block.formal {
+        let declared = declared_names(&formal.lean).into_iter().next();
+        if let Some(name) = formal.lean_name.clone().or(declared) {
+            return name;
+        }
+    }
+    let line = block.text.lines().next().unwrap_or("");
+    let start: String = line.chars().take(40).collect();
+    if line.chars().count() > 40 {
+        format!("{start}…")
+    } else {
+        start
+    }
+}
+
+/// The job that formalizes block `b`, against the statement it pairs with, the Lean above it and
+/// the names declared above it.
+fn formalize_job(
+    b: &Block,
+    statement: Option<&Stated>,
+    lean: &[(u64, Label, String)],
+    names: &[String],
+) -> Job {
+    Job::Formalize {
+        block: b.id,
+        version: b.version,
+        label: b.label,
+        text: b.text.clone(),
+        prose: b.prose.clone(),
+        lean_above: lean
+            .iter()
+            .map(|(id, _, lean)| (*id, lean.clone()))
+            .collect(),
+        names_above: names.to_vec(),
+        statement: statement.map(|s| (s.version, s.lean.clone())),
     }
 }
 
@@ -309,6 +422,12 @@ fn formal_entry(entry: &Value) -> Option<(FormalKey, Result<Formal, String>)> {
                 .as_array()?
                 .iter()
                 .map(|assumption| assumption.as_str().map(str::to_owned))
+                .collect::<Option<_>>()?,
+            uses: entry
+                .get("uses")?
+                .as_array()?
+                .iter()
+                .map(|name| name.as_str().map(str::to_owned))
                 .collect::<Option<_>>()?,
         }),
     };
@@ -763,6 +882,7 @@ impl Mls {
         let found = self.plan().dots.into_iter().find(|d| d.key == key)?;
         let mut details = Details {
             error: found.error,
+            note: found.note,
             service: found.service,
             ..Details::default()
         };
@@ -773,8 +893,66 @@ impl Mls {
         {
             details.assumptions = formal.assumptions.clone();
             details.lean = Some(formal.lean.clone());
+            details.uses = formal.uses.clone();
         }
         Some(details)
+    }
+
+    /// The dependency chart: each definition and statement, with the nodes above it that it uses
+    /// and its level. A proof's uses are added to its statement's node.
+    pub fn chart(&self) -> Vec<Node> {
+        let plan = self.plan();
+        let mut nodes: Vec<Node> = Vec::new();
+        for block in &self.blocks {
+            let Some(status) = latest_status(&plan.dots, block.id) else {
+                continue;
+            };
+            match block.label {
+                Label::Definition | Label::Statement => nodes.push(Node {
+                    key: block.id,
+                    paragraph: block.first,
+                    label: block.label,
+                    name: node_name(block),
+                    status,
+                    uses: plan.edges.get(&block.id).cloned().unwrap_or_default(),
+                    level: 0,
+                }),
+                Label::Proof => {
+                    let Some(node) = block
+                        .statement
+                        .and_then(|id| nodes.iter_mut().find(|n| n.key == id))
+                    else {
+                        continue;
+                    };
+                    for &key in plan.edges.get(&block.id).into_iter().flatten() {
+                        if !node.uses.contains(&key) {
+                            node.uses.push(key);
+                        }
+                    }
+                }
+                Label::Skip => {}
+            }
+        }
+        let position: HashMap<u64, usize> = nodes
+            .iter()
+            .enumerate()
+            .map(|(i, node)| (node.key, i))
+            .collect();
+        for i in 0..nodes.len() {
+            // Only nodes above this one count; the walk declares names top to bottom, so all do.
+            let mut above: Vec<usize> = nodes[i]
+                .uses
+                .iter()
+                .filter_map(|key| position.get(key).copied())
+                .filter(|&p| p < i)
+                .collect();
+            above.sort_unstable();
+            let uses: Vec<u64> = above.iter().map(|&p| nodes[p].key).collect();
+            let level = above.iter().map(|&p| nodes[p].level + 1).max().unwrap_or(0);
+            nodes[i].uses = uses;
+            nodes[i].level = level;
+        }
+        nodes
     }
 
     /// Remembers block `index`'s formal under its key, unless its failure is a service's.
@@ -847,6 +1025,7 @@ impl Mls {
                         "lean": formal.lean,
                         "lean_name": formal.lean_name,
                         "assumptions": formal.assumptions,
+                        "uses": formal.uses,
                     })),
                     Some(Err(failure)) if !failure.service => Some(json!({
                         "label": key.label.name(),
@@ -933,10 +1112,33 @@ impl Mls {
         let mut names: Vec<String> = Vec::new();
         let mut lean: Vec<(u64, Label, String)> = Vec::new();
         let mut statements: HashMap<u64, Stated> = HashMap::new();
+        // The node that declares each name, from the formals of the closed blocks above, whatever
+        // their status. A rejected formal above sets `gap`.
+        let mut declared: HashMap<String, u64> = HashMap::new();
+        let mut gap = false;
+        let mut edges: HashMap<u64, Vec<u64>> = HashMap::new();
         for b in self.blocks.iter().take_while(|b| b.closed) {
             if halted {
                 break;
             }
+            // Recorded before the pending shortcut, so a block below a pending one still links up.
+            let key = node_key(b);
+            if let Some(Ok(formal)) = &b.formal {
+                let mut used: Vec<u64> = Vec::new();
+                for name in &formal.uses {
+                    let Some(&node) = declared.get(name) else {
+                        continue;
+                    };
+                    if node != key && !used.contains(&node) {
+                        used.push(node);
+                    }
+                }
+                edges.insert(b.id, used);
+                for name in declared_names(&formal.lean) {
+                    declared.entry(name).or_insert(key);
+                }
+            }
+            gap |= matches!(b.formal, Some(Err(_)));
             if pending {
                 dots.push(dot(b.first, b.last, b.id, Status::Checking));
                 continue;
@@ -976,24 +1178,41 @@ impl Mls {
                     continue;
                 }
                 _ => {
-                    job.get_or_insert_with(|| Job::Formalize {
-                        block: b.id,
-                        version: b.version,
-                        label: b.label,
-                        text: b.text.clone(),
-                        prose: b.prose.clone(),
-                        lean_above: lean
-                            .iter()
-                            .map(|(id, _, lean)| (*id, lean.clone()))
-                            .collect(),
-                        names_above: names.clone(),
-                        statement: stmt.as_ref().map(|s| (s.version, s.lean.clone())),
-                    });
+                    job.get_or_insert_with(|| formalize_job(b, stmt.as_ref(), &lean, &names));
                     pending = true;
                     dots.push(dot(b.first, b.last, b.id, Status::Checking));
                     continue;
                 }
             };
+            // A name the Lean uses that no block above declares: the block it came from was renamed
+            // or removed. A rejected block above may have declared it, so then it is not asked again.
+            if let Some(name) = formal
+                .uses
+                .iter()
+                .find(|name| !declared.contains_key(*name))
+            {
+                if gap {
+                    let note = format!("Uses `{name}`, which is not defined above.");
+                    dots.push(noted(b.first, b.last, b.id, Status::Failed, note));
+                } else {
+                    job.get_or_insert_with(|| formalize_job(b, stmt.as_ref(), &lean, &names));
+                    pending = true;
+                    dots.push(dot(b.first, b.last, b.id, Status::Checking));
+                }
+                continue;
+            }
+            // A name whose block does not check. Lean would fail on it, so Lean is not asked.
+            let blocked = formal.uses.iter().find(|name| {
+                declared
+                    .get(*name)
+                    .and_then(|key| latest_status(&dots, *key))
+                    == Some(Status::Failed)
+            });
+            if let Some(name) = blocked {
+                let note = format!("Uses `{name}`, which does not check.");
+                dots.push(noted(b.first, b.last, b.id, Status::Failed, note));
+                continue;
+            }
 
             match &b.check {
                 // A timed-out check counts as current whatever its base. Re-checking it would
@@ -1028,7 +1247,20 @@ impl Mls {
                                 dots.push(failed(b.first, b.last, b.id, error, false));
                             }
                             (Label::Definition, Outcome::Verified) => {
-                                dots.push(dot(b.first, b.last, b.id, Status::Verified));
+                                match unproved_use(&formal.uses, &declared, &dots) {
+                                    Some(name) => {
+                                        let note =
+                                            format!("Relies on `{name}`, which is not proved yet.");
+                                        dots.push(noted(
+                                            b.first,
+                                            b.last,
+                                            b.id,
+                                            Status::Sorry,
+                                            note,
+                                        ));
+                                    }
+                                    None => dots.push(dot(b.first, b.last, b.id, Status::Verified)),
+                                }
                                 chain = *env;
                                 names.extend(declared_names(&formal.lean));
                                 lean.push((b.id, Label::Definition, formal.lean.clone()));
@@ -1049,9 +1281,24 @@ impl Mls {
                                 );
                             }
                             (Label::Proof, Outcome::Verified) => {
-                                dots.push(dot(b.first, b.last, b.id, Status::Verified));
-                                if let Some(statement) = &stmt {
-                                    dots[statement.dot].status = Status::Verified;
+                                match unproved_use(&formal.uses, &declared, &dots) {
+                                    Some(name) => {
+                                        let note =
+                                            format!("Relies on `{name}`, which is not proved yet.");
+                                        dots.push(noted(
+                                            b.first,
+                                            b.last,
+                                            b.id,
+                                            Status::Sorry,
+                                            note,
+                                        ));
+                                    }
+                                    None => {
+                                        dots.push(dot(b.first, b.last, b.id, Status::Verified));
+                                        if let Some(statement) = &stmt {
+                                            dots[statement.dot].status = Status::Verified;
+                                        }
+                                    }
                                 }
                                 chain = *env;
                                 // The proof restates its statement, so it replaces the statement's Lean.
@@ -1090,7 +1337,12 @@ impl Mls {
                 }
             }
         }
-        Plan { job, dots, lean }
+        Plan {
+            job,
+            dots,
+            lean,
+            edges,
+        }
     }
 }
 

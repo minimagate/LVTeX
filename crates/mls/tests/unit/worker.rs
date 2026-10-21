@@ -145,8 +145,30 @@ fn formalize_passes_an_accepted_formalization_through() {
                 lean: "def answer : ℕ := 42".to_string(),
                 lean_name: None,
                 assumptions: vec!["A plain sentence.".to_string()],
+                uses: Vec::new(),
             })
         ),
+        other => panic!("expected a formalization, got {other:?}"),
+    }
+}
+
+#[test]
+fn formalize_records_the_names_above_that_the_lean_uses() {
+    let worker = Worker::with_request(PathBuf::new(), || {}, |_, _| Ok(haiku("def f := d1")));
+    worker.submit(Job::Formalize {
+        block: 3,
+        version: 9,
+        label: Label::Definition,
+        text: "Let f be d1.".to_string(),
+        prose: None,
+        lean_above: Vec::new(),
+        names_above: vec!["d1".into(), "t2".into()],
+        statement: None,
+    });
+    match reply(&worker) {
+        Reply::Formalized { result, .. } => {
+            assert_eq!(result.map(|formal| formal.uses), Ok(vec!["d1".to_string()]));
+        }
         other => panic!("expected a formalization, got {other:?}"),
     }
 }
@@ -306,5 +328,22 @@ fn scripted_documents_end_with_their_dots() {
         drive(&mut mls, &worker, &lines)
             .unwrap_or_else(|error| panic!("{}: {error}", document.name));
         assert_outcome(&mls, document);
+        if document.name == "group theory" {
+            let chart = mls.chart();
+            let shape: Vec<(&str, usize)> = chart
+                .iter()
+                .map(|node| (node.name.as_str(), node.level))
+                .collect();
+            assert_eq!(
+                shape,
+                [
+                    ("IsInvolution", 0),
+                    ("left_identity_unique", 0),
+                    ("one_is_involution", 1),
+                ],
+                "{chart:?}"
+            );
+            assert_eq!(chart[2].uses, [chart[0].key], "{chart:?}");
+        }
     }
 }

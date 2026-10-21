@@ -109,9 +109,12 @@ fn run(
                 &formalize_request(*label, text, prose.as_deref(), lean_above, statement_lean),
             )
             .and_then(|response| parse_formal(&response))
-            .and_then(|formal| {
+            .and_then(|mut formal| {
                 rules::reject(*label, &formal, names_above, statement_lean)
-                    .map(|()| formal)
+                    .map(|()| {
+                        formal.uses = rules::uses(&formal.lean, names_above);
+                        formal
+                    })
                     .map_err(|message| Failure {
                         message,
                         service: false,

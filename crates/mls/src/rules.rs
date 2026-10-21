@@ -1,6 +1,7 @@
 //! Rules that reject a formalization before Lean checks it.
 
 use crate::{Formal, Label};
+use std::collections::HashSet;
 
 /// Removes `--` line comments (keeping their newline) and nested `/- -/` block
 /// comments, including doc comments. A block comment leaves one space, so the
@@ -190,6 +191,22 @@ pub(crate) fn declared_names(lean: &str) -> Vec<String> {
         }
     }
     names
+}
+
+/// The names declared above that the Lean relies on: those of `names_above` that occur as a whole
+/// word outside comments, unless the Lean declares them itself (a proof restating its statement).
+/// They keep the order of `names_above`.
+pub(crate) fn uses(lean: &str, names_above: &[String]) -> Vec<String> {
+    let code = strip_comments(lean);
+    let mentioned: HashSet<&str> = words(&code).collect();
+    let declared = declared_names(lean);
+    let mut used: Vec<String> = Vec::new();
+    for name in names_above {
+        if mentioned.contains(name.as_str()) && !declared.contains(name) && !used.contains(name) {
+            used.push(name.clone());
+        }
+    }
+    used
 }
 
 /// Rejects a formalization of `label` that must not be checked. `names_above`

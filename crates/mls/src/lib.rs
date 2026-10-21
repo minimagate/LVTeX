@@ -6,7 +6,7 @@ mod repl;
 mod rules;
 mod worker;
 
-pub use pipeline::{Details, Dot, Mls, Paragraph};
+pub use pipeline::{Details, Dot, Mls, Node, Paragraph};
 pub use worker::Worker;
 
 /// The decision model that labels each paragraph (OpenRouter id, pinned).
@@ -72,6 +72,8 @@ pub struct Formal {
     pub lean: String,
     pub lean_name: Option<String>,
     pub assumptions: Vec<String>,
+    /// The names from the blocks above that the Lean uses (see `rules::uses`). The worker fills it in; it is empty in the model's answer.
+    pub uses: Vec<String>,
 }
 
 /// A failure. A service failure (missing key, network, Lean setup) halts checking until the next edit.

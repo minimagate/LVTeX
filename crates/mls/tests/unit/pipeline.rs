@@ -46,6 +46,7 @@ fn answer(job: &Job) -> Reply {
             label,
             text,
             statement,
+            names_above,
             ..
         } => {
             let mut lean = match label {
@@ -61,6 +62,12 @@ fn answer(job: &Job) -> Reply {
             if text.contains("FALSE") {
                 lean.push_str("\n-- FALSE");
             }
+            // A block whose text contains USES mentions every name above, as Lean that relies on
+            // them would. `uses` then finds the ones it does not declare itself.
+            if text.contains("USES") {
+                lean.push_str(&format!("\nexample := [{}]", names_above.join(", ")));
+            }
+            let uses = crate::rules::uses(&lean, names_above);
             Reply::Formalized {
                 block: *block,
                 version: *version,
@@ -69,6 +76,7 @@ fn answer(job: &Job) -> Reply {
                     lean,
                     lean_name: None,
                     assumptions: Vec::new(),
+                    uses,
                 }),
             }
         }
@@ -951,6 +959,7 @@ fn lean_with_comment_delimiters_and_quotes_round_trips_through_the_twin() {
                     lean: LEAN.to_string(),
                     lean_name: Some("s".to_string()),
                     assumptions: vec!["x : Nat".to_string()],
+                    uses: Vec::new(),
                 }),
             },
             _ => answer(job),
@@ -1168,4 +1177,128 @@ fn the_twin_remembers_what_jev_said_about_joining() {
     let jobs = run(&mut second, answer);
     assert_eq!(kinds(&jobs), ["check"]);
     assert_eq!(statuses(&second), [(0, Status::Sorry)]);
+}
+
+/// The chart's node for the block with `key`.
+fn node(mls: &Mls, key: u64) -> Node {
+    mls.chart()
+        .into_iter()
+        .find(|node| node.key == key)
+        .expect("the block has a chart node")
+}
+
+#[test]
+fn chart_links_a_statement_to_the_definition_it_uses() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def a.", "Lemma USES."]));
+    run(&mut mls, answer);
+    let (def, lemma) = (id_of(&mls, 0), id_of(&mls, 1));
+
+    let chart = mls.chart();
+    assert_eq!(chart.len(), 2, "{chart:?}");
+    assert_eq!(chart[0].key, def);
+    assert_eq!(chart[0].level, 0);
+    assert!(chart[0].uses.is_empty());
+    assert_eq!(chart[1].key, lemma);
+    assert_eq!(chart[1].level, 1);
+    assert_eq!(chart[1].uses, [def]);
+    assert_eq!(chart[1].status, Status::Sorry);
+    assert_eq!(
+        mls.details(lemma).map(|details| details.uses),
+        Some(vec![format!("d{def}")])
+    );
+}
+
+#[test]
+fn a_proofs_uses_go_to_its_statements_node() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def a.", "Lemma b.", "Proof USES ∎"]));
+    run(&mut mls, answer);
+    let (def, lemma) = (id_of(&mls, 0), id_of(&mls, 1));
+
+    let chart = mls.chart();
+    assert_eq!(chart.len(), 2, "{chart:?}");
+    assert_eq!(node(&mls, lemma).uses, [def]);
+    assert_eq!(node(&mls, lemma).status, Status::Verified);
+    assert_eq!(
+        mls.details(id_of(&mls, 2)).map(|details| details.uses),
+        Some(vec![format!("d{def}")])
+    );
+}
+
+#[test]
+fn a_statement_whose_used_definition_is_removed_is_formalized_again() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def a.", "Lemma USES."]));
+    run(&mut mls, answer);
+    let lemma = id_of(&mls, 1);
+
+    mls.sync(&paras(&["Lemma USES."]));
+    let jobs = run(&mut mls, answer);
+    assert!(formalized(&jobs).contains(&lemma), "{:?}", kinds(&jobs));
+}
+
+#[test]
+fn a_statement_that_uses_a_failed_definition_fails_without_a_check() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def a.", "Lemma USES."]));
+    run(&mut mls, answer);
+    let (def, lemma) = (id_of(&mls, 0), id_of(&mls, 1));
+
+    // The definition is edited so that it fails. The statement's formal already names it.
+    mls.sync(&paras(&["Def FALSE.", "Lemma USES."]));
+    let jobs = run(&mut mls, answer);
+    assert!(
+        jobs.iter()
+            .all(|job| !matches!(job, Job::Check { block, .. } if *block == lemma)),
+        "{:?}",
+        kinds(&jobs)
+    );
+    assert_eq!(statuses(&mls), [(0, Status::Failed), (1, Status::Failed)]);
+    assert_eq!(
+        mls.details(lemma).and_then(|details| details.note),
+        Some(format!("Uses `d{def}`, which does not check."))
+    );
+}
+
+#[test]
+fn a_proof_that_relies_on_an_unproved_statement_is_amber() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma a.", "Lemma b.", "Proof USES ∎"]));
+    run(&mut mls, answer);
+    let (a, proof) = (id_of(&mls, 0), id_of(&mls, 2));
+
+    assert_eq!(
+        statuses(&mls),
+        [(0, Status::Sorry), (1, Status::Sorry), (2, Status::Sorry)]
+    );
+    let details = mls.details(proof).expect("the proof has a dot");
+    assert_eq!(
+        details.note,
+        Some(format!("Relies on `t{a}`, which is not proved yet."))
+    );
+    assert_eq!(details.error, None);
+}
+
+#[test]
+fn the_twin_round_trips_the_uses_so_the_restored_chart_has_the_same_shape() {
+    fn shape(mls: &Mls) -> Vec<(Status, usize, usize)> {
+        mls.chart()
+            .iter()
+            .map(|node| (node.status, node.level, node.uses.len()))
+            .collect()
+    }
+    let lines = ["Def a.", "Lemma USES."];
+    let mut first = Mls::new();
+    first.sync(&paras(&lines));
+    run(&mut first, answer);
+
+    let mut second = restored(&first.twin(), &lines);
+    let jobs = run(&mut second, answer);
+    assert_eq!(kinds(&jobs), ["check", "check"]);
+    assert_eq!(shape(&second), shape(&first));
+    assert_eq!(
+        shape(&second),
+        [(Status::Verified, 0, 0), (Status::Sorry, 1, 1)]
+    );
 }
