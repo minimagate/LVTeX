@@ -1,10 +1,11 @@
 //! The background thread that runs MLS jobs: model requests and Lean checks, one at a time.
 
 use crate::openrouter::{
-    self, CHAT_URL, DECISIONS_URL, classify_request, formalize_request, parse_formal, parse_tag,
+    self, CHAT_URL, DECISIONS_URL, blank_retry, classify_request, formalize_request, parse_formal,
+    parse_tag,
 };
 use crate::repl::Repl;
-use crate::{Checked, Failure, Job, Reply, rules};
+use crate::{Checked, Failure, Job, Label, Reply, rules};
 use serde_json::Value;
 use std::{
     fmt,
@@ -144,12 +145,20 @@ fn run(
             statement,
         } => {
             let statement_lean = statement.as_ref().map(|(_, lean)| lean.as_str());
-            let result = request(
-                CHAT_URL,
-                &formalize_request(*label, text, prose.as_deref(), lean_above, statement_lean),
-            )
-            .and_then(|response| parse_formal(&response))
-            .and_then(|mut formal| {
+            let body =
+                formalize_request(*label, text, prose.as_deref(), lean_above, statement_lean);
+            let mut answer = request(CHAT_URL, &body).and_then(|response| parse_formal(&response));
+            // Blank Lean is a definition's way of saying it declares nothing. A statement or proof
+            // always has something to check, so a blank answer is asked for once more.
+            if *label != Label::Definition
+                && answer
+                    .as_ref()
+                    .is_ok_and(|formal| rules::is_blank(&formal.lean))
+            {
+                answer = request(CHAT_URL, &blank_retry(body))
+                    .and_then(|response| parse_formal(&response));
+            }
+            let result = answer.and_then(|mut formal| {
                 rules::reject(*label, &formal, names_above, statement_lean)
                     .map(|()| {
                         formal.uses = rules::uses(&formal.lean, names_above);

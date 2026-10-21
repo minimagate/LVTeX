@@ -34,6 +34,7 @@ Conventions by label:
 - proof: restate the most recent statement exactly as it appears in the Lean above, with the same name, binders and type, character for character up to `:=`, and replace `sorry` with a complete proof. Never weaken or change the statement to make it provable. If the argument is wrong or incomplete, still give your most faithful proof attempt and let Lean reject it.
 
 Rules:
+- Never return an empty "lean" for a statement or a proof: give your most faithful attempt and let Lean judge it.
 - Never use `axiom`, `admit`, `sorry` (except as the whole proof of a statement), `native_decide`, `set_option`, `unsafe`, `#eval` or `#print`.
 - Make each declaration self-contained with explicit binders. Do not use `variable`, `section`, `namespace` or `open ... in` blocks that span declarations.
 - Reuse definitions from the Lean above by name instead of redefining them, and prefer Mathlib's existing notions (Group, Filter.Tendsto, Real, Finset) over new ones.
@@ -259,6 +260,17 @@ pub(crate) fn formalize_request(
             "schema": schema(),
         }}
     })
+}
+
+/// Added to a formalization request whose first answer had blank Lean for a statement or proof.
+const BLANK_RETRY: &str = "Your previous answer had an empty \"lean\". A statement or a proof always needs Lean: give your most faithful attempt, even if you expect Lean to reject it.";
+
+/// The formalization request again, ending with the note that its first answer was blank.
+pub(crate) fn blank_retry(mut request: Value) -> Value {
+    if let Some(parts) = request["messages"][1]["content"].as_array_mut() {
+        parts.push(json!({"type": "text", "text": BLANK_RETRY}));
+    }
+    request
 }
 
 fn schema() -> Value {

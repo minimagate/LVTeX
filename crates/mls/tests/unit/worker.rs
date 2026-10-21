@@ -354,3 +354,64 @@ fn scripted_documents_end_with_their_dots() {
         }
     }
 }
+
+/// A request that answers with blank Lean first and `lean` after, counting the requests and
+/// keeping the last body.
+fn blank_then(
+    lean: &'static str,
+    calls: Arc<AtomicUsize>,
+    last: Arc<std::sync::Mutex<Value>>,
+) -> impl FnMut(&str, &Value) -> Result<Value, Failure> + Send + 'static {
+    move |_, body| {
+        *last.lock().unwrap() = body.clone();
+        let answer = if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            ""
+        } else {
+            lean
+        };
+        Ok(haiku(answer))
+    }
+}
+
+#[test]
+fn formalize_asks_once_more_when_a_statement_comes_back_blank() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let last = Arc::new(std::sync::Mutex::new(Value::Null));
+    let request = blank_then("theorem t : True := by sorry", calls.clone(), last.clone());
+    let worker = Worker::with_request(PathBuf::new(), || {}, request);
+    worker.submit(formalize(Label::Statement, "Lemma. True holds."));
+    match reply(&worker) {
+        Reply::Formalized { result, .. } => {
+            let lean = result.map(|formal| formal.lean);
+            assert_eq!(lean.as_deref(), Ok("theorem t : True := by sorry"));
+        }
+        other => panic!("expected a formalization, got {other:?}"),
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    let parts = last.lock().unwrap()["messages"][1]["content"].clone();
+    let note = parts.as_array().and_then(|parts| parts.last()).cloned();
+    assert!(
+        note.and_then(|part| part["text"].as_str().map(str::to_owned))
+            .is_some_and(|text| text.contains("empty")),
+        "{parts}"
+    );
+}
+
+#[test]
+fn formalize_keeps_a_blank_definition_without_asking_again() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let last = Arc::new(std::sync::Mutex::new(Value::Null));
+    let request = blank_then("def d := 1", calls.clone(), last);
+    let worker = Worker::with_request(PathBuf::new(), || {}, request);
+    worker.submit(formalize(
+        Label::Definition,
+        "Throughout, n is a natural number.",
+    ));
+    match reply(&worker) {
+        Reply::Formalized { result, .. } => {
+            assert_eq!(result.map(|formal| formal.lean).as_deref(), Ok(""));
+        }
+        other => panic!("expected a formalization, got {other:?}"),
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
