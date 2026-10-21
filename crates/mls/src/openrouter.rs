@@ -15,9 +15,9 @@ const TIMEOUT_SECONDS: u32 = 120;
 
 /// Neutral about `proof_in_progress` on purpose: a proof often ends without ∎, and an instruction
 /// that favours proof while one is open makes every later claim a proof.
-const CLASSIFY: &str = "Classify one paragraph of a mathematical document. previous_paragraph is the paragraph just above it. proof_in_progress is true when a proof above has not ended with ∎; that proof may already be complete. The paragraph is a proof only if it argues for the statement being proved. A new claim is a statement even right after a proof, for example one that starts with \"It follows that\" or \"One might guess that\". A remark about the mathematics is skip.";
+const CLASSIFY: &str = "Classify one paragraph of a mathematical document. block_above is the block of one or more paragraphs just above it. proof_in_progress is true when a proof above has not ended with ∎; that proof may already be complete. The paragraph is a proof only if it argues for the statement being proved. A new claim is a statement even right after a proof, for example one that starts with \"It follows that\" or \"One might guess that\". A remark about the mathematics is skip.";
 
-const JOINS: &str = "Decide whether this paragraph belongs to the same mathematical item (a definition, a statement or a proof) as previous_paragraph, so that the two must be formalized together.";
+const JOINS: &str = "Decide whether this paragraph belongs to the same mathematical item (a definition, a statement or a proof) as block_above, so that they must be formalized together.";
 
 const SYSTEM: &str = r#"You formalize one block of a mathematical document into Lean 4 with Mathlib.
 
@@ -167,13 +167,13 @@ pub(crate) fn post(url: &str, body: &Value, key: Option<&str>) -> Result<Value, 
 }
 
 /// The Jev request that asks for the kind of one paragraph and whether it continues the one above.
-/// `previous` is None for the first paragraph; `proof_open` tells Jev whether the paragraph may
+/// `previous` is the block above (see `Job::Classify`), None for the first paragraph; `proof_open` tells Jev whether the paragraph may
 /// continue an unfinished proof.
 pub(crate) fn classify_request(previous: Option<&str>, text: &str, proof_open: bool) -> Value {
     json!({
         "model": JEV_MODEL,
         "state": {
-            "previous_paragraph": previous,
+            "block_above": previous,
             "paragraph": text,
             "proof_in_progress": proof_open,
         },
@@ -192,8 +192,8 @@ pub(crate) fn classify_request(previous: Option<&str>, text: &str, proof_open: b
                 "type": "choice",
                 "instructions": JOINS,
                 "criteria": {
-                    "continues": "Belongs to the same definition, statement or proof as the previous paragraph: its setup (\"Let G be a group.\" followed by the claim), a displayed formula, a clause or list item, or the rest of a sentence the previous paragraph started.",
-                    "new": "Starts a new definition, statement or proof, or is unrelated prose, or previous_paragraph is null.",
+                    "continues": "Belongs to the same definition, statement or proof as block_above: its setup (\"Let G be a group.\" followed by the claim), a displayed formula, a clause or list item, or the rest of a sentence that block_above started.",
+                    "new": "Starts a new definition, statement or proof, or is unrelated prose, or block_above is null.",
                 }
             }
         }

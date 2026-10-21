@@ -160,7 +160,7 @@ fn classify_request_names_the_model_and_echoes_the_state() {
     ] {
         let request = classify_request(previous, text, proof_open);
         assert_eq!(request["model"], JEV_MODEL);
-        assert_eq!(request["state"]["previous_paragraph"], json!(previous));
+        assert_eq!(request["state"]["block_above"], json!(previous));
         assert_eq!(request["state"]["paragraph"], text);
         assert_eq!(
             request["state"]["proof_in_progress"], proof_open,

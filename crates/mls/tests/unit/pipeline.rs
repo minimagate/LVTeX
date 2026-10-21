@@ -1461,3 +1461,17 @@ fn the_twin_round_trips_the_uses_so_the_restored_chart_has_the_same_shape() {
         [(Status::Verified, 0, 0), (Status::Sorry, 1, 1)]
     );
 }
+
+#[test]
+fn jev_sees_every_paragraph_of_the_block_above_not_only_the_last() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma for all n,", "+ n = n.", "Proof. Clear. ∎"]));
+    let jobs = run(&mut mls, answer);
+    let proof = id_of(&mls, 2);
+
+    assert!(jobs.iter().any(|job| matches!(
+        job,
+        Job::Classify { paragraph, previous: Some(above), .. }
+            if *paragraph == proof && above == "Lemma for all n,\n\n+ n = n."
+    )));
+}

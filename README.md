@@ -168,7 +168,8 @@ paragraph is a line; Enter closes it.
 For each paragraph, Jev (`typesafe/jev-1.13`) answers two questions: what it is (a
 definition, a statement (lemma, theorem, corollary, proposition), a proof, or
 anything else, which gets no dot), and whether it belongs to the same item as the
-paragraph above. Paragraphs that belong together form one block: a setup line and
+block above. Jev sees that whole block, every paragraph grouped into it so far, not
+only its last line. Paragraphs that belong together form one block: a setup line and
 its claim, a statement and the displayed formula under it, or a proof that runs
 over several paragraphs until one that is not part of it, or until it ends with ∎.
 A block's dot sits beside its first paragraph. A proof does not need ∎: Enter
@@ -230,7 +231,7 @@ as one red dot whose panel explains what to do; the next edit retries. Saving
 also writes the document's Lean twin, `<name>.mls.lean`, beside it: the Lean that
 checked, with a `-- mathstral:block <id>` comment per block, and a final
 `mathstral:memory` comment (`version` 2). It remembers each paragraph's label, the
-paragraph above it and whether it joins that one, and each block's Lean,
+block above it and whether it joins that one, and each block's Lean,
 assumptions and names it uses, or its rejection reason. Opening the document re-uses
 them, so unchanged text needs no model calls; Lean re-checks every block. A version 1
 twin is ignored, so its paragraphs are asked again once. MLS needs no Ollama.

@@ -245,8 +245,9 @@ you wrote. It now also requires everything the block uses to be verified.**
   on the setup line. A statement and the display formula under it are one block,
   which Haiku formalizes whole. The last block gets no dot and no request while it
   ends in `:` or `,` (until Phase 5, also while it was a proof without ∎).
-  Jev's answers are remembered by the paragraph above, its text and whether a proof
-  is open. Editing a paragraph asks Jev again for it and for the paragraph below;
+  Jev's answers are remembered by the block above, its text and whether a proof
+  is open. Since Phase 5, Jev is shown the whole block above (every paragraph grouped
+  into it so far), not only the paragraph just above. Editing a paragraph asks Jev again for it and for the paragraph below;
   until Jev answers, the old answers keep the blocks and dots in place. A block's
   prose context for Haiku is the whole prose run above it.
 - **Links.** After the rules accept a formalization, MLS records which names declared
@@ -272,7 +273,7 @@ you wrote. It now also requires everything the block uses to be verified.**
   closes the panel first, then the chart. The chart only reflects Lean that exists:
   a block without Lean yet has no links.
 - **Twin memory.** The twin's memory is `version` 2. Label entries add `previous`
-  (the paragraph above, or null) and `joins`; accepted formal entries add `uses`. A
+  (the block above, or null) and `joins`; accepted formal entries add `uses`. A
   version 1 twin is ignored, so its document's paragraphs are asked again once.
 - **Tests.** A fourth sample document, "grouped lemma", holds a statement, its
   displayed formula and its proof. The scripted test also checks the chart of the
@@ -393,3 +394,10 @@ Fixes:
 Verified here with the unit tests (the shape of a document without end marks, a
 definition that declares nothing, a trailing proof). Jev's new instruction is
 unverified live: re-run the same paste on the Mac.
+
+Also in Phase 5: Jev is shown the whole block above a paragraph, every paragraph
+grouped into it so far (`block_above` in the request), instead of only the paragraph
+just above. A third line is then judged against the item it may join, not against
+its last line alone. Editing a paragraph in a block asks Jev again about the
+paragraphs below it in that block. Twin entries for a one-paragraph block keep
+matching; others are asked again once.

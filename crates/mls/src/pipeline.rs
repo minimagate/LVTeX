@@ -89,8 +89,8 @@ struct FormalKey {
     statement: Option<String>,
 }
 
-/// What decides a paragraph's tag: the text itself, the settled text above it (Jev is asked
-/// whether it continues that) and whether a proof is open above it.
+/// What decides a paragraph's tag: the text itself, the unit above it (Jev is asked whether it
+/// continues that; see `segment`) and whether a proof is open above it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct TagKey {
     previous: Option<String>,
@@ -586,12 +586,15 @@ impl Mls {
             let proof_open = unit
                 .as_ref()
                 .is_some_and(|u| u.kind == Label::Proof && !u.ended);
+            // Jev sees the whole unit the paragraph may join, every paragraph grouped so far, so it
+            // judges against the item and not only its last line. After a separator there is no
+            // unit, and it sees the paragraph just above.
+            let above: Option<String> = unit
+                .as_ref()
+                .map(|u| u.text.clone())
+                .or_else(|| previous.map(str::to_owned));
             let tag = match &para.label {
-                Some(l)
-                    if l.previous.as_deref() == previous
-                        && l.text == text
-                        && l.proof_open == proof_open =>
-                {
+                Some(l) if l.previous == above && l.text == text && l.proof_open == proof_open => {
                     match &l.result {
                         Ok(tag) => *tag,
                         Err(_) => {
@@ -605,7 +608,7 @@ impl Mls {
                 }
                 _ => {
                     let key = TagKey {
-                        previous: previous.map(str::to_owned),
+                        previous: above,
                         text: text.to_owned(),
                         proof_open,
                     };
