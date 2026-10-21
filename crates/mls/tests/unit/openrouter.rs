@@ -1,17 +1,17 @@
 use super::*;
-use crate::{Failure, Formal, HAIKU_MODEL, JEV_MODEL, Label, Tag};
+use crate::{FORMALIZER_MODEL, Failure, Formal, JEV_MODEL, Label, Tag};
 use serde_json::{Value, json};
 
 const NOT_SET: &str = "No OpenRouter key. Add one in Mathstral → Settings, or export OPENROUTER_API_KEY and launch Mathstral from that terminal.";
 const MALFORMED: &str = "The OpenRouter key is malformed.";
 const NO_LABEL: &str = "Jev gave no label.";
 const NO_JOINS: &str = "Jev did not say whether the paragraph continues the one above.";
-const NO_CONTENT: &str = "Haiku sent no content.";
+const NO_CONTENT: &str = "The formalizer sent no content.";
 const CUT_OFF: &str = "The formalization was cut off.";
-const INVALID_JSON: &str = "Haiku did not return valid JSON.";
-const NO_LEAN: &str = "Haiku's JSON has no `lean`.";
-const NO_LEAN_NAME: &str = "Haiku's JSON has no `lean_name`.";
-const NO_ASSUMPTIONS: &str = "Haiku's JSON has no `assumptions`.";
+const INVALID_JSON: &str = "The formalizer did not return valid JSON.";
+const NO_LEAN: &str = "The formalizer's JSON has no `lean`.";
+const NO_LEAN_NAME: &str = "The formalizer's JSON has no `lean_name`.";
+const NO_ASSUMPTIONS: &str = "The formalizer's JSON has no `assumptions`.";
 
 fn service(message: &str) -> Failure {
     Failure {
@@ -308,7 +308,8 @@ fn formalize_request_states_the_prose_label_statement_and_block() {
 #[test]
 fn formalize_request_uses_the_model_deterministically_with_a_strict_schema() {
     let request = formalize_request(Label::Statement, "x", None, &[], None);
-    assert_eq!(request["model"], HAIKU_MODEL);
+    assert_eq!(request["model"], FORMALIZER_MODEL);
+    assert_eq!(request["model"], "anthropic/claude-sonnet-5.5");
     assert_eq!(request["temperature"], 0);
     let format = &request["response_format"];
     assert_eq!(format["type"], "json_schema");

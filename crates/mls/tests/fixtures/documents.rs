@@ -14,7 +14,7 @@ pub struct Document {
 
 /// One paragraph: its text, the status its dot must end with (None = no dot), and the scripted
 /// model answers: Jev's label and whether the paragraph continues the one above, and, for the first
-/// paragraph of a block, the Lean Haiku returns.
+/// paragraph of a block, the Lean the formalizer returns.
 #[allow(dead_code)] // The live test reads only `text` and `expect`; the scripted test reads the rest.
 pub struct Line {
     pub text: &'static str,
@@ -22,7 +22,7 @@ pub struct Line {
     pub label: Label,
     pub joins: bool,
     pub lean: Option<&'static str>,
-    /// The assumptions Haiku reports for `lean`: one or two plain sentences.
+    /// The assumptions the formalizer reports for `lean`: one or two plain sentences.
     pub assumptions: &'static [&'static str],
 }
 

@@ -37,8 +37,8 @@ fn jev(label: Label, joins: bool) -> Value {
     }})
 }
 
-/// A Haiku chat completion whose content is the formalization `lean`.
-fn haiku(lean: &str) -> Value {
+/// A formalization chat completion whose content is the formalization `lean`.
+fn formalization_reply(lean: &str) -> Value {
     let content = json!({"lean": lean, "lean_name": null, "assumptions": ["A plain sentence."]});
     json!({"choices": [{"finish_reason": "stop", "message": {"content": content.to_string()}}]})
 }
@@ -108,7 +108,11 @@ fn classify_reports_the_label_jev_chose() {
 
 #[test]
 fn formalize_rejects_an_axiom_without_a_service_failure() {
-    let worker = Worker::with_request(PathBuf::new(), || {}, |_, _| Ok(haiku("axiom answer : ℕ")));
+    let worker = Worker::with_request(
+        PathBuf::new(),
+        || {},
+        |_, _| Ok(formalization_reply("axiom answer : ℕ")),
+    );
     worker.submit(formalize(Label::Definition, "Assume an answer exists."));
     match reply(&worker) {
         Reply::Formalized {
@@ -135,7 +139,7 @@ fn formalize_passes_an_accepted_formalization_through() {
     let worker = Worker::with_request(
         PathBuf::new(),
         || {},
-        |_, _| Ok(haiku("def answer : ℕ := 42")),
+        |_, _| Ok(formalization_reply("def answer : ℕ := 42")),
     );
     worker.submit(formalize(Label::Definition, "Let the answer be 42."));
     match reply(&worker) {
@@ -154,7 +158,11 @@ fn formalize_passes_an_accepted_formalization_through() {
 
 #[test]
 fn formalize_records_the_names_above_that_the_lean_uses() {
-    let worker = Worker::with_request(PathBuf::new(), || {}, |_, _| Ok(haiku("def f := d1")));
+    let worker = Worker::with_request(
+        PathBuf::new(),
+        || {},
+        |_, _| Ok(formalization_reply("def f := d1")),
+    );
     worker.submit(Job::Formalize {
         block: 3,
         version: 9,
@@ -281,7 +289,7 @@ fn line_with_text(lines: &'static [Line], text: &str) -> Result<&'static Line, F
         })
 }
 
-/// The scripted model for one document: Jev's label for each paragraph, and Haiku's Lean for the
+/// The scripted model for one document: Jev's label for each paragraph, and the formalizer's Lean for the
 /// block whose first paragraph is in the prompt.
 fn scripted(
     lines: &'static [Line],

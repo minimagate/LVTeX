@@ -30,7 +30,7 @@ beside the block.
 
 ## What's new in alpha 2
 
-- **Lean checking (MLS).** Jev labels each paragraph and Claude Haiku 5.5 writes the
+- **Lean checking (MLS).** Jev labels each paragraph and Claude Sonnet 5.5 writes the
   Lean, through OpenRouter. A Lean REPL with Mathlib checks it on this Mac.
 - **Blocks that belong together.** A setup line and its claim, a statement and the
   display formula under it, or a proof over several paragraphs form one block.
@@ -85,7 +85,7 @@ An installed copy checks with the Lean project in
 | --- | --- | --- |
 | Writing, manual math, PDF export | this Mac | nothing |
 | AI formulas (⇧⌘1) | Ollama on this Mac (`gemma4:e4b`) | nothing leaves the Mac |
-| Lean checking: labels and formalization | OpenRouter (Jev, Claude Haiku) | the paragraphs being checked, with the prose and Lean above them |
+| Lean checking: labels and formalization | OpenRouter (Jev, Claude Sonnet 5.5) | the paragraphs being checked, with the prose and Lean above them |
 | Lean checking: running the Lean | Lean REPL on this Mac | nothing |
 
 Turning Lean checking off in Settings stops new OpenRouter requests.
@@ -177,7 +177,7 @@ closes it like any other block. The last block waits, with no dot and no request
 only while it ends in `:` or `,`. A convention that only fixes notation ("Throughout,
 $n$ is a natural number") declares nothing and gets no dot.
 
-Claude Haiku 5.5 (`anthropic/claude-haiku-5.5`) formalizes each block into Lean as
+Claude Sonnet 5.5 (`anthropic/claude-sonnet-5.5`) formalizes each block into Lean as
 one item, given the Lean of the blocks above and the prose run above it; statements
 are formalized with `sorry`, and a proof restates its statement with the real proof.
 Output that uses `axiom`, `admit`, `sorry` in a definition or proof, commands such
@@ -193,7 +193,7 @@ formalized again. A block that uses a red block is red, with the note "Uses `X`,
 which does not check.", and Lean is not run. A block whose Lean verifies but that
 uses a statement that is only amber stays amber, with "Relies on `X`, which is not
 proved yet." If a block above has no valid Lean at all, a missing name is red, with
-"Uses `X`, which is not defined above.", and Haiku is not asked again.
+"Uses `X`, which is not defined above.", and the formalizer is not asked again.
 
 | Dot | Meaning |
 | --- | --- |

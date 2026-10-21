@@ -12,8 +12,8 @@ pub use worker::Worker;
 
 /// The decision model that labels each paragraph (OpenRouter id, pinned).
 pub const JEV_MODEL: &str = "typesafe/jev-1.13";
-/// The model that formalizes blocks into Lean (OpenRouter id).
-pub const HAIKU_MODEL: &str = "anthropic/claude-haiku-5.5";
+/// The model that formalizes blocks into Lean (OpenRouter id, pinned).
+pub const FORMALIZER_MODEL: &str = "anthropic/claude-sonnet-5.5";
 
 /// What a paragraph is, which decides how its Lean is checked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

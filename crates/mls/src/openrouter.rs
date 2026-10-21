@@ -1,6 +1,6 @@
-//! OpenRouter: the Jev decision and the Haiku formalization, sent through curl.
+//! OpenRouter: the Jev decision and the formalization, sent through curl.
 
-use crate::{Failure, Formal, HAIKU_MODEL, JEV_MODEL, Label, Tag};
+use crate::{FORMALIZER_MODEL, Failure, Formal, JEV_MODEL, Label, Tag};
 use serde_json::{Value, json};
 use std::{
     borrow::Cow,
@@ -220,7 +220,7 @@ pub(crate) fn parse_tag(response: &Value) -> Result<Tag, Failure> {
     Ok(Tag { label, joins })
 }
 
-/// The Haiku request that formalizes one block. The system prompt and the last Lean
+/// The request that formalizes one block. The system prompt and the last Lean
 /// segment carry cache_control, so an edit in the middle of the document invalidates
 /// only the cached suffix after it.
 pub(crate) fn formalize_request(
@@ -250,7 +250,7 @@ pub(crate) fn formalize_request(
     );
     parts.push(json!({"type": "text", "text": prompt}));
     json!({
-        "model": HAIKU_MODEL,
+        "model": FORMALIZER_MODEL,
         "temperature": 0,
         "max_tokens": 8192,
         "messages": [system, {"role": "user", "content": parts}],
@@ -284,7 +284,7 @@ fn unfenced(text: &str) -> &str {
     body.trim_end().strip_suffix("```").unwrap_or(body).trim()
 }
 
-/// The formalization in Haiku's reply. Rejects the reply as a whole if a field is
+/// The formalization in the model's reply. Rejects the reply as a whole if a field is
 /// missing or of the wrong type; empty names and assumptions are dropped.
 pub(crate) fn parse_formal(response: &Value) -> Result<Formal, Failure> {
     let choice = &response["choices"][0];
@@ -299,29 +299,29 @@ pub(crate) fn parse_formal(response: &Value) -> Result<Formal, Failure> {
                 .filter_map(|part| part["text"].as_str())
                 .collect(),
         ),
-        _ => return Err(service_failure("Haiku sent no content.")),
+        _ => return Err(service_failure("The formalizer sent no content.")),
     };
     let json = serde_json::from_str::<Value>(unfenced(content.trim()))
         .ok()
         .filter(Value::is_object)
-        .ok_or_else(|| block_failure("Haiku did not return valid JSON."))?;
+        .ok_or_else(|| block_failure("The formalizer did not return valid JSON."))?;
     // Blank Lean is an answer: a definition block that only fixes notation declares nothing.
     // `rules::reject` decides where blank Lean is allowed.
     let lean = json["lean"]
         .as_str()
-        .ok_or_else(|| block_failure("Haiku's JSON has no `lean`."))?
+        .ok_or_else(|| block_failure("The formalizer's JSON has no `lean`."))?
         .trim_end()
         .to_string();
     let lean_name = match json.get("lean_name") {
         Some(Value::Null) => None,
         Some(Value::String(name)) => (!name.trim().is_empty()).then(|| name.trim().to_string()),
-        _ => return Err(block_failure("Haiku's JSON has no `lean_name`.")),
+        _ => return Err(block_failure("The formalizer's JSON has no `lean_name`.")),
     };
     let assumptions = json
         .get("assumptions")
         .and_then(Value::as_array)
         .and_then(|items| items.iter().map(Value::as_str).collect::<Option<Vec<_>>>())
-        .ok_or_else(|| block_failure("Haiku's JSON has no `assumptions`."))?
+        .ok_or_else(|| block_failure("The formalizer's JSON has no `assumptions`."))?
         .into_iter()
         .map(str::trim)
         .filter(|text| !text.is_empty())

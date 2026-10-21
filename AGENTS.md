@@ -80,8 +80,8 @@ using that cache, prefix `CARGO_HOME="$PWD/.cargo-home"` and add `--offline`.
 - Ollama runs at `127.0.0.1:11434`; `OLLAMA_MODEL` in `app/src/config.rs` selects
   the model (currently `gemma4:e4b`). Only AI prompts need it. Model requests run
   serially; local renders and previews have a separate worker.
-- MLS uses OpenRouter only: `JEV_MODEL` and `HAIKU_MODEL` in `crates/mls/src/lib.rs`
-  pin the models. The key comes from `OPENROUTER_API_KEY` when it is set, else from
+- MLS uses OpenRouter only: `JEV_MODEL` and `FORMALIZER_MODEL` in `crates/mls/src/lib.rs`
+  pin the models (formalizer: `anthropic/claude-sonnet-5.5`). The key comes from `OPENROUTER_API_KEY` when it is set, else from
   the login Keychain through Settings. It must never be logged, printed, written to a
   file or passed as an argument; the Lean REPL runs without it. The Lean project is
   `MATHSTRAL_LEAN_PROJECT` when set, else `~/Library/Application Support/Mathstral/lean`

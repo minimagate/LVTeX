@@ -1,4 +1,4 @@
-//! The sample documents run through OpenRouter (Jev and Haiku) and the Lean REPL. Needs the network,
+//! The sample documents run through OpenRouter (Jev and the formalizer) and the Lean REPL. Needs the network,
 //! an OpenRouter key and the Lean project built. Run with
 //! `cargo test --release -p mathstral-mls --test documents -- --ignored --nocapture`.
 //!
@@ -9,7 +9,7 @@
 //! name), `MLS_LIVE_PHASE` (directory name under `target/mls-live`; default `unix-<seconds>`).
 
 use mathstral_mls::{
-    Dot, HAIKU_MODEL, JEV_MODEL, Job, Label, Mls, Paragraph, Reply, Status, Worker,
+    Dot, FORMALIZER_MODEL, JEV_MODEL, Job, Label, Mls, Paragraph, Reply, Status, Worker,
 };
 
 #[path = "fixtures/documents.rs"]
@@ -308,7 +308,7 @@ fn live_documents_end_with_their_dots() {
                 "document": case.name,
                 "phase": phase,
                 "run": run,
-                "models": {"jev": JEV_MODEL, "haiku": HAIKU_MODEL},
+                "models": {"jev": JEV_MODEL, "formalizer": FORMALIZER_MODEL},
                 "passed": problems.is_empty(),
                 "problems": problems,
                 "paragraphs": paragraphs,
