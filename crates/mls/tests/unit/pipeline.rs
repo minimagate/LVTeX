@@ -1,20 +1,25 @@
 use super::*;
-use crate::{Checked, Failure, Formal, Job, Label, Outcome, Reply, Status};
+use crate::{Checked, Failure, Formal, Job, Label, Outcome, Reply, Status, Tag};
 
 const MISSING_KEY: &str = "OPENROUTER_API_KEY is not set";
 const REPL_DOWN: &str = "the Lean REPL is not running";
 
-/// The mock model's labels: "Def" is a definition, "Lemma" a statement, "Proof" starts a proof,
-/// a lowercase line continues an open proof, and anything else is prose.
-fn label_for(text: &str, proof_open: bool) -> Label {
-    if text.starts_with("Def") {
+/// The mock model's tags. "Def" is a definition, "Lemma" and "Then" a statement, "Proof" starts a
+/// proof, a lowercase line continues an open proof, and anything else is prose. A "Then" line
+/// and a "+" line continue the paragraph above.
+fn tag_for(_previous: Option<&str>, text: &str, proof_open: bool) -> Tag {
+    let label = if text.starts_with("Def") {
         Label::Definition
-    } else if text.starts_with("Lemma") {
+    } else if text.starts_with("Lemma") || text.starts_with("Then") {
         Label::Statement
     } else if text.starts_with("Proof") || (proof_open && text.starts_with(char::is_lowercase)) {
         Label::Proof
     } else {
         Label::Skip
+    };
+    Tag {
+        label,
+        joins: text.starts_with("Then") || text.starts_with('+'),
     }
 }
 
@@ -25,13 +30,15 @@ fn answer(job: &Job) -> Reply {
     match job {
         Job::Classify {
             paragraph,
+            previous,
             text,
             proof_open,
         } => Reply::Classified {
             paragraph: *paragraph,
+            previous: previous.clone(),
             text: text.clone(),
             proof_open: *proof_open,
-            result: Ok(label_for(text, *proof_open)),
+            result: Ok(tag_for(previous.as_deref(), text, *proof_open)),
         },
         Job::Formalize {
             block,
@@ -131,6 +138,16 @@ fn run_until(mls: &mut Mls, stop: impl Fn(&Job) -> bool) -> Job {
         }
         assert!(mls.apply(answer(&job)));
     }
+}
+
+/// The texts of the formalize jobs, in order.
+fn formalize_texts(jobs: &[Job]) -> Vec<&str> {
+    jobs.iter()
+        .filter_map(|job| match job {
+            Job::Formalize { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
 }
 
 fn kinds(jobs: &[Job]) -> Vec<&'static str> {
@@ -346,21 +363,29 @@ fn editing_a_middle_statement_rechecks_the_tail_without_formalizing_it() {
     mls.sync(&paras(&["Def d.", "Lemma a2.", "Lemma b."]));
     let jobs = run(&mut mls, answer);
 
-    assert_eq!(kinds(&jobs), ["classify", "formalize", "check", "check"]);
+    // The statement below was tagged against the old text above it, so it is tagged again.
+    assert_eq!(
+        kinds(&jobs),
+        ["classify", "classify", "formalize", "check", "check"]
+    );
     assert!(matches!(
         &jobs[0],
         Job::Classify { paragraph, text, .. } if *paragraph == a && text == "Lemma a2."
+    ));
+    assert!(matches!(
+        &jobs[1],
+        Job::Classify { text, previous, .. } if text == "Lemma b." && previous.as_deref() == Some("Lemma a2.")
     ));
     let Job::Check {
         block: checked_a,
         version: a_version,
         ..
-    } = &jobs[2]
+    } = &jobs[3]
     else {
         panic!("the edited statement is checked")
     };
     assert_eq!(*checked_a, a);
-    let Job::Check { block, base, .. } = &jobs[3] else {
+    let Job::Check { block, base, .. } = &jobs[4] else {
         panic!("the statement below is checked")
     };
     assert_eq!(*block, b);
@@ -459,10 +484,12 @@ fn a_classification_service_failure_stops_at_its_paragraph_until_a_change() {
         match job {
             Job::Classify {
                 paragraph,
+                previous,
                 text,
                 proof_open,
             } => Reply::Classified {
                 paragraph: *paragraph,
+                previous: previous.clone(),
                 text: text.clone(),
                 proof_open: *proof_open,
                 result: Err(Failure {
@@ -556,9 +583,17 @@ fn editing_a_statement_reformalizes_its_proof_against_the_statement_base() {
 
     mls.sync(&paras(&["Def d.", "Lemma a2.", "Proof. ok ∎"]));
     let jobs = run(&mut mls, answer);
+    // The proof was tagged against the old statement text, so it is tagged again.
     assert_eq!(
         kinds(&jobs),
-        ["classify", "formalize", "check", "formalize", "check"]
+        [
+            "classify",
+            "classify",
+            "formalize",
+            "check",
+            "formalize",
+            "check"
+        ]
     );
 
     let Job::Check {
@@ -566,14 +601,14 @@ fn editing_a_statement_reformalizes_its_proof_against_the_statement_base() {
         version: a_version,
         base: a_base,
         ..
-    } = &jobs[2]
+    } = &jobs[3]
     else {
         panic!("the edited statement is checked")
     };
     assert_eq!(*checked_a, a);
     let Job::Formalize {
         block, statement, ..
-    } = &jobs[3]
+    } = &jobs[4]
     else {
         panic!("the proof is formalized again")
     };
@@ -583,7 +618,7 @@ fn editing_a_statement_reformalizes_its_proof_against_the_statement_base() {
         Some(*a_version),
         "the proof is formalized against the edited statement"
     );
-    let Job::Check { block, base, .. } = &jobs[4] else {
+    let Job::Check { block, base, .. } = &jobs[5] else {
         panic!("the proof is checked")
     };
     assert_eq!(*block, proof);
@@ -653,11 +688,47 @@ fn a_skip_edit_above_a_checked_statement_keeps_its_dots_while_it_is_classified()
     assert_eq!(statuses(&mls), [(1, Status::Verified), (2, Status::Sorry)]);
 
     assert!(mls.apply(answer(&classify)));
+    let retag = mls
+        .next_job()
+        .expect("the definition below is classified again");
+    assert!(matches!(&retag, Job::Classify { text, .. } if text == "Def d."));
+    assert!(mls.apply(answer(&retag)));
     assert!(
         mls.next_job().is_none(),
         "no Lean above the statement changed"
     );
     assert_eq!(statuses(&mls), [(1, Status::Verified), (2, Status::Sorry)]);
+}
+
+#[test]
+fn an_edit_above_a_checked_block_keeps_its_dot_while_its_first_paragraph_is_retagged() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Hello.", "Lemma a."]));
+    run(&mut mls, answer);
+    let a = id_of(&mls, 1);
+    assert_eq!(statuses(&mls), [(1, Status::Sorry)]);
+
+    mls.sync(&paras(&["Hello there.", "Lemma a."]));
+    let classify = mls.next_job().expect("the edited paragraph is classified");
+    assert!(matches!(&classify, Job::Classify { text, .. } if text == "Hello there."));
+    assert_eq!(statuses(&mls), [(1, Status::Sorry)]);
+    assert!(mls.apply(answer(&classify)));
+
+    let retag = mls
+        .next_job()
+        .expect("the statement is classified again against the new text above it");
+    assert!(matches!(
+        &retag,
+        Job::Classify { paragraph, text, previous, .. }
+            if *paragraph == a && text == "Lemma a." && previous.as_deref() == Some("Hello there.")
+    ));
+    assert_eq!(statuses(&mls), [(1, Status::Sorry)]);
+    assert!(mls.apply(answer(&retag)));
+    assert!(
+        mls.next_job().is_none(),
+        "the same tag means no formalize and no check"
+    );
+    assert_eq!(statuses(&mls), [(1, Status::Sorry)]);
 }
 
 #[test]
@@ -687,10 +758,12 @@ fn blocks_above_a_failed_label_still_get_their_jobs() {
         match job {
             Job::Classify {
                 paragraph,
+                previous,
                 text,
                 proof_open,
             } if text == "Hello." => Reply::Classified {
                 paragraph: *paragraph,
+                previous: previous.clone(),
                 text: text.clone(),
                 proof_open: *proof_open,
                 result: Err(Failure {
@@ -827,7 +900,7 @@ fn a_twin_restores_labels_and_formals_so_a_reopened_document_only_checks() {
 }
 
 #[test]
-fn an_edited_paragraph_is_the_only_one_classified_after_restore() {
+fn after_restore_only_an_edited_paragraph_and_the_one_below_are_classified() {
     let lines = ["Hello there.", "Def d.", "Lemma a.", "Proof. ok ∎"];
     let mut first = Mls::new();
     first.sync(&paras(&lines));
@@ -845,7 +918,7 @@ fn an_edited_paragraph_is_the_only_one_classified_after_restore() {
             _ => None,
         })
         .collect();
-    assert_eq!(classified, ["Def e."]);
+    assert_eq!(classified, ["Def e.", "Lemma a."]);
     assert_eq!(formalized(&jobs), [id_of(&second, 1)]);
 }
 
@@ -948,7 +1021,7 @@ fn a_missing_or_malformed_memory_restores_nothing() {
     first.sync(&paras(&lines));
     run(&mut first, answer);
     let twin = first.twin();
-    assert!(twin.contains("\"version\":1"), "{twin}");
+    assert!(twin.contains("\"version\":2"), "{twin}");
 
     let mut baseline = Mls::new();
     baseline.sync(&paras(&lines));
@@ -962,8 +1035,8 @@ fn a_missing_or_malformed_memory_restores_nothing() {
             format!("{lean_only}{MEMORY_OPEN}not json\n-/\n"),
         ),
         (
-            "wrong version",
-            twin.replace("\"version\":1", "\"version\":2"),
+            "version 1 memory",
+            twin.replace("\"version\":2", "\"version\":1"),
         ),
         (
             "no closing delimiter",
@@ -1005,4 +1078,94 @@ fn an_undone_edit_reuses_the_remembered_label_and_formal() {
         kinds(&jobs)
     );
     assert_eq!(statuses(&mls), [(0, Status::Verified), (1, Status::Sorry)]);
+}
+
+#[test]
+fn a_setup_line_and_the_then_line_after_it_are_one_statement_block() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Let x be real.", "Then x = x."]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(formalize_texts(&jobs), ["Let x be real.\n\nThen x = x."]);
+    let dots = mls.dots();
+    assert_eq!(dots.len(), 1, "{dots:?}");
+    assert_eq!((dots[0].paragraph, dots[0].last), (0, 1));
+    assert_eq!(statuses(&mls), [(0, Status::Sorry)]);
+}
+
+#[test]
+fn a_plus_line_after_a_statement_joins_it_without_a_dot_of_its_own() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t.", "+ And more."]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(formalize_texts(&jobs), ["Lemma t.\n\n+ And more."]);
+    let dots = mls.dots();
+    assert_eq!(dots.len(), 1, "{dots:?}");
+    assert_eq!((dots[0].paragraph, dots[0].last), (0, 1));
+}
+
+#[test]
+fn a_statement_ending_in_a_comma_waits_for_the_paragraph_that_continues_it() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t,"]));
+    let jobs = run(&mut mls, answer);
+    assert!(formalize_texts(&jobs).is_empty(), "{jobs:?}");
+    assert!(mls.dots().is_empty());
+
+    mls.sync(&paras(&["Lemma t,", "+ and more."]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(formalize_texts(&jobs), ["Lemma t,\n\n+ and more."]);
+    assert_eq!(statuses(&mls), [(0, Status::Sorry)]);
+}
+
+#[test]
+fn a_then_line_after_a_definition_starts_its_own_statement() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def d.", "Then x = x."]));
+    run(&mut mls, answer);
+    assert_eq!(statuses(&mls), [(0, Status::Verified), (1, Status::Sorry)]);
+}
+
+#[test]
+fn a_plus_line_after_a_proof_that_has_ended_is_not_part_of_it() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t.", "Proof. Done. ∎", "+ Not part of it."]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(formalize_texts(&jobs), ["Lemma t.", "Proof. Done. ∎"]);
+    assert_eq!(
+        statuses(&mls),
+        [(0, Status::Verified), (1, Status::Verified)]
+    );
+}
+
+#[test]
+fn a_block_takes_the_whole_prose_unit_above_it_as_its_prose() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Hello there.", "+ And more.", "Lemma t."]));
+    let jobs = run(&mut mls, answer);
+    let prose: Vec<Option<String>> = jobs
+        .iter()
+        .filter_map(|job| match job {
+            Job::Formalize { prose, .. } => Some(prose.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(prose, [Some("Hello there.\n\n+ And more.".to_string())]);
+}
+
+#[test]
+fn the_twin_remembers_what_jev_said_about_joining() {
+    let lines = ["Let x be real.", "Then x = x."];
+    let mut first = Mls::new();
+    first.sync(&paras(&lines));
+    run(&mut first, answer);
+
+    let twin = first.twin();
+    assert!(twin.contains("\"version\":2"), "{twin}");
+    assert!(twin.contains("\"joins\":true"), "{twin}");
+    assert!(twin.contains("\"previous\":\"Let x be real.\""), "{twin}");
+
+    let mut second = restored(&twin, &lines);
+    let jobs = run(&mut second, answer);
+    assert_eq!(kinds(&jobs), ["check"]);
+    assert_eq!(statuses(&second), [(0, Status::Sorry)]);
 }

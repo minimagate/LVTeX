@@ -1,11 +1,12 @@
 use super::*;
-use crate::{Failure, Formal, HAIKU_MODEL, JEV_MODEL, Label};
+use crate::{Failure, Formal, HAIKU_MODEL, JEV_MODEL, Label, Tag};
 use serde_json::{Value, json};
 
 const NOT_SET: &str =
     "OPENROUTER_API_KEY is not set. Export it and launch Mathstral from that terminal.";
 const MALFORMED: &str = "OPENROUTER_API_KEY is malformed.";
 const NO_LABEL: &str = "Jev gave no label.";
+const NO_JOINS: &str = "Jev did not say whether the paragraph continues the one above.";
 const NO_CONTENT: &str = "Haiku sent no content.";
 const CUT_OFF: &str = "The formalization was cut off.";
 const INVALID_JSON: &str = "Haiku did not return valid JSON.";
@@ -139,9 +140,13 @@ fn response_truncates_a_long_error_body_on_a_character_boundary() {
 
 #[test]
 fn classify_request_names_the_model_and_echoes_the_state() {
-    for (text, proof_open) in [("Let $G$ be a group.", false), ("Hence $x = 0$.", true)] {
-        let request = classify_request(text, proof_open);
+    for (previous, text, proof_open) in [
+        (None, "Let $G$ be a group.", false),
+        (Some("Let $G$ be a group."), "Hence $x = 0$.", true),
+    ] {
+        let request = classify_request(previous, text, proof_open);
         assert_eq!(request["model"], JEV_MODEL);
+        assert_eq!(request["state"]["previous_paragraph"], json!(previous));
         assert_eq!(request["state"]["paragraph"], text);
         assert_eq!(
             request["state"]["proof_in_progress"], proof_open,
@@ -152,7 +157,7 @@ fn classify_request_names_the_model_and_echoes_the_state() {
 
 #[test]
 fn classify_request_offers_exactly_the_label_names_as_choices() {
-    let request = classify_request("x", false);
+    let request = classify_request(None, "x", false);
     assert_eq!(request["questions"]["kind"]["type"], "choice");
     let criteria = request["questions"]["kind"]["criteria"]
         .as_object()
@@ -165,24 +170,58 @@ fn classify_request_offers_exactly_the_label_names_as_choices() {
 }
 
 #[test]
-fn parse_label_reads_each_label_name() {
+fn classify_request_asks_whether_the_paragraph_continues_the_one_above() {
+    let request = classify_request(Some("Let $x$ be real."), "Then $x = x$.", false);
+    assert_eq!(request["questions"]["joins"]["type"], "choice");
+    let criteria = request["questions"]["joins"]["criteria"]
+        .as_object()
+        .expect("criteria object");
+    let mut keys: Vec<&str> = criteria.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["continues", "new"]);
+}
+
+#[test]
+fn parse_tag_reads_each_label_and_whether_it_joins() {
     for label in Label::ALL {
-        let response = json!({"answers": {"kind": {"choice": label.name()}}});
-        assert_eq!(parse_label(&response), Ok(label), "{}", label.name());
+        for (choice, joins) in [("continues", true), ("new", false)] {
+            let response = json!({"answers": {
+                "kind": {"choice": label.name()},
+                "joins": {"choice": choice},
+            }});
+            assert_eq!(
+                parse_tag(&response),
+                Ok(Tag { label, joins }),
+                "{} {choice}",
+                label.name()
+            );
+        }
     }
 }
 
 #[test]
-fn parse_label_rejects_unknown_or_missing_choices() {
+fn parse_tag_rejects_an_unknown_or_missing_label() {
     let cases = [
-        json!({"answers": {"kind": {"choice": "theorem"}}}),
-        json!({"answers": {"kind": {"choice": "Proof"}}}),
-        json!({"answers": {"kind": {"choice": null}}}),
-        json!({"answers": {"kind": {}}}),
-        json!({}),
+        json!({"answers": {"kind": {"choice": "theorem"}, "joins": {"choice": "new"}}}),
+        json!({"answers": {"kind": {"choice": "Proof"}, "joins": {"choice": "new"}}}),
+        json!({"answers": {"kind": {"choice": null}, "joins": {"choice": "new"}}}),
+        json!({"answers": {"kind": {}, "joins": {"choice": "continues"}}}),
+        json!({"answers": {"joins": {"choice": "continues"}}}),
     ];
     for response in cases {
-        assert_eq!(parse_label(&response), Err(service(NO_LABEL)), "{response}");
+        assert_eq!(parse_tag(&response), Err(service(NO_LABEL)), "{response}");
+    }
+}
+
+#[test]
+fn parse_tag_rejects_a_missing_or_unknown_answer_about_joining() {
+    let cases = [
+        json!({"answers": {"kind": {"choice": "skip"}}}),
+        json!({"answers": {"kind": {"choice": "skip"}, "joins": {"choice": null}}}),
+        json!({"answers": {"kind": {"choice": "skip"}, "joins": {"choice": "maybe"}}}),
+    ];
+    for response in cases {
+        assert_eq!(parse_tag(&response), Err(service(NO_JOINS)), "{response}");
     }
 }
 

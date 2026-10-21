@@ -45,6 +45,14 @@ impl Label {
     }
 }
 
+/// What Jev said about one paragraph: its label, and whether it continues the paragraph above as
+/// part of the same definition, statement or proof.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tag {
+    pub label: Label,
+    pub joins: bool,
+}
+
 /// The state shown beside a block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
@@ -93,6 +101,9 @@ pub struct Checked {
 pub enum Job {
     Classify {
         paragraph: u64,
+        /// The settled text of the nearest settled paragraph above, None for the first. Jev is
+        /// asked whether `text` continues it.
+        previous: Option<String>,
         text: String,
         proof_open: bool,
     },
@@ -121,9 +132,10 @@ pub enum Job {
 pub enum Reply {
     Classified {
         paragraph: u64,
+        previous: Option<String>,
         text: String,
         proof_open: bool,
-        result: Result<Label, Failure>,
+        result: Result<Tag, Failure>,
     },
     Formalized {
         block: u64,

@@ -1,6 +1,6 @@
 //! OpenRouter: the Jev decision and the Haiku formalization, sent through curl.
 
-use crate::{Failure, Formal, HAIKU_MODEL, JEV_MODEL, Label};
+use crate::{Failure, Formal, HAIKU_MODEL, JEV_MODEL, Label, Tag};
 use serde_json::{Value, json};
 use std::{
     borrow::Cow,
@@ -16,9 +16,11 @@ const TIMEOUT_SECONDS: u32 = 120;
 
 const CLASSIFY: &str = "Classify one paragraph of a mathematical document. When proof_in_progress is true, the paragraph follows an unfinished proof: answer proof if it continues that argument.";
 
+const JOINS: &str = "Decide whether this paragraph belongs to the same mathematical item (a definition, a statement or a proof) as previous_paragraph, so that the two must be formalized together.";
+
 const SYSTEM: &str = r#"You formalize one block of a mathematical document into Lean 4 with Mathlib.
 
-You receive the Lean already accepted for the blocks above, in document order, each under a `-- mathstral:block <id>` comment; the prose paragraph just above the block, if any; the block's label; and the block itself, written in Markdown with LaTeX between dollar signs.
+You receive the Lean already accepted for the blocks above, in document order, each under a `-- mathstral:block <id>` comment; the prose paragraph just above the block, if any; the block's label; and the block itself, written in Markdown with LaTeX between dollar signs. A block may span several paragraphs, separated by blank lines: its setup, displayed formulas and clauses belong to it, so formalize them together as one item.
 
 Return only a JSON object with three fields:
 - "lean": Lean 4 source for this block alone. It is checked in an environment that already contains `import Mathlib` and the Lean above, so never write `import`, and never repeat a declaration from above.
@@ -158,31 +160,57 @@ pub(crate) fn post(url: &str, body: &Value) -> Result<Value, Failure> {
     response(&String::from_utf8_lossy(&output.stdout))
 }
 
-/// The Jev request that asks for the kind of one paragraph. `proof_open` tells Jev
-/// whether the paragraph may continue an unfinished proof.
-pub(crate) fn classify_request(text: &str, proof_open: bool) -> Value {
+/// The Jev request that asks for the kind of one paragraph and whether it continues the one above.
+/// `previous` is None for the first paragraph; `proof_open` tells Jev whether the paragraph may
+/// continue an unfinished proof.
+pub(crate) fn classify_request(previous: Option<&str>, text: &str, proof_open: bool) -> Value {
     json!({
         "model": JEV_MODEL,
-        "state": {"paragraph": text, "proof_in_progress": proof_open},
-        "questions": {"kind": {
-            "type": "choice",
-            "instructions": CLASSIFY,
-            "criteria": {
-                (Label::Definition.name()): "Defines a new mathematical object, notion or notation.",
-                (Label::Statement.name()): "States a lemma, theorem, corollary or proposition that is meant to be proved.",
-                (Label::Proof.name()): "Proves the preceding statement, or continues a proof in progress.",
-                (Label::Skip.name()): "Anything else: prose, motivation, examples, remarks, headings or a bare formula.",
+        "state": {
+            "previous_paragraph": previous,
+            "paragraph": text,
+            "proof_in_progress": proof_open,
+        },
+        "questions": {
+            "kind": {
+                "type": "choice",
+                "instructions": CLASSIFY,
+                "criteria": {
+                    (Label::Definition.name()): "Defines a new mathematical object, notion or notation.",
+                    (Label::Statement.name()): "States a lemma, theorem, corollary or proposition that is meant to be proved.",
+                    (Label::Proof.name()): "Proves the preceding statement, or continues a proof in progress.",
+                    (Label::Skip.name()): "Anything else: prose, motivation, examples, remarks, headings or a bare formula.",
+                }
+            },
+            "joins": {
+                "type": "choice",
+                "instructions": JOINS,
+                "criteria": {
+                    "continues": "Belongs to the same definition, statement or proof as the previous paragraph: its setup (\"Let G be a group.\" followed by the claim), a displayed formula, a clause or list item, or the rest of a sentence the previous paragraph started.",
+                    "new": "Starts a new definition, statement or proof, or is unrelated prose, or previous_paragraph is null.",
+                }
             }
-        }}
+        }
     })
 }
 
-/// The label Jev chose. Anything else is a service failure, not a guess.
-pub(crate) fn parse_label(response: &Value) -> Result<Label, Failure> {
-    response["answers"]["kind"]["choice"]
+/// What Jev chose for one paragraph. A missing or unknown label, or a missing answer about joining,
+/// is a service failure, not a guess.
+pub(crate) fn parse_tag(response: &Value) -> Result<Tag, Failure> {
+    let label = response["answers"]["kind"]["choice"]
         .as_str()
         .and_then(Label::from_name)
-        .ok_or_else(|| service_failure("Jev gave no label."))
+        .ok_or_else(|| service_failure("Jev gave no label."))?;
+    let joins = match response["answers"]["joins"]["choice"].as_str() {
+        Some("continues") => true,
+        Some("new") => false,
+        _ => {
+            return Err(service_failure(
+                "Jev did not say whether the paragraph continues the one above.",
+            ));
+        }
+    };
+    Ok(Tag { label, joins })
 }
 
 /// The Haiku request that formalizes one block. The system prompt and the last Lean

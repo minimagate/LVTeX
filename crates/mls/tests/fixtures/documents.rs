@@ -13,12 +13,14 @@ pub struct Document {
 }
 
 /// One paragraph: its text, the status its dot must end with (None = no dot), and the scripted
-/// model answers: Jev's label and, for the first paragraph of a block, the Lean Haiku returns.
+/// model answers: Jev's label and whether the paragraph continues the one above, and, for the first
+/// paragraph of a block, the Lean Haiku returns.
 #[allow(dead_code)] // The live test reads only `text` and `expect`; the scripted test reads the rest.
 pub struct Line {
     pub text: &'static str,
     pub expect: Option<Status>,
     pub label: Label,
+    pub joins: bool,
     pub lean: Option<&'static str>,
     /// The assumptions Haiku reports for `lean`: one or two plain sentences.
     pub assumptions: &'static [&'static str],
@@ -26,7 +28,7 @@ pub struct Line {
 
 const REPLY_TIMEOUT: Duration = Duration::from_secs(600);
 
-pub const DOCUMENTS: [Document; 3] = [
+pub const DOCUMENTS: [Document; 4] = [
     Document {
         name: "group theory",
         lines: &[
@@ -34,6 +36,7 @@ pub const DOCUMENTS: [Document; 3] = [
                 text: r"Let $G$ be a group with identity $1$.",
                 expect: None,
                 label: Label::Skip,
+                joins: false,
                 lean: None,
                 assumptions: &[],
             },
@@ -41,6 +44,7 @@ pub const DOCUMENTS: [Document; 3] = [
                 text: r"**Definition.** An element $g \in G$ is an involution if $g^2 = 1$.",
                 expect: Some(Status::Verified),
                 label: Label::Definition,
+                joins: false,
                 lean: Some("def IsInvolution {G : Type*} [Group G] (g : G) : Prop := g ^ 2 = 1"),
                 assumptions: &[
                     "g is an element of the group G.",
@@ -51,6 +55,7 @@ pub const DOCUMENTS: [Document; 3] = [
                 text: r"**Lemma.** If $e \in G$ satisfies $e g = g$ for every $g \in G$, then $e = 1$.",
                 expect: Some(Status::Verified),
                 label: Label::Statement,
+                joins: false,
                 lean: Some(
                     "theorem left_identity_unique {G : Type*} [Group G] (e : G) (h : ∀ g : G, e * g = g) : e = 1 := by sorry",
                 ),
@@ -63,6 +68,7 @@ pub const DOCUMENTS: [Document; 3] = [
                 text: r"*Proof.* Taking $g = 1$ gives $e = e \cdot 1 = 1$. ∎",
                 expect: Some(Status::Verified),
                 label: Label::Proof,
+                joins: false,
                 lean: Some(
                     "theorem left_identity_unique {G : Type*} [Group G] (e : G) (h : ∀ g : G, e * g = g) : e = 1 := by\n  simpa using h 1",
                 ),
@@ -75,6 +81,7 @@ pub const DOCUMENTS: [Document; 3] = [
                 text: r"**Lemma.** The identity of $G$ is an involution.",
                 expect: Some(Status::Verified),
                 label: Label::Statement,
+                joins: false,
                 lean: Some(
                     "theorem one_is_involution {G : Type*} [Group G] : IsInvolution (1 : G) := by sorry",
                 ),
@@ -87,6 +94,7 @@ pub const DOCUMENTS: [Document; 3] = [
                 text: r"*Proof.* $1^2 = 1$. ∎",
                 expect: Some(Status::Verified),
                 label: Label::Proof,
+                joins: false,
                 lean: Some(
                     "theorem one_is_involution {G : Type*} [Group G] : IsInvolution (1 : G) := by\n  simp [IsInvolution]",
                 ),
@@ -104,6 +112,7 @@ pub const DOCUMENTS: [Document; 3] = [
                 text: r"We work with real sequences indexed by $n \in \mathbb{N}$.",
                 expect: None,
                 label: Label::Skip,
+                joins: false,
                 lean: None,
                 assumptions: &[],
             },
@@ -111,6 +120,7 @@ pub const DOCUMENTS: [Document; 3] = [
                 text: r"**Lemma.** If $a_n \to L$ and $b_n \to M$, then $a_n + b_n \to L + M$.",
                 expect: Some(Status::Verified),
                 label: Label::Statement,
+                joins: false,
                 lean: Some(
                     "theorem tendsto_add_of_tendsto (a b : ℕ → ℝ) (L M : ℝ) (ha : Filter.Tendsto a Filter.atTop (nhds L)) (hb : Filter.Tendsto b Filter.atTop (nhds M)) : Filter.Tendsto (fun n => a n + b n) Filter.atTop (nhds (L + M)) := by sorry",
                 ),
@@ -123,6 +133,7 @@ pub const DOCUMENTS: [Document; 3] = [
                 text: r"*Proof.* Given $\varepsilon > 0$, choose $N$ with $|a_n - L| < \varepsilon/2$ and $|b_n - M| < \varepsilon/2$ for $n \ge N$; the triangle inequality gives $|a_n + b_n - (L + M)| < \varepsilon$. ∎",
                 expect: Some(Status::Verified),
                 label: Label::Proof,
+                joins: false,
                 lean: Some(
                     "theorem tendsto_add_of_tendsto (a b : ℕ → ℝ) (L M : ℝ) (ha : Filter.Tendsto a Filter.atTop (nhds L)) (hb : Filter.Tendsto b Filter.atTop (nhds M)) : Filter.Tendsto (fun n => a n + b n) Filter.atTop (nhds (L + M)) := by\n  exact ha.add hb",
                 ),
@@ -140,6 +151,7 @@ pub const DOCUMENTS: [Document; 3] = [
                 text: r"A tempting claim that fails for small $n$.",
                 expect: None,
                 label: Label::Skip,
+                joins: false,
                 lean: None,
                 assumptions: &[],
             },
@@ -147,6 +159,7 @@ pub const DOCUMENTS: [Document; 3] = [
                 text: r"**Lemma.** For every natural number $n$, $n^2 \ge 2^n$.",
                 expect: Some(Status::Sorry),
                 label: Label::Statement,
+                joins: false,
                 lean: Some("theorem sq_ge_two_pow (n : ℕ) : n ^ 2 ≥ 2 ^ n := by sorry"),
                 assumptions: &[
                     "n is a natural number, so n is at least 0.",
@@ -157,6 +170,7 @@ pub const DOCUMENTS: [Document; 3] = [
                 text: r"*Proof.* By induction on $n$: the base case holds, and $(n+1)^2 \ge 2^{n+1}$ follows from the inductive hypothesis. ∎",
                 expect: Some(Status::Failed),
                 label: Label::Proof,
+                joins: false,
                 lean: Some(
                     "theorem sq_ge_two_pow (n : ℕ) : n ^ 2 ≥ 2 ^ n := by\n  induction n with\n  | zero => simp\n  | succ k ih => nlinarith [ih]",
                 ),
@@ -164,6 +178,35 @@ pub const DOCUMENTS: [Document; 3] = [
                     "n is a natural number, so n is at least 0.",
                     "The square and the power are natural-number operations.",
                 ],
+            },
+        ],
+    },
+    Document {
+        name: "grouped lemma",
+        lines: &[
+            Line {
+                text: r"**Lemma.** For every natural number $n$,",
+                expect: Some(Status::Verified),
+                label: Label::Statement,
+                joins: false,
+                lean: Some("theorem add_zero_eq (n : ℕ) : n + 0 = n := by sorry"),
+                assumptions: &["n is a natural number."],
+            },
+            Line {
+                text: "$$n + 0 = n.$$",
+                expect: None,
+                label: Label::Skip,
+                joins: true,
+                lean: None,
+                assumptions: &[],
+            },
+            Line {
+                text: r"*Proof.* Adding zero changes nothing. ∎",
+                expect: Some(Status::Verified),
+                label: Label::Proof,
+                joins: false,
+                lean: Some("theorem add_zero_eq (n : ℕ) : n + 0 = n := by\n  simp"),
+                assumptions: &["n is a natural number."],
             },
         ],
     },

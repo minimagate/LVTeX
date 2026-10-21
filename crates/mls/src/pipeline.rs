@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde_json::{Value, json};
 
 use crate::rules::declared_names;
-use crate::{Checked, Failure, Formal, Job, Label, Outcome, Reply, Status};
+use crate::{Checked, Failure, Formal, Job, Label, Outcome, Reply, Status, Tag};
 
 /// One non-blank line of the document. `open` while the caret is in it or a formula in it is unfinished.
 #[derive(Clone, Debug, PartialEq)]
@@ -19,7 +19,10 @@ pub struct Paragraph {
 /// A status dot beside a paragraph (index into the last `sync` input).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Dot {
+    /// The block's first paragraph.
     pub paragraph: usize,
+    /// The block's last paragraph; equal to `paragraph` for a one-paragraph block.
+    pub last: usize,
     pub key: u64,
     pub status: Status,
     error: Option<String>,
@@ -42,9 +45,9 @@ pub struct Mls {
     /// Records of blocks that are not in `blocks`, by id. An edit above them then reuses their
     /// formalization and check instead of redoing them. `plan` and `apply` never read them.
     parked: HashMap<u64, Block>,
-    /// What Jev and Haiku said, by text, so an unchanged paragraph or block never asks again, in
-    /// this session or after reopening (see `twin`). Only accepted answers are remembered.
-    labels: HashMap<(String, bool), Label>,
+    /// What Jev said, by paragraph and the text above it, so an unchanged paragraph never asks
+    /// again, in this session or after reopening (see `twin`). Only accepted answers are remembered.
+    labels: HashMap<TagKey, Tag>,
     /// The formalization, or a non-service rejection, of each block by its key.
     formals: HashMap<FormalKey, Result<Formal, String>>,
     frontier: Frontier,
@@ -58,6 +61,15 @@ struct FormalKey {
     label: Label,
     text: String,
     statement: Option<String>,
+}
+
+/// What decides a paragraph's tag: the text itself, the settled text above it (Jev is asked
+/// whether it continues that) and whether a proof is open above it.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct TagKey {
+    previous: Option<String>,
+    text: String,
+    proof_open: bool,
 }
 
 /// Opens the memory comment at the end of a twin. Its JSON is written on the lines after it.
@@ -80,9 +92,10 @@ struct Para {
 
 #[derive(Debug)]
 struct Labelled {
+    previous: Option<String>,
     text: String,
     proof_open: bool,
-    result: Result<Label, Failure>,
+    result: Result<Tag, Failure>,
 }
 
 #[derive(Debug)]
@@ -93,14 +106,16 @@ struct Block {
     version: u64,
     /// Index of its first paragraph in `paras`.
     first: usize,
+    /// Index of its last paragraph in `paras`; `first` for a one-paragraph block.
+    last: usize,
     /// The settled texts of its paragraphs, joined by a blank line.
     text: String,
     /// Definition, Statement or Proof; never Skip.
     label: Label,
-    /// False while a proof is still open at the end of the document or where segmentation stops.
+    /// False while a proof is unfinished, or while a statement or definition ends in ':' or ','
+    /// and may still continue. See `segment`.
     closed: bool,
-    /// The settled text of the last settled paragraph before `first`, when that paragraph is
-    /// labelled Skip. Unsettled paragraphs are ignored.
+    /// The text of the prose unit right above `first`, if there is one.
     prose: Option<String>,
     /// Proofs: the id of the statement block paired with it.
     statement: Option<u64>,
@@ -111,8 +126,8 @@ struct Block {
     check: Option<(u64, Result<Checked, Failure>)>,
 }
 
-/// Where segmentation stops. A `Classify` frontier is the first paragraph that needs a label; its
-/// job runs before any other. `Failed` is a paragraph whose label failed, with no such paragraph
+/// Where segmentation stops. A `Classify` frontier is the first paragraph that needs a tag; its
+/// job runs before any other. `Failed` is a paragraph whose tag failed, with no such paragraph
 /// above it.
 #[derive(Default, Debug)]
 enum Frontier {
@@ -120,11 +135,29 @@ enum Frontier {
     Done,
     Classify {
         index: usize,
+        previous: Option<String>,
         proof_open: bool,
     },
     Failed {
         index: usize,
     },
+}
+
+/// The run of paragraphs that segmentation is building: a block, or prose that may still become
+/// one.
+struct Unit {
+    /// Index of its first paragraph in `paras`.
+    first: usize,
+    /// The settled texts of its paragraphs, joined by a blank line.
+    text: String,
+    /// Skip for prose; otherwise the label of the item it is.
+    kind: Label,
+    /// Its index in the new blocks, once it is one.
+    block: Option<usize>,
+    /// True once a paragraph ending in ∎ has closed it.
+    ended: bool,
+    /// The text of the prose unit right above it, when that unit is prose.
+    prose: Option<String>,
 }
 
 struct Plan {
@@ -143,9 +176,10 @@ struct Stated {
     dot: usize,
 }
 
-fn dot(paragraph: usize, key: u64, status: Status) -> Dot {
+fn dot(paragraph: usize, last: usize, key: u64, status: Status) -> Dot {
     Dot {
         paragraph,
+        last,
         key,
         status,
         error: None,
@@ -153,13 +187,60 @@ fn dot(paragraph: usize, key: u64, status: Status) -> Dot {
     }
 }
 
-fn failed(paragraph: usize, key: u64, error: &str, service: bool) -> Dot {
+fn failed(paragraph: usize, last: usize, key: u64, error: &str, service: bool) -> Dot {
     Dot {
         paragraph,
+        last,
         key,
         status: Status::Failed,
         error: Some(error.to_string()),
         service,
+    }
+}
+
+/// Whether a paragraph with `tag` joins `unit`, the unit above it. An unfinished proof takes a
+/// proof. Otherwise Jev must say the paragraph continues the unit, and the two must be of one label,
+/// or the paragraph must be Skip, or the unit prose.
+fn joins_unit(unit: &Unit, tag: Tag) -> bool {
+    !unit.ended
+        && ((unit.kind == Label::Proof && tag.label == Label::Proof)
+            || (tag.joins
+                && (tag.label == Label::Skip
+                    || unit.kind == Label::Skip
+                    || tag.label == unit.kind)))
+}
+
+/// A block of `label` from paragraph `first` to `last`. A proof pairs with the statement directly
+/// above it, when that is a statement block.
+fn new_block(
+    new: &[Block],
+    first: usize,
+    last: usize,
+    id: u64,
+    text: String,
+    label: Label,
+    prose: Option<String>,
+) -> Block {
+    let statement = match label {
+        Label::Proof => new
+            .last()
+            .filter(|b| b.label == Label::Statement)
+            .map(|b| b.id),
+        Label::Definition | Label::Statement | Label::Skip => None,
+    };
+    Block {
+        id,
+        version: 0,
+        first,
+        last,
+        text,
+        label,
+        closed: true,
+        prose,
+        statement,
+        formal: None,
+        statement_version: None,
+        check: None,
     }
 }
 
@@ -199,11 +280,17 @@ fn nullable(value: Option<&Value>) -> Option<Option<String>> {
     }
 }
 
-fn label_entry(entry: &Value) -> Option<((String, bool), Label)> {
-    let text = entry.get("text")?.as_str()?.to_owned();
-    let proof_open = entry.get("proof_open")?.as_bool()?;
-    let label = Label::from_name(entry.get("label")?.as_str()?)?;
-    Some(((text, proof_open), label))
+fn label_entry(entry: &Value) -> Option<(TagKey, Tag)> {
+    let key = TagKey {
+        previous: nullable(entry.get("previous"))?,
+        text: entry.get("text")?.as_str()?.to_owned(),
+        proof_open: entry.get("proof_open")?.as_bool()?,
+    };
+    let tag = Tag {
+        label: Label::from_name(entry.get("label")?.as_str()?)?,
+        joins: entry.get("joins")?.as_bool()?,
+    };
+    Some((key, tag))
 }
 
 fn formal_entry(entry: &Value) -> Option<(FormalKey, Result<Formal, String>)> {
@@ -320,10 +407,24 @@ impl Mls {
         }
     }
 
-    /// Rebuilds the blocks and the frontier from the paragraphs. A block reuses the record with
-    /// its id, from `blocks` or else `parked`, when its text and label are unchanged. A paragraph
-    /// with no usable label takes the one remembered for its text, and a block with no formal takes
-    /// the one remembered for its key.
+    /// Rebuilds the blocks and the frontier from the paragraphs.
+    ///
+    /// Consecutive settled paragraphs form a unit. A paragraph joins the unit above it when
+    /// `joins_unit` says so: an unfinished proof takes a proof whatever Jev says, and otherwise
+    /// Jev must say the paragraph continues the unit. A unit that is prose becomes a block when a
+    /// joined paragraph has a label. A paragraph that starts a unit is not joined to the one above.
+    /// A block with no formal takes the one remembered for its key, and a block reuses the record
+    /// with its id, from `blocks` or else `parked`, when its text and label are unchanged.
+    ///
+    /// A paragraph's tag is current when it was labelled with the settled text above it and the
+    /// same `proof_open`, or when that exact key is remembered. Otherwise, when the same text was
+    /// tagged before, that tag stands in provisionally: the walk uses it, and the paragraph is
+    /// classified again once the frontier reaches it. So the blocks below an edit keep their dots
+    /// while Jev answers. A paragraph with no tag at all is the frontier: the first one counts as a
+    /// separator, so nothing joins it until Jev answers, and a second one stops the walk. A pending
+    /// Classify job always runs first, so a provisional tag never leads to a Formalize or Check.
+    /// A block is open, so it takes no formal yet, while its proof is unfinished or while its last
+    /// paragraph ends in ':' or ','.
     fn segment(&mut self) {
         let paras = &self.paras;
         let labels = &self.labels;
@@ -333,104 +434,166 @@ impl Mls {
             .collect();
         let mut parked = take(&mut self.parked);
         let mut new: Vec<Block> = Vec::new();
-        let mut open_proof: Option<usize> = None;
-        let mut prev: Option<(Label, &str)> = None;
+        let mut unit: Option<Unit> = None;
+        let mut previous: Option<&str> = None;
         let mut frontier = Frontier::Done;
-        // Labels remembered for paragraphs with no usable one. They are stored once the walk ends.
+        // Tags remembered for paragraphs with no current one. They are stored once the walk ends.
         let mut remembered: Vec<(usize, Labelled)> = Vec::new();
         for (i, para) in paras.iter().enumerate() {
             let Some(text) = para.settled.as_deref() else {
                 continue;
             };
-            let proof_open = open_proof.is_some();
-            let label = match &para.label {
-                Some(l) if l.text.as_str() == text && l.proof_open == proof_open => match &l.result
+            let proof_open = unit
+                .as_ref()
+                .is_some_and(|u| u.kind == Label::Proof && !u.ended);
+            let tag = match &para.label {
+                Some(l)
+                    if l.previous.as_deref() == previous
+                        && l.text == text
+                        && l.proof_open == proof_open =>
                 {
-                    Ok(label) => *label,
-                    Err(_) => {
-                        // A Classify frontier above stays: its job runs first.
-                        if matches!(frontier, Frontier::Done) {
-                            frontier = Frontier::Failed { index: i };
-                        }
-                        break;
-                    }
-                },
-                _ => match labels.get(&(text.to_owned(), proof_open)).copied() {
-                    Some(label) => {
-                        remembered.push((
-                            i,
-                            Labelled {
-                                text: text.to_owned(),
-                                proof_open,
-                                result: Ok(label),
-                            },
-                        ));
-                        label
-                    }
-                    None => {
-                        // The first paragraph that needs a label is the frontier. Until it has a
-                        // label it counts as Skip, so the blocks below keep their dots. A second
-                        // one stops.
-                        if !matches!(frontier, Frontier::Done) {
+                    match &l.result {
+                        Ok(tag) => *tag,
+                        Err(_) => {
+                            // A Classify frontier above stays: its job runs first.
+                            if matches!(frontier, Frontier::Done) {
+                                frontier = Frontier::Failed { index: i };
+                            }
                             break;
                         }
-                        frontier = Frontier::Classify {
-                            index: i,
-                            proof_open,
-                        };
-                        open_proof = None;
-                        prev = None;
-                        continue;
                     }
-                },
-            };
-            match (label, open_proof) {
-                (Label::Proof, Some(b)) => {
-                    let block = &mut new[b];
-                    block.text.push_str("\n\n");
-                    block.text.push_str(text);
                 }
-                (Label::Skip, _) => open_proof = None,
-                (Label::Definition | Label::Statement | Label::Proof, _) => {
-                    open_proof = None;
-                    let statement = match label {
-                        Label::Proof => new
-                            .last()
-                            .filter(|b| b.label == Label::Statement)
-                            .map(|b| b.id),
-                        Label::Definition | Label::Statement | Label::Skip => None,
+                _ => {
+                    let key = TagKey {
+                        previous: previous.map(str::to_owned),
+                        text: text.to_owned(),
+                        proof_open,
                     };
-                    let prose = match prev {
-                        Some((Label::Skip, skip)) => Some(skip.to_string()),
-                        Some((Label::Definition | Label::Statement | Label::Proof, _)) | None => {
-                            None
+                    match labels.get(&key).copied() {
+                        Some(tag) => {
+                            remembered.push((
+                                i,
+                                Labelled {
+                                    previous: key.previous,
+                                    text: key.text,
+                                    proof_open,
+                                    result: Ok(tag),
+                                },
+                            ));
+                            tag
                         }
-                    };
-                    new.push(Block {
-                        id: para.id,
-                        version: 0,
-                        first: i,
-                        text: text.to_string(),
-                        label,
-                        closed: true,
-                        prose,
-                        statement,
-                        formal: None,
-                        statement_version: None,
-                        check: None,
-                    });
-                    if label == Label::Proof {
-                        open_proof = Some(new.len() - 1);
+                        None => match &para.label {
+                            // A tag given to this text before, under other text above or with another
+                            // proof open, stands in until Jev answers. The walk keeps going with it.
+                            Some(Labelled {
+                                text: old,
+                                result: Ok(provisional),
+                                ..
+                            }) if old == text => {
+                                if matches!(frontier, Frontier::Done) {
+                                    frontier = Frontier::Classify {
+                                        index: i,
+                                        previous: key.previous,
+                                        proof_open,
+                                    };
+                                }
+                                *provisional
+                            }
+                            _ => {
+                                // The first paragraph with no tag is the frontier. A second one stops.
+                                if !matches!(frontier, Frontier::Done) {
+                                    break;
+                                }
+                                frontier = Frontier::Classify {
+                                    index: i,
+                                    previous: key.previous,
+                                    proof_open,
+                                };
+                                unit = None;
+                                previous = Some(text);
+                                continue;
+                            }
+                        },
                     }
                 }
+            };
+
+            if let Some(u) = unit.as_mut().filter(|u| joins_unit(u, tag)) {
+                u.text.push_str("\n\n");
+                u.text.push_str(text);
+                match u.block {
+                    Some(b) => {
+                        let block = &mut new[b];
+                        block.text.push_str("\n\n");
+                        block.text.push_str(text);
+                        block.last = i;
+                    }
+                    // Prose that Jev says the paragraph continues becomes a block of its label.
+                    None if tag.label != Label::Skip => {
+                        let block = new_block(
+                            &new,
+                            u.first,
+                            i,
+                            paras[u.first].id,
+                            u.text.clone(),
+                            tag.label,
+                            u.prose.clone(),
+                        );
+                        new.push(block);
+                        u.kind = tag.label;
+                        u.block = Some(new.len() - 1);
+                    }
+                    None => {}
+                }
+            } else {
+                let prose = unit
+                    .as_ref()
+                    .filter(|u| u.kind == Label::Skip)
+                    .map(|u| u.text.clone());
+                let mut next = Unit {
+                    first: i,
+                    text: text.to_string(),
+                    kind: tag.label,
+                    block: None,
+                    ended: false,
+                    prose,
+                };
+                if tag.label != Label::Skip {
+                    let block = new_block(
+                        &new,
+                        i,
+                        i,
+                        para.id,
+                        text.to_string(),
+                        tag.label,
+                        next.prose.clone(),
+                    );
+                    new.push(block);
+                    next.block = Some(new.len() - 1);
+                }
+                unit = Some(next);
             }
-            if label == Label::Proof && text.trim_end().ends_with('∎') {
-                open_proof = None;
+            if let Some(u) = unit.as_mut().filter(|_| text.trim_end().ends_with('∎')) {
+                u.ended = true;
             }
-            prev = Some((label, text));
+            previous = Some(text);
         }
-        if let Some(b) = open_proof {
-            new[b].closed = false;
+        if let Some(Unit {
+            block: Some(b),
+            kind,
+            ended,
+            ..
+        }) = &unit
+        {
+            let block = &mut new[*b];
+            let open = match kind {
+                Label::Proof => !*ended,
+                Label::Definition | Label::Statement | Label::Skip => {
+                    let last = settled_text(&paras[block.last]).trim_end();
+                    last.ends_with(':') || last.ends_with(',')
+                }
+            };
+            block.closed = !open;
         }
 
         let ids: HashSet<u64> = paras.iter().map(|para| para.id).collect();
@@ -511,6 +674,7 @@ impl Mls {
         match reply {
             Reply::Classified {
                 paragraph,
+                previous,
                 text,
                 proof_open,
                 result,
@@ -520,10 +684,18 @@ impl Mls {
                 }) else {
                     return false;
                 };
-                if let Ok(label) = &result {
-                    self.labels.insert((text.clone(), proof_open), *label);
+                if let Ok(tag) = &result {
+                    self.labels.insert(
+                        TagKey {
+                            previous: previous.clone(),
+                            text: text.clone(),
+                            proof_open,
+                        },
+                        *tag,
+                    );
                 }
                 para.label = Some(Labelled {
+                    previous,
                     text,
                     proof_open,
                     result,
@@ -648,13 +820,16 @@ impl Mls {
             .filter(|para| para.settled.is_some())
             .filter_map(|para| match &para.label {
                 Some(Labelled {
+                    previous,
                     text,
                     proof_open,
-                    result: Ok(label),
+                    result: Ok(tag),
                 }) => Some(json!({
+                    "previous": previous,
                     "text": text,
                     "proof_open": proof_open,
-                    "label": label.name(),
+                    "label": tag.label.name(),
+                    "joins": tag.joins,
                 })),
                 _ => None,
             })
@@ -683,13 +858,13 @@ impl Mls {
                 }
             })
             .collect();
-        json!({"version": 1, "labels": labels, "formals": formals})
+        json!({"version": 2, "labels": labels, "formals": formals})
             .to_string()
             .replace('-', "\\u002d")
     }
 
     /// Restores the labels and formalizations that `twin` remembers. Call it on a fresh or reset
-    /// `Mls`, before the first `sync`. A twin without a version 1 memory changes nothing, and an
+    /// `Mls`, before the first `sync`. A twin without a version 2 memory changes nothing, and an
     /// entry that is malformed is skipped.
     pub fn restore(&mut self, twin: &str) {
         let Some(start) = twin.rfind(MEMORY_OPEN) else {
@@ -702,7 +877,7 @@ impl Mls {
         let Ok(memory) = serde_json::from_str::<Value>(&body[..end]) else {
             return;
         };
-        if memory.get("version").and_then(Value::as_u64) != Some(1) {
+        if memory.get("version").and_then(Value::as_u64) != Some(2) {
             return;
         }
         let (Some(labels), Some(formals)) = (
@@ -721,23 +896,34 @@ impl Mls {
     /// block waits its turn behind the labelling that the frontier needs.
     fn plan(&self) -> Plan {
         let mut dots = Vec::new();
-        let mut job = match self.frontier {
-            Frontier::Classify { index, proof_open } => Some(Job::Classify {
-                paragraph: self.paras[index].id,
-                text: settled_text(&self.paras[index]).to_string(),
+        let mut job = match &self.frontier {
+            Frontier::Classify {
+                index,
+                previous,
                 proof_open,
+            } => Some(Job::Classify {
+                paragraph: self.paras[*index].id,
+                previous: previous.clone(),
+                text: settled_text(&self.paras[*index]).to_string(),
+                proof_open: *proof_open,
             }),
             Frontier::Done | Frontier::Failed { .. } => None,
         };
         if let Frontier::Failed { index } = self.frontier {
-            // The frontier is only Failed for a paragraph whose label is an error.
+            // The frontier is only Failed for a paragraph whose tag is an error.
             let para = &self.paras[index];
             if let Some(Labelled {
                 result: Err(failure),
                 ..
             }) = &para.label
             {
-                dots.push(failed(index, para.id, &failure.message, failure.service));
+                dots.push(failed(
+                    index,
+                    index,
+                    para.id,
+                    &failure.message,
+                    failure.service,
+                ));
             }
         }
 
@@ -752,20 +938,20 @@ impl Mls {
                 break;
             }
             if pending {
-                dots.push(dot(b.first, b.id, Status::Checking));
+                dots.push(dot(b.first, b.last, b.id, Status::Checking));
                 continue;
             }
             let stmt: Option<Stated> = match (b.label, b.statement) {
                 (Label::Proof, None) => {
                     let error = "There is no statement directly above this proof.";
-                    dots.push(failed(b.first, b.id, error, false));
+                    dots.push(failed(b.first, b.last, b.id, error, false));
                     continue;
                 }
                 (Label::Proof, Some(id)) => match statements.get(&id) {
                     Some(stated) => Some(stated.clone()),
                     None => {
                         let error = "The statement above has no valid Lean.";
-                        dots.push(failed(b.first, b.id, error, false));
+                        dots.push(failed(b.first, b.last, b.id, error, false));
                         continue;
                     }
                 },
@@ -779,7 +965,13 @@ impl Mls {
             let formal = match &b.formal {
                 Some(Ok(formal)) if !stale_proof => formal,
                 Some(Err(failure)) if !stale_proof => {
-                    dots.push(failed(b.first, b.id, &failure.message, failure.service));
+                    dots.push(failed(
+                        b.first,
+                        b.last,
+                        b.id,
+                        &failure.message,
+                        failure.service,
+                    ));
                     halted |= failure.service;
                     continue;
                 }
@@ -798,7 +990,7 @@ impl Mls {
                         statement: stmt.as_ref().map(|s| (s.version, s.lean.clone())),
                     });
                     pending = true;
-                    dots.push(dot(b.first, b.id, Status::Checking));
+                    dots.push(dot(b.first, b.last, b.id, Status::Checking));
                     continue;
                 }
             };
@@ -811,7 +1003,13 @@ impl Mls {
                 {
                     match result {
                         Err(failure) => {
-                            dots.push(failed(b.first, b.id, &failure.message, failure.service));
+                            dots.push(failed(
+                                b.first,
+                                b.last,
+                                b.id,
+                                &failure.message,
+                                failure.service,
+                            ));
                             halted |= failure.service;
                         }
                         Ok(Checked { env, outcome }) => match (b.label, outcome) {
@@ -819,24 +1017,24 @@ impl Mls {
                                 Label::Definition | Label::Statement | Label::Proof | Label::Skip,
                                 Outcome::Failed(message),
                             ) => {
-                                dots.push(failed(b.first, b.id, message, false));
+                                dots.push(failed(b.first, b.last, b.id, message, false));
                             }
                             (Label::Definition, Outcome::Sorry) => {
                                 let error = "The definition uses sorry.";
-                                dots.push(failed(b.first, b.id, error, false));
+                                dots.push(failed(b.first, b.last, b.id, error, false));
                             }
                             (Label::Proof, Outcome::Sorry) => {
                                 let error = "The proof uses sorry.";
-                                dots.push(failed(b.first, b.id, error, false));
+                                dots.push(failed(b.first, b.last, b.id, error, false));
                             }
                             (Label::Definition, Outcome::Verified) => {
-                                dots.push(dot(b.first, b.id, Status::Verified));
+                                dots.push(dot(b.first, b.last, b.id, Status::Verified));
                                 chain = *env;
                                 names.extend(declared_names(&formal.lean));
                                 lean.push((b.id, Label::Definition, formal.lean.clone()));
                             }
                             (Label::Statement, _) => {
-                                dots.push(dot(b.first, b.id, Status::Sorry));
+                                dots.push(dot(b.first, b.last, b.id, Status::Sorry));
                                 chain = *env;
                                 names.extend(declared_names(&formal.lean));
                                 lean.push((b.id, Label::Statement, formal.lean.clone()));
@@ -851,7 +1049,7 @@ impl Mls {
                                 );
                             }
                             (Label::Proof, Outcome::Verified) => {
-                                dots.push(dot(b.first, b.id, Status::Verified));
+                                dots.push(dot(b.first, b.last, b.id, Status::Verified));
                                 if let Some(statement) = &stmt {
                                     dots[statement.dot].status = Status::Verified;
                                 }
@@ -869,7 +1067,13 @@ impl Mls {
                                 }
                             }
                             (Label::Skip, _) => {
-                                dots.push(failed(b.first, b.id, "Unexpected label.", false));
+                                dots.push(failed(
+                                    b.first,
+                                    b.last,
+                                    b.id,
+                                    "Unexpected label.",
+                                    false,
+                                ));
                             }
                         },
                     }
@@ -882,7 +1086,7 @@ impl Mls {
                         base,
                     });
                     pending = true;
-                    dots.push(dot(b.first, b.id, Status::Checking));
+                    dots.push(dot(b.first, b.last, b.id, Status::Checking));
                 }
             }
         }

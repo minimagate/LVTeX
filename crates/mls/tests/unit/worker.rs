@@ -3,7 +3,7 @@
 
 use super::Worker;
 use crate::openrouter::{CHAT_URL, DECISIONS_URL};
-use crate::{Failure, Formal, Job, Label, Mls, Paragraph, Reply, Status};
+use crate::{Failure, Formal, Job, Label, Mls, Paragraph, Reply, Status, Tag};
 use documents::{DOCUMENTS, Line, assert_outcome, drive, lean_project, lean_ready};
 use serde_json::{Value, json};
 use std::{
@@ -28,8 +28,13 @@ fn reply(worker: &Worker) -> Reply {
         .expect("a reply within 10 seconds")
 }
 
-fn jev(label: Label) -> Value {
-    json!({"answers": {"kind": {"type": "choice", "choice": label.name()}}})
+/// Jev's answers: the label, and whether the paragraph continues the one above.
+fn jev(label: Label, joins: bool) -> Value {
+    let joins = if joins { "continues" } else { "new" };
+    json!({"answers": {
+        "kind": {"type": "choice", "choice": label.name()},
+        "joins": {"type": "choice", "choice": joins},
+    }})
 }
 
 /// A Haiku chat completion whose content is the formalization `lean`.
@@ -67,25 +72,35 @@ fn classify_reports_the_label_jev_chose() {
         |url, body| {
             assert_eq!(url, DECISIONS_URL);
             assert_eq!(body["state"]["paragraph"], "Lemma. Every group is nice.");
-            Ok(jev(Label::Statement))
+            assert_eq!(body["state"]["previous_paragraph"], "Let G be a group.");
+            Ok(jev(Label::Statement, true))
         },
     );
     worker.submit(Job::Classify {
         paragraph: 7,
+        previous: Some("Let G be a group.".to_string()),
         text: "Lemma. Every group is nice.".to_string(),
         proof_open: false,
     });
     match reply(&worker) {
         Reply::Classified {
             paragraph,
+            previous,
             text,
             proof_open,
             result,
         } => {
             assert_eq!(paragraph, 7);
+            assert_eq!(previous.as_deref(), Some("Let G be a group."));
             assert_eq!(text, "Lemma. Every group is nice.");
             assert!(!proof_open);
-            assert_eq!(result, Ok(Label::Statement));
+            assert_eq!(
+                result,
+                Ok(Tag {
+                    label: Label::Statement,
+                    joins: true,
+                })
+            );
         }
         other => panic!("expected a classification, got {other:?}"),
     }
@@ -146,6 +161,7 @@ fn a_request_failure_is_passed_through_as_a_service_failure() {
     let worker = Worker::with_request(PathBuf::new(), || {}, move |_, _| Err(failure.clone()));
     worker.submit(Job::Classify {
         paragraph: 1,
+        previous: None,
         text: "Anything.".to_string(),
         proof_open: false,
     });
@@ -195,11 +211,12 @@ fn replies_come_back_in_submission_order_with_one_wake_each() {
         move || {
             counted.fetch_add(1, Ordering::SeqCst);
         },
-        |_, _| Ok(jev(Label::Skip)),
+        |_, _| Ok(jev(Label::Skip, false)),
     );
     for paragraph in 1..=3u64 {
         worker.submit(Job::Classify {
             paragraph,
+            previous: None,
             text: format!("Paragraph {paragraph}."),
             proof_open: false,
         });
@@ -243,7 +260,8 @@ fn scripted(
     move |url, body| {
         if url == DECISIONS_URL {
             let text = body["state"]["paragraph"].as_str().unwrap_or_default();
-            Ok(jev(line_with_text(lines, text)?.label))
+            let line = line_with_text(lines, text)?;
+            Ok(jev(line.label, line.joins))
         } else if url == CHAT_URL {
             let prompt = body["messages"][1]["content"]
                 .as_array()

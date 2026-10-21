@@ -1,7 +1,7 @@
 //! The background thread that runs MLS jobs: model requests and Lean checks, one at a time.
 
 use crate::openrouter::{
-    self, CHAT_URL, DECISIONS_URL, classify_request, formalize_request, parse_formal, parse_label,
+    self, CHAT_URL, DECISIONS_URL, classify_request, formalize_request, parse_formal, parse_tag,
 };
 use crate::repl::Repl;
 use crate::{Checked, Failure, Job, Reply, rules};
@@ -78,13 +78,16 @@ fn run(
     match job {
         Job::Classify {
             paragraph,
+            previous,
             text,
             proof_open,
         } => {
-            let result = request(DECISIONS_URL, &classify_request(text, *proof_open))
-                .and_then(|response| parse_label(&response));
+            let request_body = classify_request(previous.as_deref(), text, *proof_open);
+            let result =
+                request(DECISIONS_URL, &request_body).and_then(|response| parse_tag(&response));
             Reply::Classified {
                 paragraph: *paragraph,
+                previous: previous.clone(),
                 text: text.clone(),
                 proof_open: *proof_open,
                 result,
@@ -160,10 +163,12 @@ fn failure_reply(job: &Job, failure: Failure) -> Reply {
     match job {
         Job::Classify {
             paragraph,
+            previous,
             text,
             proof_open,
         } => Reply::Classified {
             paragraph: *paragraph,
+            previous: previous.clone(),
             text: text.clone(),
             proof_open: *proof_open,
             result: Err(failure),
