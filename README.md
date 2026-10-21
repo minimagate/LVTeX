@@ -1,9 +1,47 @@
-# Mathstral
+<h1 align="center"><img src="assets/brand/mathstral.svg" width="360" alt="Mathstral"></h1>
+
+<p align="center">Write mathematics in prose. Let Lean check it.</p>
+
+<p align="center"><sub>Alpha 2 · native macOS app for Apple Silicon · written in Rust</sub></p>
 
 Mathstral **alpha 2** is a native macOS editor for prose with inline math, written
 in Rust. Press **⌘1** to write a formula with TeXmacs-style keys, or **⇧⌘1** to
-describe a formula to a local Ollama model. MiTeX and Typst render formulas in the
-background. Writing, manual math, saving and PDF export work without Ollama.
+describe one to a local Ollama model; MiTeX and Typst render formulas in the
+background. Optionally, MLS, the Mathstral Language Server, checks each definition,
+statement and proof against Lean and Mathlib, and shows the result as a small dot
+beside the block.
+
+## Highlights
+
+- **Inline math that stays prose.** ⌘1 opens a formula with TeXmacs-style keys.
+  MiTeX and Typst render it in the background, with no TeX install.
+- **AI formulas that stay on your Mac.** ⇧⌘1 turns a description into LaTeX with
+  Gemma, run locally by Ollama. Nothing leaves the machine.
+- **Lean checking with MLS.** Each definition, statement and proof gets a dot: grey
+  while it is checked, amber when a statement compiles with `sorry`, green when it
+  is verified down to everything it uses, and red on an error. Paragraphs that
+  belong together are checked as one block.
+- **The Structure chart (⌘L).** A quiet chart at the top right lists each definition
+  and statement, with lines to the blocks it uses. Click a row to scroll to its block.
+- **Plain Markdown files.** Documents stay Markdown-compatible text. Saving also
+  writes the Lean twin, `<name>.mls.lean`, beside the file.
+- **Quiet by design.** Dots, panels and the chart sit over the page, so the layout
+  never shifts.
+
+## What's new in alpha 2
+
+- **Lean checking (MLS).** Jev labels each paragraph and Claude Haiku 5.5 writes the
+  Lean, through OpenRouter. A Lean REPL with Mathlib checks it on this Mac.
+- **Blocks that belong together.** A setup line and its claim, a statement and the
+  display formula under it, or a proof over several paragraphs form one block.
+- **Links between blocks.** A block that uses a name declared above is linked to the
+  block that declares it, and a failed block turns the blocks that use it red.
+- **The Structure chart (⌘L).** One row per definition and statement, with its level
+  and the links between them.
+- **The Lean twin.** Saving writes `<name>.mls.lean`, and opening restores labels and
+  Lean from it.
+- **Settings (⌘,).** The OpenRouter key is saved in the login Keychain, and a switch
+  turns Lean checking on or off.
 
 ## Install
 
@@ -24,7 +62,30 @@ ollama pull gemma4:e4b
 ```
 
 The model and address are set in [`app/src/config.rs`](app/src/config.rs).
-No TeX distribution is required.
+No TeX distribution is required. Only AI prompts need Ollama: writing, manual math,
+saving and PDF export work without it.
+
+For Lean checking, add an [OpenRouter](https://openrouter.ai) key in
+**Mathstral → Settings…** (⌘,); it is saved to your login Keychain. You can also
+export `OPENROUTER_API_KEY` in the shell you launch Mathstral from. When it is set, it
+takes precedence over the Keychain. Build the Lean project once (see
+[Lean checking (MLS)](#lean-checking-mls)):
+
+```sh
+export OPENROUTER_API_KEY=…     # optional; for example in ~/.zshrc
+open -a Mathstral               # or run target/release/mathstral
+```
+
+### Privacy: what runs where
+
+| Feature | Runs | Sends |
+| --- | --- | --- |
+| Writing, manual math, PDF export | this Mac | nothing |
+| AI formulas (⇧⌘1) | Ollama on this Mac (`gemma4:e4b`) | nothing leaves the Mac |
+| Lean checking: labels and formalization | OpenRouter (Jev, Claude Haiku) | the paragraphs being checked, with the prose and Lean above them |
+| Lean checking: running the Lean | Lean REPL on this Mac | nothing |
+
+Turning Lean checking off in Settings stops new OpenRouter requests.
 
 ## Writing
 
@@ -47,6 +108,8 @@ window. The app remembers its window geometry and last-opened file.
 | Cut / Copy / Paste / Select All | ⌘X / ⌘C / ⌘V / ⌘A |
 | Insert Formula | ⌘1 |
 | Ask AI for Formula | ⇧⌘1 |
+| Structure chart (View → Structure) | ⌘L |
+| Settings… | ⌘, |
 | Close / Quit | ⌘W / ⌘Q |
 
 Saving replaces the file atomically and preserves its permissions. Opening
@@ -93,6 +156,124 @@ Enter on a failed prompt retries it. A formula alone on its line is centered.
 Formulas are single units for selection and copying. Unsupported imported LaTeX
 is retained as raw source; reopening without edits preserves the original source.
 
+## Lean checking (MLS)
+
+<img src="assets/brand/mls.svg" width="88" alt="MLS" align="right">
+
+MLS, the Mathstral Language Server, reads the document a block at a time. A
+paragraph is a line; Enter closes it.
+For each paragraph, Jev (`typesafe/jev-1.13`) answers two questions: what it is (a
+definition, a statement (lemma, theorem, corollary, proposition), a proof, or
+anything else, which gets no dot), and whether it belongs to the same item as the
+paragraph above. Paragraphs that belong together form one block: a setup line and
+its claim, a statement and the displayed formula under it, or a proof that runs
+over several paragraphs until one that is not part of it, or until it ends with ∎.
+A block's dot sits beside its first paragraph. The last block gets no dot and no
+request while it is an unfinished proof or ends in `:` or `,`.
+
+Claude Haiku 5.5 (`anthropic/claude-haiku-5.5`) formalizes each block into Lean as
+one item, given the Lean of the blocks above and the prose run above it; statements
+are formalized with `sorry`, and a proof restates its statement with the real proof.
+Output that uses `axiom`, `admit`, `sorry` in a definition or proof, commands such
+as `#eval` or `set_option`, redefines a name from above, or changes the statement
+its proof belongs to, is rejected before Lean sees it. The Lean REPL then checks the
+block on top of the blocks above.
+
+After a formalization passes these rules, MLS records which names declared by the
+blocks above it appear in its Lean (whole words outside comments, except names the
+block declares itself). These links drive checking, with no model calls. A block that
+uses a name that no block above declares any more (renamed or removed) is
+formalized again. A block that uses a red block is red, with the note "Uses `X`,
+which does not check.", and Lean is not run. A block whose Lean verifies but that
+uses a statement that is only amber stays amber, with "Relies on `X`, which is not
+proved yet." If a block above has no valid Lean at all, a missing name is red, with
+"Uses `X`, which is not defined above.", and Haiku is not asked again.
+
+| Dot | Meaning |
+| --- | --- |
+| Grey | Being checked |
+| Amber | The statement compiles with `sorry`, or the block relies on one that does |
+| Green | Verified: a definition, or a statement together with its proof, and everything it uses |
+| Red | Lean reported an error, the output was rejected, or the block uses one that does not check |
+
+Prose, examples and remarks get no dot. Hover or click a dot to see the block's
+panel: a note first, when a link explains the colour; then the assumptions in
+plain language, written from the Lean; then `Uses a, b.` for the names it uses from
+above. **Show Lean** reveals the Lean and any error. The panel opens below the
+block's last paragraph. Escape or a click elsewhere closes a pinned panel.
+Checking runs in the background and never blocks typing. Editing a block
+re-formalizes that block, and any block below it that used a name the edit removed
+or renamed; the blocks below are re-checked with Lean. Editing a paragraph also asks
+Jev again about it and about the paragraph below; until Jev answers, the blocks and
+dots stay where they were.
+
+**View → Structure** (⌘L) opens a quiet chart at the top right of the window: one
+row per definition and statement, in document order, with its Lean name (or the
+start of its text, when it has none) and its status colour. A row's dot is indented
+by its level: 0 for a block that uses no other block, otherwise one more than the
+deepest block it uses. Thin lines run from each block to the blocks it uses, and a
+proof adds what it uses to its statement's row. Click a row to scroll to its block.
+Escape closes the panel first, then the chart. The chart only shows Lean that
+exists, so a block with no Lean yet has no links.
+
+Green means *this Lean formalization is verified*, not that it says what you
+wrote. The assumptions panel is how you check that it does. Green also requires
+everything the block uses, directly or through other blocks, to be verified.
+
+A missing key, an unreachable OpenRouter or a Lean project that is not built shows
+as one red dot whose panel explains what to do; the next edit retries. Saving
+also writes the document's Lean twin, `<name>.mls.lean`, beside it: the Lean that
+checked, with a `-- mathstral:block <id>` comment per block, and a final
+`mathstral:memory` comment (`version` 2). It remembers each paragraph's label, the
+paragraph above it and whether it joins that one, and each block's Lean,
+assumptions and names it uses, or its rejection reason. Opening the document re-uses
+them, so unchanged text needs no model calls; Lean re-checks every block. A version 1
+twin is ignored, so its paragraphs are asked again once. MLS needs no Ollama.
+
+### Settings
+
+**Mathstral → Settings…** (⌘,) opens a quiet panel over the page, under the title
+bar, in two sections. Escape closes it, and so does a click outside it.
+
+- **Writing · on this Mac** says that AI formulas (⇧⌘1) use `gemma4:e4b` through
+  Ollama at `127.0.0.1:11434`, that nothing is sent anywhere else, and whether
+  Ollama is running.
+- **Lean checking · OpenRouter** holds the switch **Check definitions, statements
+  and proofs with Lean**, a line on what runs where, the key status and the key
+  field.
+
+With the switch off, MLS sends no requests, shows no dots, and the Structure chart
+says "Lean checking is off." The choice is remembered in a small `mls` file in
+`~/Library/Application Support/Mathstral`, beside `last-file`, holding `on` or `off`.
+A new install checks.
+
+The key field is masked: each character shows as a bullet, up to 48. Paste (⌘V) or type the
+key, then press Return. Mathstral saves it to the login Keychain (item "Mathstral
+OpenRouter", account "openrouter") through the system `security` tool, which gets the
+command on its standard input, so the key never touches a file or a process argument.
+**Remove key from Keychain** deletes it. `OPENROUTER_API_KEY`, when it is set, takes
+precedence over the Keychain, and the status line says which source is in use. If the
+Keychain cannot keep the key, Mathstral uses it until it quits.
+
+### Lean project
+
+The Lean project is [`lean/`](lean): Lean 4.35.0 with Mathlib and the
+[Lean REPL](https://github.com/leanprover-community/repl), pinned in
+`lake-manifest.json`. Build it once with [elan](https://github.com/leanprover/elan)
+installed:
+
+```sh
+cd lean
+lake exe cache get            # downloads prebuilt Mathlib
+lake build Mathlib repl
+```
+
+A source build of Mathlib without the cache takes hours. Mathstral uses `lean/`
+of the checkout it was built from; set `MATHSTRAL_LEAN_PROJECT` to use another
+project. The model ids live in [`crates/mls/src/lib.rs`](crates/mls/src/lib.rs).
+HTTPS requests go through the system `curl`, which reads the key from its
+standard input, never from its arguments.
+
 ## Files
 
 Documents are Markdown-compatible text:
@@ -106,8 +287,10 @@ Documents are Markdown-compatible text:
 - An inline formula ending in a TeX `%` comment gains a newline before its closing
   `$`, so the delimiter is not swallowed by the comment.
 
-Settings live in `~/Library/Application Support/Mathstral`. The on-disk document
-and settings formats are compatibility boundaries.
+Settings live in `~/Library/Application Support/Mathstral`. The Lean checking switch
+is the `mls` file there, beside `last-file`. A key saved in Settings is in the login
+Keychain, not in a file. The on-disk document and settings formats are compatibility
+boundaries.
 
 ## Development
 
@@ -125,22 +308,33 @@ sh scripts/package.sh       # dist/Mathstral-<version>-alpha-macos-<arch>.zip
 
 The build script uses the repo-local `.cargo-home` offline when that cache exists;
 a fresh clone uses the normal Cargo installation. Tests run without a window,
-Ollama or a TeX installation. The optional manual-preview timing check is:
+Ollama, OpenRouter, Lean or a TeX installation. The optional checks are:
 
 ```sh
+# Manual-preview timing.
 cargo test --release --locked -p mathstral manual_preview_latency -- --ignored --nocapture
+# The four sample documents with scripted model answers, checked by Lean (needs lean/ built).
+cargo test --release --locked -p mathstral-mls scripted_documents -- --ignored --nocapture
+# The same documents through OpenRouter at temperature 0 (needs OPENROUTER_API_KEY too).
+cargo test --release --locked -p mathstral-mls --test documents -- --ignored --nocapture
 ```
+
+Each optional MLS test skips with a message when its key or Lean project is missing.
+`crates/mls` builds and tests on Linux too; the app itself is macOS-only.
 
 | Path | Responsibility |
 | --- | --- |
-| `app/src/app/` | Window state, events, drawing, commands and math sessions |
+| `app/src/app/` | Window state, events, drawing, commands, math sessions, Lean dots and panel, Structure chart, Settings |
 | `app/src/document/` | Text, formulas, file encoding, cursor and undo |
 | `app/src/math/` | Formula keys, tree, LaTeX parsing, Ollama and background work |
 | `app/src/view/` | Typesetting, hit testing, pixel rendering and carets |
-| `app/src/{file,menu,markdown,export,config}.rs` | Platform I/O, menus, Markdown, PDF export and settings constants |
+| `app/src/{config,export,file,keychain,markdown,menu}.rs` | Settings constants, PDF export, platform I/O, the login Keychain, Markdown and menus |
 | `crates/latex/` | MiTeX conversion and bundled Typst compatibility definitions |
 | `crates/render/` | Typst rendering and PDF compilation with embedded fonts |
+| `crates/mls/` | Lean checking: block state, OpenRouter, rejection rules, Lean REPL worker |
+| `lean/` | Pinned Lake project with Mathlib and the Lean REPL |
 | `app/tests/`, `crates/*/tests/` | Unit tests, integration scenarios and fixtures |
+| `assets/brand/` | Mathstral and MLS wordmarks |
 | `assets/fonts/` | Required fonts and license notices |
 | `scripts/` | App build and release packaging |
 | `.agents/skills/`, `AGENTS.md` | Repository guidance for coding agents |

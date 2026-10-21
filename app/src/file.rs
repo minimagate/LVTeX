@@ -118,6 +118,29 @@ pub fn remember(path: Option<&Path>) {
         eprintln!("Cannot remember last document: {error}");
     }
 }
+fn mls_path() -> Option<PathBuf> {
+    state_path().map(|p| p.with_file_name("mls"))
+}
+/// Whether Lean checking is on. It is on unless the switch file says `off`, so a new install checks.
+pub fn mls_enabled() -> bool {
+    mls_path()
+        .and_then(|p| fs::read_to_string(p).ok())
+        .is_none_or(|text| parse_mls(&text))
+}
+/// The switch file's text as a choice: only `off`, once trimmed, turns checking off.
+fn parse_mls(text: &str) -> bool {
+    text.trim() != "off"
+}
+pub fn remember_mls_enabled(on: bool) {
+    let Some(state) = mls_path() else { return };
+    let result = (|| {
+        fs::create_dir_all(state.parent().unwrap())?;
+        write(&state, if on { "on\n" } else { "off\n" })
+    })();
+    if let Err(error) = result {
+        eprintln!("Cannot remember Lean checking: {error}");
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WindowGeometry {
     pub width: f64,

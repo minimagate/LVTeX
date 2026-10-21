@@ -74,7 +74,10 @@ impl ApplicationHandler<Action> for App {
             }
             WindowEvent::Ime(Ime::Commit(text)) => {
                 self.composing = false;
-                self.text_input(&text);
+                // Settings takes its typed text from the keys, so an IME commit is dropped.
+                if self.settings.is_none() {
+                    self.text_input(&text);
+                }
             }
             WindowEvent::Ime(Ime::Disabled) => self.composing = false,
             WindowEvent::Focused(focused) => {
@@ -90,6 +93,8 @@ impl ApplicationHandler<Action> for App {
                 self.mouse = ((position.x / scale) as f32, (position.y / scale) as f32);
                 if self.dragging {
                     self.mouse_caret(true);
+                } else {
+                    self.mls_hover();
                 }
             }
             WindowEvent::MouseInput {
@@ -98,6 +103,13 @@ impl ApplicationHandler<Action> for App {
                 ..
             } => {
                 if state == ElementState::Pressed {
+                    if self.settings.is_some() {
+                        self.settings_click();
+                        return;
+                    }
+                    if self.mls_click() {
+                        return;
+                    }
                     if self.modifiers.super_key() || self.mouse.1 < 32.0 {
                         let _ = self.window.as_ref().unwrap().drag_window();
                     } else {
@@ -136,9 +148,10 @@ impl ApplicationHandler<Action> for App {
             file::remember_window_geometry(self.window_geometry);
             self.size_save_at = None;
         }
-        event_loop.set_control_flow(
-            self.size_save_at
-                .map_or(ControlFlow::Wait, ControlFlow::WaitUntil),
-        );
+        let wake = [self.size_save_at, self.animate()]
+            .into_iter()
+            .flatten()
+            .min();
+        event_loop.set_control_flow(wake.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
     }
 }

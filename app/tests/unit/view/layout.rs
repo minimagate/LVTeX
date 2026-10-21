@@ -429,6 +429,63 @@ fn stray_atoms_without_formulas_terminate() {
     assert!(!layout.lines.is_empty());
 }
 
+#[test]
+fn plain_puts_each_newline_line_on_its_own_row() {
+    let mut t = Typesetter::new();
+    let text = "first\nsecond";
+    let layout = t.plain(text, 680.0, false, 1.0, TEXT_COLOR);
+    assert_eq!(layout.lines.len(), 2);
+    assert_eq!(layout.lines[0].start, 0);
+    assert_eq!(layout.lines[1].start, text.find("second").unwrap());
+    // An empty line is still a row of the line height.
+    let blank = t.plain("a\n\nb", 680.0, false, 1.0, TEXT_COLOR);
+    assert_eq!(blank.lines.len(), 3);
+    assert_eq!(blank.lines[1].height, LINE_HEIGHT);
+    assert_eq!(blank.lines[2].start, 3);
+}
+
+#[test]
+fn plain_wraps_long_lines_within_the_width() {
+    let mut t = Typesetter::new();
+    let text = "alpha beta gamma delta epsilon zeta eta theta";
+    let layout = t.plain(text, 120.0, false, 1.0, TEXT_COLOR);
+    assert!(layout.lines.len() > 1, "rows {}", layout.lines.len());
+    for line in &layout.lines {
+        assert!(line.stops.last().unwrap().1 <= 120.0 + 0.01);
+    }
+    // Rows cover the text in order with no gaps.
+    assert_eq!(layout.lines[0].start, 0);
+    for pair in layout.lines.windows(2) {
+        assert_eq!(pair[1].start, pair[0].end);
+    }
+    assert_eq!(layout.lines.last().unwrap().end, text.len());
+}
+
+#[test]
+fn plain_mono_uses_the_mono_face_and_its_advance() {
+    let mut t = Typesetter::new();
+    let text = "iiiiiiii";
+    let regular = t.plain(text, 680.0, false, 1.0, TEXT_COLOR);
+    let mono = t.plain(text, 680.0, true, 1.0, TEXT_COLOR);
+    let width = |layout: &Layout| layout.lines[0].stops.last().unwrap().1;
+    assert!(
+        (width(&mono) - width(&regular)).abs() > 1.0,
+        "mono {} regular {}",
+        width(&mono),
+        width(&regular)
+    );
+    let mono_id = t.word("x", Face::Mono, 1.0).glyphs[0].font_id;
+    assert!(mono.glyphs.iter().all(|g| g.glyph.font_id == mono_id));
+}
+
+#[test]
+fn plain_colours_every_glyph() {
+    let mut t = Typesetter::new();
+    let layout = t.plain("colour one\nand two", 680.0, true, 1.0, 0x2F7BFF);
+    assert!(!layout.glyphs.is_empty());
+    assert!(layout.glyphs.iter().all(|g| g.color == 0x2F7BFF));
+}
+
 impl Layout {
     pub fn caret(&self, byte: usize) -> (usize, f32) {
         self.caret_on_line(byte, None)

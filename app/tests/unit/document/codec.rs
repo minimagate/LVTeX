@@ -318,3 +318,82 @@ fn malformed_pending_comment_stays_plain_text() {
         assert_eq!(d.markdown(), source, "{source:?}");
     }
 }
+#[test]
+fn paragraphs_are_non_blank_lines_as_latex_text() {
+    let d = Document::new("Intro $x^2$ here\n\n$$\n\\int_0^1 x dx\n$$\n  \nEnd");
+    assert_eq!(d.text(), format!("Intro {ATOM} here\n\n{ATOM}\n  \nEnd"));
+    assert_eq!(
+        d.paragraphs(),
+        vec![
+            (0..14, "Intro $x^2$ here".to_owned(), true),
+            (16..19, "$$\\int_0^1 x dx$$".to_owned(), true),
+            (23..26, "End".to_owned(), true),
+        ]
+    );
+}
+#[test]
+fn paragraphs_skip_blank_lines() {
+    for source in ["", "\n", "\n  \n\t\n"] {
+        let d = Document::new(source);
+        assert!(d.paragraphs().is_empty(), "{source:?}");
+    }
+}
+#[test]
+fn paragraphs_write_ai_formulas_without_prompt_comments() {
+    let comment = format!("<!--mathstral:{}-->", URL_SAFE_NO_PAD.encode("the square"));
+    let d = Document::new(&format!("Area $x^2${comment} done"));
+    assert_eq!(d.formulas[&5].prompt.as_deref(), Some("the square"));
+    assert_eq!(
+        d.paragraphs(),
+        vec![(0..13, "Area $x^2$ done".to_owned(), true)]
+    );
+}
+#[test]
+fn paragraphs_mark_pending_prompt_lines_not_ready() {
+    let d = Document::new(&format!("Solve {} now\n\nDone", pending_comment("x+1")));
+    assert_eq!(
+        d.paragraphs(),
+        vec![
+            (0..13, "Solve x+1 now".to_owned(), false),
+            (15..19, "Done".to_owned(), true),
+        ]
+    );
+}
+#[test]
+fn paragraphs_mark_manual_formula_being_edited_not_ready() {
+    let mut d = Document::new("Before after\nNext");
+    d.move_to(7, false);
+    d.open_manual();
+    d.update_manual("x+y".to_owned());
+    assert_eq!(
+        d.paragraphs(),
+        vec![
+            (0..15, "Before $x+y$after".to_owned(), false),
+            (16..20, "Next".to_owned(), true),
+        ]
+    );
+}
+#[test]
+fn paragraphs_mark_open_ai_prompt_line_not_ready() {
+    let mut d = Document::new("Ab\nNext");
+    d.move_to(1, false);
+    d.open_ai_prompt();
+    type_text(&mut d, "x");
+    assert_eq!(d.text(), "A x b\nNext");
+    assert_eq!(
+        d.paragraphs(),
+        vec![
+            (0..5, "A x b".to_owned(), false),
+            (6..10, "Next".to_owned(), true),
+        ]
+    );
+}
+#[test]
+fn paragraphs_write_literal_dollars_as_plain_text() {
+    let d = Document::new(r"Café \$5 today");
+    assert_eq!(d.text(), "Café $5 today");
+    assert_eq!(
+        d.paragraphs(),
+        vec![(0..14, "Café $5 today".to_owned(), true)]
+    );
+}

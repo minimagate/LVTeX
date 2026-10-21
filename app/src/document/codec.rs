@@ -91,6 +91,56 @@ impl Document {
         }
         result
     }
+    /// Each non-blank line as text for checking: formulas become `$latex$` (display ones
+    /// `$$latex$$`), without prompt comments or escapes. A line is not ready while a formula in
+    /// it has no LaTeX yet, is being edited, or an AI prompt is open in it.
+    pub fn paragraphs(&self) -> Vec<(Range<usize>, String, bool)> {
+        let text = self.text();
+        let open = self.open_range();
+        let manual = self.manual_id();
+        let mut paragraphs = Vec::new();
+        let mut line_start = 0;
+        for line in text.split('\n') {
+            let range = line_start..line_start + line.len();
+            line_start = range.end + 1;
+            let prompt_open = open
+                .as_ref()
+                .is_some_and(|r| r.start <= range.end && r.end >= range.start);
+            let mut ready = !prompt_open;
+            let mut built = String::new();
+            // Each atom is one char, so iterating chars visits every formula exactly once.
+            for (offset, c) in line.char_indices() {
+                let pos = range.start + offset;
+                let Some(formula) = self.formulas.get(&pos) else {
+                    built.push(c);
+                    continue;
+                };
+                if manual == Some(formula.id) {
+                    ready = false;
+                }
+                match formula.latex.as_deref() {
+                    Some(latex) if !latex.is_empty() => {
+                        let delimiter = if Self::is_display_in(&text, pos) {
+                            "$$"
+                        } else {
+                            "$"
+                        };
+                        built.push_str(delimiter);
+                        built.push_str(latex);
+                        built.push_str(delimiter);
+                    }
+                    _ => {
+                        built.push_str(&formula.label());
+                        ready = false;
+                    }
+                }
+            }
+            if !built.trim().is_empty() {
+                paragraphs.push((range, built, ready));
+            }
+        }
+        paragraphs
+    }
 }
 
 fn escape_label(label: &str) -> String {

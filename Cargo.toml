@@ -1,5 +1,5 @@
 [workspace]
-members = ["app", "crates/render", "crates/latex"]
+members = ["app", "crates/render", "crates/latex", "crates/mls"]
 resolver = "2"
 
 [workspace.package]
@@ -13,6 +13,8 @@ authors = ["Michelangelo Gubinelli"]
 [workspace.dependencies]
 mathstral-latex = { path = "crates/latex" }
 mathstral-render = { path = "crates/render" }
+mathstral-mls = { path = "crates/mls" }
+serde_json = "=1.0.154"
 
 [profile.release]
 opt-level = "s"

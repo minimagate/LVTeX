@@ -34,3 +34,66 @@ pub const MATH_CACHE_LIMIT: usize = 512;
 pub const OLLAMA_MODEL: &str = "gemma4:e4b";
 pub const OLLAMA_ADDRESS: &str = "127.0.0.1:11434";
 pub const KEEP_ALIVE: &str = "30m";
+
+// Lean checking: status dots and their panel.
+// Muted so the dots sit quietly on the background.
+pub const DOT_CHECKING: u32 = 0x4E4D4B;
+pub const DOT_SORRY: u32 = 0xA88B5A;
+pub const DOT_VERIFIED: u32 = 0x6F9A72;
+pub const DOT_FAILED: u32 = 0xA9605C;
+pub const DOT_RADIUS: f32 = 3.0;
+// Distance of the dot's centre left of the column.
+pub const DOT_GUTTER: f32 = 22.0;
+// Smallest gap between a dot's edge and the window's left edge.
+pub const DOT_EDGE: f32 = 6.0;
+// How far from a dot's centre the pointer still counts as on it, in logical pixels.
+pub const DOT_HIT_RADIUS: f32 = 10.0;
+// Time between frames while a dot fades.
+pub const DOT_FRAME_MS: u64 = 16;
+pub const DOT_FADE_MS: u64 = 240;
+pub const PANEL_COLOR: u32 = 0x1C1C1C;
+pub const PANEL_MAX_WIDTH: f32 = 460.0;
+pub const PANEL_PADDING: f32 = 18.0;
+pub const PANEL_RADIUS: f32 = 8.0;
+// Space between a dot's row and the panel beneath it, and between panel rows.
+pub const PANEL_GAP: f32 = 6.0;
+// Space above the Lean toggle and above the Lean.
+pub const PANEL_SECTION_GAP: f32 = 12.0;
+// Smallest distance the panel keeps from the window's top and bottom edges.
+pub const PANEL_EDGE: f32 = 12.0;
+// How far the panel's area reaches past its top and bottom while the pointer crosses to a dot.
+pub const PANEL_BRIDGE: f32 = 12.0;
+pub const PANEL_TEXT_SCALE: f32 = 0.84;
+pub const PANEL_CODE_SCALE: f32 = 0.74;
+pub const PANEL_ERROR_COLOR: u32 = 0xB58682;
+
+// The Settings window: a panel under the title bar, with the Lean switch and the key field.
+pub const SETTINGS_WIDTH: f32 = 480.0;
+// The switch's pill, and how far the knob sits inside the pill's edge.
+pub const SETTINGS_SWITCH_W: f32 = 26.0;
+pub const SETTINGS_SWITCH_H: f32 = 14.0;
+pub const SETTINGS_KNOB_INSET: f32 = 2.0;
+// The key field's fill, and the space between its text and its edges.
+pub const SETTINGS_FIELD_COLOR: u32 = 0x262625;
+pub const SETTINGS_FIELD_INSET_X: f32 = 8.0;
+pub const SETTINGS_FIELD_INSET_Y: f32 = 4.0;
+// Most bullets the key field shows, however long the key.
+pub const SETTINGS_BULLETS: usize = 48;
+
+// The Structure chart: the document's definitions and statements and what each uses.
+// Width of the chart, at the window's top right.
+pub const CHART_WIDTH: f32 = 300.0;
+// Top of the chart, below the macOS title bar.
+pub const CHART_TOP: f32 = 36.0;
+// Height of one definition or statement's row.
+pub const CHART_ROW: f32 = 22.0;
+// Horizontal step between dependency levels in the chart's graph column.
+pub const CHART_INDENT: f32 = 14.0;
+// Deepest level drawn with its own indent; deeper nodes share its column.
+pub const CHART_MAX_LEVEL: usize = 6;
+// Space between the graph column and a node's name.
+pub const CHART_GAP: f32 = 10.0;
+pub const CHART_EDGE_WIDTH: f32 = 1.0;
+pub const CHART_EDGE_COLOR: u32 = 0x4A4846;
+// The Lake project with Mathlib and the REPL; MATHSTRAL_LEAN_PROJECT overrides it.
+pub const LEAN_PROJECT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../lean");

@@ -19,6 +19,7 @@ impl App {
         let Some(path) = path else { return false };
         match file::write(&path, self.doc.markdown()) {
             Ok(()) => {
+                self.save_lean(&path);
                 self.path = Some(path);
                 self.doc.mark_saved();
                 file::remember(self.path.as_deref());
@@ -69,6 +70,39 @@ impl App {
         }
     }
     pub(super) fn action(&mut self, event_loop: &ActiveEventLoop, action: Action) {
+        // Background results are not user actions: they keep the undo group and goal column.
+        if let Action::MlsReady = action {
+            self.apply_mls_replies();
+            return;
+        }
+        // While Settings is open, only its own actions and the ones that always apply act.
+        if self.settings.is_some() {
+            match action {
+                Action::Paste => {
+                    self.paste_key();
+                    return;
+                }
+                Action::Settings => {
+                    self.close_settings();
+                    return;
+                }
+                Action::MathReady | Action::Quit => {}
+                Action::MlsReady
+                | Action::New
+                | Action::Open
+                | Action::Save
+                | Action::SaveAs
+                | Action::ExportPdf
+                | Action::Undo
+                | Action::Redo
+                | Action::Cut
+                | Action::Copy
+                | Action::SelectAll
+                | Action::InsertFormula
+                | Action::AskAiFormula
+                | Action::ToggleChart => return,
+            }
+        }
         self.doc.break_group();
         self.goal_x = None;
         if self.math.is_some() {
@@ -94,6 +128,7 @@ impl App {
         }
         match action {
             Action::MathReady => self.apply_math_replies(),
+            Action::MlsReady => {} // Applied before the undo group breaks, above.
             Action::InsertFormula => {
                 let in_prompt = self
                     .doc
@@ -126,6 +161,7 @@ impl App {
                     self.path = None;
                     self.scroll = 0.0;
                     file::remember(None);
+                    self.reset_mls();
                     self.changed(true);
                 }
             }
@@ -137,8 +173,10 @@ impl App {
                     match file::read(&path) {
                         Ok(text) => {
                             self.doc = Document::new(&text);
-                            self.path = Some(path);
                             self.scroll = 0.0;
+                            self.reset_mls();
+                            self.restore_mls(&path);
+                            self.path = Some(path);
                             file::remember(self.path.as_deref());
                             self.changed(true);
                         }
@@ -188,6 +226,8 @@ impl App {
                     self.changed(true);
                 }
             }
+            Action::ToggleChart => self.toggle_chart(),
+            Action::Settings => self.toggle_settings(),
         }
     }
 }

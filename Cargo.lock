@@ -1916,6 +1916,7 @@ dependencies = [
  "base64 0.22.1",
  "cosmic-text",
  "mathstral-latex",
+ "mathstral-mls",
  "mathstral-render",
  "muda",
  "rfd",
@@ -1933,6 +1934,13 @@ dependencies = [
  "mathstral-render",
  "mitex",
  "mitex-spec-gen",
+]
+
+[[package]]
+name = "mathstral-mls"
+version = "0.2.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

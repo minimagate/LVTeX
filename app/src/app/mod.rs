@@ -1,9 +1,12 @@
 //! Application state and coordination of document, layout and background work.
+mod chart;
 mod commands;
 mod drawing;
 mod events;
 mod input;
 mod math_session;
+mod mls;
+mod settings;
 
 use crate::{
     config::*,
@@ -21,6 +24,7 @@ use crate::{
 use cosmic_text::SwashCache;
 use std::{
     collections::{HashMap, HashSet},
+    ops::Range,
     path::PathBuf,
     rc::Rc,
     sync::Arc,
@@ -65,6 +69,21 @@ pub struct App {
     online: bool,
     math: Option<MathInput>,
     math_cache: HashMap<String, Arc<FormulaImage>>,
+    mls: mathstral_mls::Mls,
+    mls_worker: mathstral_mls::Worker,
+    // Whether Lean checking runs. Off, no job is submitted and no dot or chart row is shown.
+    mls_on: bool,
+    // Each paragraph's byte range, indexed like the paragraphs last given to MLS.
+    mls_lines: Vec<Range<usize>>,
+    dots: Vec<mathstral_mls::Dot>,
+    fades: HashMap<u64, mls::Fade>,
+    // True until the first sync, so a new or opened document checks every line, the caret's too.
+    mls_fresh: bool,
+    panel: Option<mls::Panel>,
+    chart: Option<chart::Chart>,
+    settings: Option<settings::Settings>,
+    pointer: bool,
+    frame_due: Option<Instant>,
 }
 impl App {
     pub fn new(proxy: EventLoopProxy<Action>) -> Self {
@@ -87,8 +106,24 @@ impl App {
         let worker = Worker::new(move || {
             let _ = wake.send_event(Action::MathReady);
         });
-        Self {
+        let mls_wake = proxy.clone();
+        let mls_worker = mathstral_mls::Worker::new(mls::lean_project(), move || {
+            let _ = mls_wake.send_event(Action::MlsReady);
+        });
+        let mut app = Self {
             worker,
+            mls: mathstral_mls::Mls::new(),
+            mls_worker,
+            mls_on: file::mls_enabled(),
+            mls_lines: Vec::new(),
+            dots: Vec::new(),
+            fades: HashMap::new(),
+            mls_fresh: true,
+            panel: None,
+            chart: None,
+            settings: None,
+            pointer: false,
+            frame_due: None,
             submitted: Default::default(),
             online: true,
             math: None,
@@ -117,7 +152,12 @@ impl App {
             composing: false,
             window_geometry: file::window_geometry(),
             size_save_at: None,
+        };
+        app.mls_worker.set_key(settings::effective_key());
+        if let Some(path) = app.path.clone() {
+            app.restore_mls(&path);
         }
+        app
     }
     fn capture_window_geometry(&mut self) {
         let Some(window) = &self.window else {
@@ -155,6 +195,8 @@ impl App {
     }
     fn changed(&mut self, text: bool) {
         if text {
+            // Writing hides the panel.
+            self.panel = None;
             for job in self.doc.jobs() {
                 if let Some(image) = job
                     .prompt
@@ -174,6 +216,7 @@ impl App {
         }
         self.page_dirty = true;
         self.reveal = true;
+        self.sync_mls();
         if let Some(w) = &self.window {
             w.set_document_edited(self.doc.dirty());
             w.set_title(&format!(
