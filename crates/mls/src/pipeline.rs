@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{Value, json};
 
+use crate::openrouter::parts;
 use crate::rules::{declared_names, is_blank};
 use crate::{Checked, Failure, Formal, Job, Label, Outcome, Reply, Status, Tag};
 
@@ -71,9 +72,13 @@ pub struct Mls {
     /// Records of blocks that are not in `blocks`, by id. An edit above them then reuses their
     /// formalization and check instead of redoing them. `plan` and `apply` never read them.
     parked: HashMap<u64, Block>,
-    /// What Jev said, by paragraph and the text above it, so an unchanged paragraph never asks
+    /// What Jev said, by paragraph or piece and the text above it, so an unchanged one never asks
     /// again, in this session or after reopening (see `twin`). Only accepted answers are remembered.
     labels: HashMap<TagKey, Tag>,
+    /// The pieces each paragraph text was cut into, so an unchanged paragraph is never cut again,
+    /// in this session or after reopening. A split that did not reproduce the paragraph is
+    /// remembered as the paragraph alone: it is read whole.
+    splits: HashMap<String, Vec<String>>,
     /// The formalization, or a non-service rejection, of each block by its key.
     formals: HashMap<FormalKey, Result<Formal, String>>,
     frontier: Frontier,
@@ -89,8 +94,8 @@ struct FormalKey {
     statement: Option<String>,
 }
 
-/// What decides a paragraph's tag: the text itself, the unit above it (Jev is asked whether it
-/// continues that; see `segment`) and whether a proof is open above it.
+/// What decides the tag of a paragraph or piece: the text itself, the unit above it (Jev is asked
+/// whether it continues that; see `segment`) and whether a proof is open above it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct TagKey {
     previous: Option<String>,
@@ -101,7 +106,8 @@ struct TagKey {
 /// Opens the memory comment at the end of a twin. Its JSON is written on the lines after it.
 const MEMORY_OPEN: &str = "/- mathstral:memory\n";
 
-/// A fresh id for a paragraph or a version. Global, so a new `Mls` never reuses an id still in flight.
+/// A fresh id for a paragraph, a piece or a version. Global, so a new `Mls` never reuses an id
+/// still in flight.
 static NEXT: AtomicU64 = AtomicU64::new(1);
 
 fn next() -> u64 {
@@ -114,6 +120,60 @@ struct Para {
     text: String,
     settled: Option<String>,
     label: Option<Labelled>,
+    /// Its pieces, once Jev has said it holds several items and it has been cut.
+    split: Option<Split>,
+}
+
+impl Para {
+    /// The tag of the paragraph itself, or of its `piece`th piece.
+    fn slot(&mut self, piece: Option<usize>) -> Option<&mut Option<Labelled>> {
+        match piece {
+            None => Some(&mut self.label),
+            Some(k) => match &mut self.split {
+                Some(Split {
+                    pieces: Ok(pieces), ..
+                }) => pieces.get_mut(k).map(|piece| &mut piece.label),
+                Some(Split { pieces: Err(_), .. }) | None => None,
+            },
+        }
+    }
+}
+
+/// The result of cutting a paragraph into its pieces, like `Labelled` for a tag.
+#[derive(Debug)]
+struct Split {
+    /// The settled text of the paragraph that was cut.
+    text: String,
+    /// The pieces, or the service failure that waits for `retry`.
+    pieces: Result<Vec<Piece>, Failure>,
+}
+
+impl Split {
+    /// The pieces, none after a failure.
+    fn pieces(&self) -> &[Piece] {
+        match &self.pieces {
+            Ok(pieces) => pieces,
+            Err(_) => &[],
+        }
+    }
+}
+
+/// One item of a paragraph that holds several. The walk treats it as a paragraph of its own.
+#[derive(Debug)]
+struct Piece {
+    /// A fresh id, which the piece keeps while its text is unchanged.
+    id: u64,
+    text: String,
+    label: Option<Labelled>,
+}
+
+/// Where a unit of the walk is: a paragraph, or a piece of one.
+#[derive(Clone, Copy, Debug)]
+struct Spot {
+    /// Index of the paragraph in `paras`.
+    paragraph: usize,
+    /// Index of the piece in the paragraph's split.
+    piece: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -126,7 +186,7 @@ struct Labelled {
 
 #[derive(Debug)]
 struct Block {
-    /// Id of its first paragraph.
+    /// Id of its first unit: a paragraph, or a piece of one.
     id: u64,
     /// A new value from `next()` whenever its text or label changes.
     version: u64,
@@ -134,7 +194,7 @@ struct Block {
     first: usize,
     /// Index of its last paragraph in `paras`; `first` for a one-paragraph block.
     last: usize,
-    /// The settled texts of its paragraphs, joined by a blank line.
+    /// The settled texts of its units, joined by a blank line.
     text: String,
     /// Definition, Statement or Proof; never Skip.
     label: Label,
@@ -154,29 +214,41 @@ struct Block {
     repaired: bool,
 }
 
-/// Where segmentation stops. A `Classify` frontier is the first paragraph that needs a tag; its
-/// job runs before any other. `Failed` is a paragraph whose tag failed, with no such paragraph
-/// above it.
+/// Where segmentation stops. A `Classify` frontier is the first unit that needs a tag, and a
+/// `Split` frontier the first paragraph that holds several items and has no pieces; its job runs
+/// before any other. `Failed` is a unit whose tag failed, or a paragraph whose split failed for a
+/// service, with no such unit above it.
 #[derive(Default, Debug)]
 enum Frontier {
     #[default]
     Done,
     Classify {
-        index: usize,
+        /// The id of the paragraph or piece.
+        unit: u64,
+        text: String,
         previous: Option<String>,
         proof_open: bool,
     },
+    Split {
+        paragraph: u64,
+        text: String,
+    },
     Failed {
-        index: usize,
+        /// Index of the paragraph, where the dot sits.
+        paragraph: usize,
+        /// The id of the unit, or of the paragraph for a failed split.
+        key: u64,
+        failure: Failure,
     },
 }
 
-/// The run of paragraphs that segmentation is building: a block, or prose that may still become
-/// one.
+/// The run of units that segmentation is building: a block, or prose that may still become one.
 struct Unit {
+    /// The id of its first unit.
+    id: u64,
     /// Index of its first paragraph in `paras`.
     first: usize,
-    /// The settled texts of its paragraphs, joined by a blank line.
+    /// The settled texts of its units, joined by a blank line.
     text: String,
     /// Skip for prose; otherwise the label of the item it is.
     kind: Label,
@@ -186,6 +258,190 @@ struct Unit {
     ended: bool,
     /// The text of the prose unit right above it, when that unit is prose.
     prose: Option<String>,
+}
+
+/// How the walk reads the tag of one unit.
+enum Read {
+    /// The unit's tag, current or provisional.
+    Tag(Tag),
+    /// The unit has no tag and is the `Classify` frontier. It is a separator: nothing joins it.
+    Next,
+    /// The walk ends here.
+    Stop,
+}
+
+/// The state of one walk over the units, and the blocks it builds (see `segment`).
+struct Walk<'a> {
+    labels: &'a HashMap<TagKey, Tag>,
+    new: Vec<Block>,
+    unit: Option<Unit>,
+    /// The text of the last unit, for the one after a separator.
+    previous: Option<&'a str>,
+    frontier: Frontier,
+    /// Tags remembered for units with no current one. They are stored once the walk ends.
+    remembered: Vec<(Spot, Labelled)>,
+}
+
+impl<'a> Walk<'a> {
+    /// Sets the frontier unless one above already is: its job runs first.
+    fn mark(&mut self, frontier: Frontier) {
+        if matches!(self.frontier, Frontier::Done) {
+            self.frontier = frontier;
+        }
+    }
+
+    /// Makes the unit with `text` a separator: nothing joins it, and the unit below sees it as the
+    /// one above.
+    fn separate(&mut self, text: &'a str) {
+        self.unit = None;
+        self.previous = Some(text);
+    }
+
+    /// The tag of the unit `id` with `text` at `spot`, whose own record is `label`. Jev sees the
+    /// whole run the unit may join, every unit grouped so far, so it judges against the item and
+    /// not only its last line. After a separator there is no run, and it sees the unit just above.
+    fn tag(&mut self, spot: Spot, id: u64, text: &'a str, label: &Option<Labelled>) -> Read {
+        let proof_open = self
+            .unit
+            .as_ref()
+            .is_some_and(|u| u.kind == Label::Proof && !u.ended);
+        let above: Option<String> = self
+            .unit
+            .as_ref()
+            .map(|u| u.text.clone())
+            .or_else(|| self.previous.map(str::to_owned));
+        if let Some(l) = label
+            .as_ref()
+            .filter(|l| l.previous == above && l.text == text && l.proof_open == proof_open)
+        {
+            return match &l.result {
+                Ok(tag) => Read::Tag(*tag),
+                Err(failure) => {
+                    self.mark(Frontier::Failed {
+                        paragraph: spot.paragraph,
+                        key: id,
+                        failure: failure.clone(),
+                    });
+                    Read::Stop
+                }
+            };
+        }
+        let key = TagKey {
+            previous: above,
+            text: text.to_owned(),
+            proof_open,
+        };
+        if let Some(tag) = self.labels.get(&key).copied() {
+            self.remembered.push((
+                spot,
+                Labelled {
+                    previous: key.previous,
+                    text: key.text,
+                    proof_open,
+                    result: Ok(tag),
+                },
+            ));
+            return Read::Tag(tag);
+        }
+        // A tag given to this text before, under other text above or with another proof open,
+        // stands in until Jev answers. The walk keeps going with it.
+        if let Some(Labelled {
+            text: old,
+            result: Ok(provisional),
+            ..
+        }) = label
+            && old == text
+        {
+            self.mark(Frontier::Classify {
+                unit: id,
+                text: key.text,
+                previous: key.previous,
+                proof_open,
+            });
+            return Read::Tag(*provisional);
+        }
+        // The first unit with no tag is the frontier. A second one stops.
+        if !matches!(self.frontier, Frontier::Done) {
+            return Read::Stop;
+        }
+        self.frontier = Frontier::Classify {
+            unit: id,
+            text: key.text,
+            previous: key.previous,
+            proof_open,
+        };
+        Read::Next
+    }
+
+    /// Adds the unit `id` with `text` and `tag`, in paragraph `index`, to the run above it or
+    /// starts a run with it.
+    fn add(&mut self, index: usize, id: u64, text: &'a str, tag: Tag) {
+        if let Some(u) = self.unit.as_mut().filter(|u| joins_unit(u, tag)) {
+            u.text.push_str("\n\n");
+            u.text.push_str(text);
+            match u.block {
+                Some(b) => {
+                    let block = &mut self.new[b];
+                    block.text.push_str("\n\n");
+                    block.text.push_str(text);
+                    block.last = index;
+                }
+                // Prose that Jev says the unit continues becomes a block of its label.
+                None if tag.label != Label::Skip => {
+                    let block = new_block(
+                        &self.new,
+                        u.first,
+                        index,
+                        u.id,
+                        u.text.clone(),
+                        tag.label,
+                        u.prose.clone(),
+                    );
+                    self.new.push(block);
+                    u.kind = tag.label;
+                    u.block = Some(self.new.len() - 1);
+                }
+                None => {}
+            }
+        } else {
+            let prose = self
+                .unit
+                .as_ref()
+                .filter(|u| u.kind == Label::Skip)
+                .map(|u| u.text.clone());
+            let mut next = Unit {
+                id,
+                first: index,
+                text: text.to_string(),
+                kind: tag.label,
+                block: None,
+                ended: false,
+                prose,
+            };
+            if tag.label != Label::Skip {
+                let block = new_block(
+                    &self.new,
+                    index,
+                    index,
+                    id,
+                    text.to_string(),
+                    tag.label,
+                    next.prose.clone(),
+                );
+                self.new.push(block);
+                next.block = Some(self.new.len() - 1);
+            }
+            self.unit = Some(next);
+        }
+        if let Some(u) = self
+            .unit
+            .as_mut()
+            .filter(|_| text.trim_end().ends_with('∎'))
+        {
+            u.ended = true;
+        }
+        self.previous = Some(text);
+    }
 }
 
 struct Plan {
@@ -360,12 +616,6 @@ fn new_block(
     }
 }
 
-fn settled_text(para: &Para) -> &str {
-    para.settled
-        .as_deref()
-        .expect("the pipeline only stops at settled paragraphs")
-}
-
 /// The key a block's formal is remembered under. A proof's key carries the Lean of its statement,
 /// so a proof is not restored against a statement that has changed. None when that statement has
 /// no formal Lean yet, or when the proof's formal was made for an earlier version of the statement:
@@ -391,6 +641,35 @@ fn formal_key(blocks: &[Block], block: &Block) -> Option<FormalKey> {
     })
 }
 
+/// Clears a tag that failed for a service, so the unit is classified again.
+fn forget_service_failure(label: &mut Option<Labelled>) {
+    if matches!(label, Some(Labelled { result: Err(f), .. }) if f.service) {
+        *label = None;
+    }
+}
+
+/// The tag slot of the unit with `id` and settled `text`: a paragraph, or a piece of the split
+/// that a paragraph has for its settled text.
+fn label_slot<'a>(paras: &'a mut [Para], id: u64, text: &str) -> Option<&'a mut Option<Labelled>> {
+    for para in paras {
+        if para.id == id {
+            return (para.settled.as_deref() == Some(text)).then_some(&mut para.label);
+        }
+        if let Some(Split {
+            text: whole,
+            pieces: Ok(pieces),
+        }) = &mut para.split
+            && para.settled.as_deref() == Some(whole.as_str())
+            && let Some(piece) = pieces
+                .iter_mut()
+                .find(|piece| piece.id == id && piece.text == text)
+        {
+            return Some(&mut piece.label);
+        }
+    }
+    None
+}
+
 /// A JSON string, or null for None. Anything else is malformed, and so is a missing value.
 fn nullable(value: Option<&Value>) -> Option<Option<String>> {
     match value? {
@@ -398,6 +677,20 @@ fn nullable(value: Option<&Value>) -> Option<Option<String>> {
         Value::String(text) => Some(Some(text.clone())),
         _ => None,
     }
+}
+
+fn label_json(labelled: &Labelled) -> Option<Value> {
+    let Ok(tag) = &labelled.result else {
+        return None;
+    };
+    Some(json!({
+        "previous": labelled.previous,
+        "text": labelled.text,
+        "proof_open": labelled.proof_open,
+        "label": tag.label.name(),
+        "joins": tag.joins,
+        "split": tag.split,
+    }))
 }
 
 fn label_entry(entry: &Value) -> Option<(TagKey, Tag)> {
@@ -409,8 +702,22 @@ fn label_entry(entry: &Value) -> Option<(TagKey, Tag)> {
     let tag = Tag {
         label: Label::from_name(entry.get("label")?.as_str()?)?,
         joins: entry.get("joins")?.as_bool()?,
+        split: entry.get("split")?.as_bool()?,
     };
     Some((key, tag))
+}
+
+fn split_entry(entry: &Value) -> Option<(String, Vec<String>)> {
+    let text = entry.get("text")?.as_str()?.to_owned();
+    let pieces: Vec<String> = entry
+        .get("pieces")?
+        .as_array()?
+        .iter()
+        .map(|piece| piece.as_str().map(str::to_owned))
+        .collect::<Option<_>>()?;
+    // A restored split is not trusted: it must reproduce its paragraph, as a model's reply must.
+    let pieces = parts(&text, &pieces)?;
+    Some((text, pieces))
 }
 
 fn formal_entry(entry: &Value) -> Option<(FormalKey, Result<Formal, String>)> {
@@ -500,6 +807,7 @@ impl Mls {
                     text: new.text.clone(),
                     settled: None,
                     label: None,
+                    split: None,
                 },
             });
         }
@@ -535,8 +843,17 @@ impl Mls {
     /// REPL clears every check, since the environments they were made on are gone.
     fn retry_services(&mut self) {
         for para in &mut self.paras {
-            if matches!(&para.label, Some(Labelled { result: Err(f), .. }) if f.service) {
-                para.label = None;
+            forget_service_failure(&mut para.label);
+            match &mut para.split {
+                Some(Split { pieces: Err(f), .. }) if f.service => para.split = None,
+                Some(Split {
+                    pieces: Ok(pieces), ..
+                }) => {
+                    for piece in pieces {
+                        forget_service_failure(&mut piece.label);
+                    }
+                }
+                Some(Split { pieces: Err(_), .. }) | None => {}
             }
         }
         let repl_lost = take(&mut self.repl_lost);
@@ -552,188 +869,168 @@ impl Mls {
         }
     }
 
+    /// Cuts each settled paragraph whose text has a remembered split into its pieces. A piece keeps
+    /// its id and tag while its text is unchanged, so editing one piece of a paragraph leaves the
+    /// blocks of the others as they were.
+    fn refresh_pieces(&mut self) {
+        for para in &mut self.paras {
+            let Some(text) = para.settled.as_deref() else {
+                continue;
+            };
+            if para.split.as_ref().is_some_and(|split| split.text == text) {
+                continue;
+            }
+            let Some(texts) = self.splits.get(text) else {
+                continue;
+            };
+            let mut earlier: Vec<Piece> = match para.split.take() {
+                Some(Split {
+                    pieces: Ok(pieces), ..
+                }) => pieces,
+                Some(Split { pieces: Err(_), .. }) | None => Vec::new(),
+            };
+            let pieces = texts
+                .iter()
+                .map(
+                    |piece| match earlier.iter().position(|old| old.text == *piece) {
+                        Some(k) => earlier.remove(k),
+                        None => Piece {
+                            id: next(),
+                            text: piece.clone(),
+                            label: None,
+                        },
+                    },
+                )
+                .collect();
+            para.split = Some(Split {
+                text: text.to_owned(),
+                pieces: Ok(pieces),
+            });
+        }
+    }
+
     /// Rebuilds the blocks and the frontier from the paragraphs.
     ///
-    /// Consecutive settled paragraphs form a unit. A paragraph joins the unit above it when
-    /// `joins_unit` says so: an unfinished proof takes a proof whatever Jev says, and otherwise
-    /// Jev must say the paragraph continues the unit. A unit that is prose becomes a block when a
-    /// joined paragraph has a label. A paragraph that starts a unit is not joined to the one above.
-    /// A block with no formal takes the one remembered for its key, and a block reuses the record
-    /// with its id, from `blocks` or else `parked`, when its text and label are unchanged.
+    /// The walk goes over units: the settled paragraphs, except that a paragraph Jev says holds
+    /// several items is walked as its pieces (see `refresh_pieces`), each a unit of its own and
+    /// an ordinary one from then on. A piece belongs to its paragraph's index. Until a paragraph
+    /// has its pieces it is a separator, like the `Classify` frontier, and the frontier is its
+    /// `Split`. A split that failed for a service stops the walk there.
     ///
-    /// A paragraph's tag is current when it was labelled with the settled text above it and the
-    /// same `proof_open`, or when that exact key is remembered. Otherwise, when the same text was
-    /// tagged before, that tag stands in provisionally: the walk uses it, and the paragraph is
-    /// classified again once the frontier reaches it. So the blocks below an edit keep their dots
-    /// while Jev answers. A paragraph with no tag at all is the frontier: the first one counts as a
-    /// separator, so nothing joins it until Jev answers, and a second one stops the walk. A pending
-    /// Classify job always runs first, so a provisional tag never leads to a Formalize or Check.
-    /// The last block is open, so it takes no formal yet, while its last paragraph ends in ':' or
-    /// ','. A proof without ∎ is not open: Enter closes it like any other block, and a paragraph
-    /// that joins it later formalizes it again.
+    /// Consecutive units form a run. A unit joins the run above it when `joins_unit` says so: an
+    /// unfinished proof takes a proof whatever Jev says, and otherwise Jev must say the unit
+    /// continues the run. A run that is prose becomes a block when a joined unit has a label. A
+    /// unit that starts a run is not joined to the one above. A block with no formal takes the one
+    /// remembered for its key, and a block reuses the record with its id, from `blocks` or else
+    /// `parked`, when its text and label are unchanged.
+    ///
+    /// A unit's tag is current when it was labelled with the settled text above it and the same
+    /// `proof_open`, or when that exact key is remembered. Otherwise, when the same text was tagged
+    /// before, that tag stands in provisionally: the walk uses it, and the unit is classified again
+    /// once the frontier reaches it. So the blocks below an edit keep their dots while Jev answers.
+    /// A unit with no tag at all is the frontier: the first one counts as a separator, so nothing
+    /// joins it until Jev answers, and a second one stops the walk. A pending Classify or Split
+    /// job always runs first, so a provisional tag never leads to a Formalize or Check. The last
+    /// block is open, so it takes no formal yet, while its text ends in ':' or ','. A proof
+    /// without ∎ is not open: Enter closes it like any other block, and a paragraph that joins it
+    /// later formalizes it again.
     fn segment(&mut self) {
-        let paras = &self.paras;
-        let labels = &self.labels;
+        self.refresh_pieces();
         let mut old: HashMap<u64, Block> = take(&mut self.blocks)
             .into_iter()
             .map(|block| (block.id, block))
             .collect();
         let mut parked = take(&mut self.parked);
-        let mut new: Vec<Block> = Vec::new();
-        let mut unit: Option<Unit> = None;
-        let mut previous: Option<&str> = None;
-        let mut frontier = Frontier::Done;
-        // Tags remembered for paragraphs with no current one. They are stored once the walk ends.
-        let mut remembered: Vec<(usize, Labelled)> = Vec::new();
-        for (i, para) in paras.iter().enumerate() {
+        let mut walk = Walk {
+            labels: &self.labels,
+            new: Vec::new(),
+            unit: None,
+            previous: None,
+            frontier: Frontier::Done,
+            remembered: Vec::new(),
+        };
+        'paras: for (i, para) in self.paras.iter().enumerate() {
             let Some(text) = para.settled.as_deref() else {
                 continue;
             };
-            let proof_open = unit
-                .as_ref()
-                .is_some_and(|u| u.kind == Label::Proof && !u.ended);
-            // Jev sees the whole unit the paragraph may join, every paragraph grouped so far, so it
-            // judges against the item and not only its last line. After a separator there is no
-            // unit, and it sees the paragraph just above.
-            let above: Option<String> = unit
-                .as_ref()
-                .map(|u| u.text.clone())
-                .or_else(|| previous.map(str::to_owned));
-            let tag = match &para.label {
-                Some(l) if l.previous == above && l.text == text && l.proof_open == proof_open => {
-                    match &l.result {
-                        Ok(tag) => *tag,
-                        Err(_) => {
-                            // A Classify frontier above stays: its job runs first.
-                            if matches!(frontier, Frontier::Done) {
-                                frontier = Frontier::Failed { index: i };
-                            }
-                            break;
+            let spot = Spot {
+                paragraph: i,
+                piece: None,
+            };
+            let tag = match walk.tag(spot, para.id, text, &para.label) {
+                Read::Tag(tag) => tag,
+                Read::Next => {
+                    walk.separate(text);
+                    continue;
+                }
+                Read::Stop => break,
+            };
+            if !tag.split {
+                walk.add(i, para.id, text, tag);
+                continue;
+            }
+            match &para.split {
+                Some(Split {
+                    text: whole,
+                    pieces: Ok(pieces),
+                }) if whole == text => {
+                    for (k, piece) in pieces.iter().enumerate() {
+                        let spot = Spot {
+                            paragraph: i,
+                            piece: Some(k),
+                        };
+                        match walk.tag(spot, piece.id, &piece.text, &piece.label) {
+                            Read::Tag(tag) => walk.add(i, piece.id, &piece.text, tag),
+                            Read::Next => walk.separate(&piece.text),
+                            Read::Stop => break 'paras,
                         }
                     }
+                }
+                Some(Split {
+                    text: whole,
+                    pieces: Err(failure),
+                }) if whole == text => {
+                    walk.mark(Frontier::Failed {
+                        paragraph: i,
+                        key: para.id,
+                        failure: failure.clone(),
+                    });
+                    break;
                 }
                 _ => {
-                    let key = TagKey {
-                        previous: above,
+                    // The first paragraph to cut is the frontier; a second one stops.
+                    if !matches!(walk.frontier, Frontier::Done) {
+                        break;
+                    }
+                    walk.frontier = Frontier::Split {
+                        paragraph: para.id,
                         text: text.to_owned(),
-                        proof_open,
                     };
-                    match labels.get(&key).copied() {
-                        Some(tag) => {
-                            remembered.push((
-                                i,
-                                Labelled {
-                                    previous: key.previous,
-                                    text: key.text,
-                                    proof_open,
-                                    result: Ok(tag),
-                                },
-                            ));
-                            tag
-                        }
-                        None => match &para.label {
-                            // A tag given to this text before, under other text above or with another
-                            // proof open, stands in until Jev answers. The walk keeps going with it.
-                            Some(Labelled {
-                                text: old,
-                                result: Ok(provisional),
-                                ..
-                            }) if old == text => {
-                                if matches!(frontier, Frontier::Done) {
-                                    frontier = Frontier::Classify {
-                                        index: i,
-                                        previous: key.previous,
-                                        proof_open,
-                                    };
-                                }
-                                *provisional
-                            }
-                            _ => {
-                                // The first paragraph with no tag is the frontier. A second one stops.
-                                if !matches!(frontier, Frontier::Done) {
-                                    break;
-                                }
-                                frontier = Frontier::Classify {
-                                    index: i,
-                                    previous: key.previous,
-                                    proof_open,
-                                };
-                                unit = None;
-                                previous = Some(text);
-                                continue;
-                            }
-                        },
-                    }
+                    walk.separate(text);
                 }
-            };
-
-            if let Some(u) = unit.as_mut().filter(|u| joins_unit(u, tag)) {
-                u.text.push_str("\n\n");
-                u.text.push_str(text);
-                match u.block {
-                    Some(b) => {
-                        let block = &mut new[b];
-                        block.text.push_str("\n\n");
-                        block.text.push_str(text);
-                        block.last = i;
-                    }
-                    // Prose that Jev says the paragraph continues becomes a block of its label.
-                    None if tag.label != Label::Skip => {
-                        let block = new_block(
-                            &new,
-                            u.first,
-                            i,
-                            paras[u.first].id,
-                            u.text.clone(),
-                            tag.label,
-                            u.prose.clone(),
-                        );
-                        new.push(block);
-                        u.kind = tag.label;
-                        u.block = Some(new.len() - 1);
-                    }
-                    None => {}
-                }
-            } else {
-                let prose = unit
-                    .as_ref()
-                    .filter(|u| u.kind == Label::Skip)
-                    .map(|u| u.text.clone());
-                let mut next = Unit {
-                    first: i,
-                    text: text.to_string(),
-                    kind: tag.label,
-                    block: None,
-                    ended: false,
-                    prose,
-                };
-                if tag.label != Label::Skip {
-                    let block = new_block(
-                        &new,
-                        i,
-                        i,
-                        para.id,
-                        text.to_string(),
-                        tag.label,
-                        next.prose.clone(),
-                    );
-                    new.push(block);
-                    next.block = Some(new.len() - 1);
-                }
-                unit = Some(next);
             }
-            if let Some(u) = unit.as_mut().filter(|_| text.trim_end().ends_with('∎')) {
-                u.ended = true;
-            }
-            previous = Some(text);
         }
+        let Walk {
+            mut new,
+            unit,
+            frontier,
+            remembered,
+            ..
+        } = walk;
         if let Some(Unit { block: Some(b), .. }) = &unit {
             let block = &mut new[*b];
-            let last = settled_text(&paras[block.last]).trim_end();
-            block.closed = !(last.ends_with(':') || last.ends_with(','));
+            let end = block.text.trim_end();
+            block.closed = !(end.ends_with(':') || end.ends_with(','));
         }
 
-        let ids: HashSet<u64> = paras.iter().map(|para| para.id).collect();
+        let ids: HashSet<u64> = self
+            .paras
+            .iter()
+            .flat_map(|para| {
+                let pieces = para.split.iter().flat_map(Split::pieces);
+                std::iter::once(para.id).chain(pieces.map(|piece| piece.id))
+            })
+            .collect();
         let mut unused: Vec<Block> = Vec::new();
         for block in &mut new {
             match old.remove(&block.id).or_else(|| parked.remove(&block.id)) {
@@ -750,8 +1047,10 @@ impl Mls {
                 }
             }
         }
-        for (index, labelled) in remembered {
-            self.paras[index].label = Some(labelled);
+        for (spot, labelled) in remembered {
+            if let Some(slot) = self.paras[spot.paragraph].slot(spot.piece) {
+                *slot = Some(labelled);
+            }
         }
 
         // A block with no formal takes the one remembered for its key. A statement comes before its
@@ -804,9 +1103,9 @@ impl Mls {
         job
     }
 
-    /// Applies a worker's reply. Returns false when the reply is stale: the paragraph or block it
-    /// was computed for has changed since. A failed check still clears the checks that a lost REPL
-    /// invalidates, even when its own reply is stale.
+    /// Applies a worker's reply. Returns false when the reply is stale: the paragraph, piece or
+    /// block it was computed for has changed since. A failed check still clears the checks that a
+    /// lost REPL invalidates, even when its own reply is stale.
     pub fn apply(&mut self, reply: Reply) -> bool {
         self.busy = false;
         match reply {
@@ -817,9 +1116,7 @@ impl Mls {
                 proof_open,
                 result,
             } => {
-                let Some(para) = self.paras.iter_mut().find(|para| {
-                    para.id == paragraph && para.settled.as_deref() == Some(text.as_str())
-                }) else {
+                let Some(slot) = label_slot(&mut self.paras, paragraph, &text) else {
                     return false;
                 };
                 if let Ok(tag) = &result {
@@ -832,12 +1129,41 @@ impl Mls {
                         *tag,
                     );
                 }
-                para.label = Some(Labelled {
+                *slot = Some(Labelled {
                     previous,
                     text,
                     proof_open,
                     result,
                 });
+                self.segment();
+                true
+            }
+            Reply::Split {
+                paragraph,
+                text,
+                result,
+            } => {
+                let Some(para) = self.paras.iter_mut().find(|para| {
+                    para.id == paragraph && para.settled.as_deref() == Some(text.as_str())
+                }) else {
+                    return false;
+                };
+                match result {
+                    Ok(pieces) => {
+                        self.splits.insert(text, pieces);
+                    }
+                    Err(failure) if failure.service => {
+                        para.split = Some(Split {
+                            text,
+                            pieces: Err(failure),
+                        });
+                    }
+                    // A cut that does not reproduce the paragraph is not asked for again: the
+                    // paragraph is read whole.
+                    Err(_) => {
+                        self.splits.insert(text.clone(), vec![text]);
+                    }
+                }
                 self.segment();
                 true
             }
@@ -1037,24 +1363,37 @@ impl Mls {
     /// reads as a nested comment that the closing `-/` cannot end. Every `-` in the memory is
     /// inside a JSON string, as it has no negative numbers, so the escape keeps the JSON valid.
     fn memory(&self) -> String {
+        let splits: Vec<&Split> = self
+            .paras
+            .iter()
+            .filter_map(|para| {
+                para.split.as_ref().filter(|split| {
+                    para.settled.as_deref() == Some(split.text.as_str()) && split.pieces.is_ok()
+                })
+            })
+            .collect();
         let labels: Vec<Value> = self
             .paras
             .iter()
             .filter(|para| para.settled.is_some())
-            .filter_map(|para| match &para.label {
-                Some(Labelled {
-                    previous,
-                    text,
-                    proof_open,
-                    result: Ok(tag),
-                }) => Some(json!({
-                    "previous": previous,
-                    "text": text,
-                    "proof_open": proof_open,
-                    "label": tag.label.name(),
-                    "joins": tag.joins,
-                })),
-                _ => None,
+            .map(|para| &para.label)
+            .chain(
+                splits
+                    .iter()
+                    .flat_map(|split| split.pieces())
+                    .map(|piece| &piece.label),
+            )
+            .filter_map(|label| label.as_ref().and_then(label_json))
+            .collect();
+        let splits: Vec<Value> = splits
+            .iter()
+            .map(|split| {
+                let pieces: Vec<&str> = split
+                    .pieces()
+                    .iter()
+                    .map(|piece| piece.text.as_str())
+                    .collect();
+                json!({"text": split.text, "pieces": pieces})
             })
             .collect();
         let formals: Vec<Value> = self
@@ -1082,15 +1421,16 @@ impl Mls {
                 }
             })
             .collect();
-        json!({"version": 2, "labels": labels, "formals": formals})
+        json!({"version": 3, "labels": labels, "splits": splits, "formals": formals})
             .to_string()
             .replace('-', "\\u002d")
     }
 
-    /// Restores the labels and formalizations that `twin` remembers. Call it on a fresh or reset
-    /// `Mls`, before the first `sync`. A twin without a version 2 memory changes nothing, and an
-    /// entry that is malformed is skipped. Restored Lean passes the same rules as a model's reply:
-    /// a formal the rules reject is restored as a rejection, and is never checked by Lean.
+    /// Restores the labels, splits and formalizations that `twin` remembers. Call it on a fresh or
+    /// reset `Mls`, before the first `sync`. A twin without a version 3 memory changes nothing, and
+    /// an entry that is malformed is skipped. Restored Lean passes the same rules as a model's
+    /// reply: a formal the rules reject is restored as a rejection, and is never checked by Lean, and a
+    /// split that does not reproduce its paragraph is skipped.
     pub fn restore(&mut self, twin: &str) {
         let Some(start) = twin.rfind(MEMORY_OPEN) else {
             return;
@@ -1102,54 +1442,58 @@ impl Mls {
         let Ok(memory) = serde_json::from_str::<Value>(&body[..end]) else {
             return;
         };
-        if memory.get("version").and_then(Value::as_u64) != Some(2) {
+        if memory.get("version").and_then(Value::as_u64) != Some(3) {
             return;
         }
-        let (Some(labels), Some(formals)) = (
+        let (Some(labels), Some(splits), Some(formals)) = (
             memory.get("labels").and_then(Value::as_array),
+            memory.get("splits").and_then(Value::as_array),
             memory.get("formals").and_then(Value::as_array),
         ) else {
             return;
         };
         self.labels.extend(labels.iter().filter_map(label_entry));
+        self.splits.extend(splits.iter().filter_map(split_entry));
         self.formals.extend(formals.iter().filter_map(formal_entry));
     }
 
     /// Walks the closed blocks in document order and works out the next job, the dots and the
-    /// Lean chain. A Classify job comes first: when the frontier is a paragraph that needs a
-    /// label, it wins over a pending Formalize or Check of an earlier block, so the earlier
-    /// block waits its turn behind the labelling that the frontier needs.
+    /// Lean chain. A Classify or Split job comes first: when the frontier is a unit that needs a
+    /// label or a paragraph that needs cutting, it wins over a pending Formalize or Check of an
+    /// earlier block, so the earlier block waits its turn behind the work that the frontier needs.
     fn plan(&self) -> Plan {
         let mut dots = Vec::new();
         let mut job = match &self.frontier {
             Frontier::Classify {
-                index,
+                unit,
+                text,
                 previous,
                 proof_open,
             } => Some(Job::Classify {
-                paragraph: self.paras[*index].id,
+                paragraph: *unit,
                 previous: previous.clone(),
-                text: settled_text(&self.paras[*index]).to_string(),
+                text: text.clone(),
                 proof_open: *proof_open,
+            }),
+            Frontier::Split { paragraph, text } => Some(Job::Split {
+                paragraph: *paragraph,
+                text: text.clone(),
             }),
             Frontier::Done | Frontier::Failed { .. } => None,
         };
-        if let Frontier::Failed { index } = self.frontier {
-            // The frontier is only Failed for a paragraph whose tag is an error.
-            let para = &self.paras[index];
-            if let Some(Labelled {
-                result: Err(failure),
-                ..
-            }) = &para.label
-            {
-                dots.push(failed(
-                    index,
-                    index,
-                    para.id,
-                    &failure.message,
-                    failure.service,
-                ));
-            }
+        if let Frontier::Failed {
+            paragraph,
+            key,
+            failure,
+        } = &self.frontier
+        {
+            dots.push(failed(
+                *paragraph,
+                *paragraph,
+                *key,
+                &failure.message,
+                failure.service,
+            ));
         }
 
         let mut pending = false;

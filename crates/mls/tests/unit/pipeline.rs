@@ -6,7 +6,7 @@ const REPL_DOWN: &str = "the Lean REPL is not running";
 
 /// The mock model's tags. "Def" is a definition, "Lemma" and "Then" a statement, "Proof" starts a
 /// proof, a lowercase line continues an open proof, and anything else is prose. A "Then" line
-/// and a "+" line continue the paragraph above.
+/// and a "+" line continue the paragraph above, and a line with " / " in it holds several items.
 fn tag_for(_previous: Option<&str>, text: &str, proof_open: bool) -> Tag {
     let label = if text.starts_with("Def") {
         Label::Definition
@@ -20,10 +20,13 @@ fn tag_for(_previous: Option<&str>, text: &str, proof_open: bool) -> Tag {
     Tag {
         label,
         joins: text.starts_with("Then") || text.starts_with('+'),
+        split: text.contains(" / "),
     }
 }
 
-/// The mock worker. Lean is deterministic: a statement ends in `sorry`, a proof replaces that
+/// The mock worker. A split cuts after each " / ", which stays at the end of its piece so that the
+/// pieces reproduce the paragraph, and text containing UNSPLIT cannot be cut. Lean is
+/// deterministic: a statement ends in `sorry`, a proof replaces that
 /// with `trivial`, and text containing FALSE produces Lean that the REPL rejects. A repair of a
 /// proof whose text also contains FIXABLE produces Lean that checks, so the first repair is green,
 /// and any other repair stays FALSE. A check's environment is 100 plus the block version, so each
@@ -41,6 +44,21 @@ fn answer(job: &Job) -> Reply {
             text: text.clone(),
             proof_open: *proof_open,
             result: Ok(tag_for(previous.as_deref(), text, *proof_open)),
+        },
+        Job::Split { paragraph, text } => Reply::Split {
+            paragraph: *paragraph,
+            text: text.clone(),
+            result: if text.contains("UNSPLIT") {
+                Err(Failure {
+                    message: "The paragraph could not be split into its items.".to_string(),
+                    service: false,
+                })
+            } else {
+                Ok(text
+                    .split_inclusive(" / ")
+                    .map(|piece| piece.trim().to_string())
+                    .collect())
+            },
         },
         Job::Formalize {
             block,
@@ -198,6 +216,7 @@ fn kinds(jobs: &[Job]) -> Vec<&'static str> {
     jobs.iter()
         .map(|job| match job {
             Job::Classify { .. } => "classify",
+            Job::Split { .. } => "split",
             Job::Formalize { .. } => "formalize",
             Job::Check { .. } => "check",
             Job::Repair { .. } => "repair",
@@ -1216,7 +1235,7 @@ fn a_missing_or_malformed_memory_restores_nothing() {
     first.sync(&paras(&lines));
     run(&mut first, answer);
     let twin = first.twin();
-    assert!(twin.contains("\"version\":2"), "{twin}");
+    assert!(twin.contains("\"version\":3"), "{twin}");
 
     let mut baseline = Mls::new();
     baseline.sync(&paras(&lines));
@@ -1231,7 +1250,11 @@ fn a_missing_or_malformed_memory_restores_nothing() {
         ),
         (
             "version 1 memory",
-            twin.replace("\"version\":2", "\"version\":1"),
+            twin.replace("\"version\":3", "\"version\":1"),
+        ),
+        (
+            "version 2 memory",
+            twin.replace("\"version\":3", "\"version\":2"),
         ),
         (
             "no closing delimiter",
@@ -1355,7 +1378,7 @@ fn the_twin_remembers_what_jev_said_about_joining() {
     run(&mut first, answer);
 
     let twin = first.twin();
-    assert!(twin.contains("\"version\":2"), "{twin}");
+    assert!(twin.contains("\"version\":3"), "{twin}");
     assert!(twin.contains("\"joins\":true"), "{twin}");
     assert!(twin.contains("\"previous\":\"Let x be real.\""), "{twin}");
 
@@ -1363,6 +1386,221 @@ fn the_twin_remembers_what_jev_said_about_joining() {
     let jobs = run(&mut second, answer);
     assert_eq!(kinds(&jobs), ["check"]);
     assert_eq!(statuses(&second), [(0, Status::Sorry)]);
+}
+
+/// The reply of a splitter that is down: the cut fails for a service.
+fn split_down(job: &Job) -> Reply {
+    match job {
+        Job::Split { paragraph, text } => Reply::Split {
+            paragraph: *paragraph,
+            text: text.clone(),
+            result: Err(Failure {
+                message: MISSING_KEY.to_string(),
+                service: true,
+            }),
+        },
+        _ => answer(job),
+    }
+}
+
+#[test]
+fn a_paragraph_with_a_statement_and_its_proof_is_read_as_two_blocks() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t. / Proof. ok ∎"]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(
+        kinds(&jobs),
+        [
+            "classify",
+            "split",
+            "classify",
+            "classify",
+            "formalize",
+            "check",
+            "formalize",
+            "check"
+        ]
+    );
+    let (statement, proof) = (mls.blocks[0].id, mls.blocks[1].id);
+    assert_ne!(statement, proof);
+    assert!(matches!(
+        &jobs[1],
+        Job::Split { paragraph, text } if *paragraph == id_of(&mls, 0) && text == "Lemma t. / Proof. ok ∎"
+    ));
+    assert!(matches!(
+        &jobs[2],
+        Job::Classify { paragraph, previous: None, text, .. } if *paragraph == statement && text == "Lemma t. /"
+    ));
+    assert!(matches!(
+        &jobs[3],
+        Job::Classify { paragraph, previous: Some(above), text, proof_open: false }
+            if *paragraph == proof && above == "Lemma t. /" && text == "Proof. ok ∎"
+    ));
+    assert_eq!(formalized(&jobs), [statement, proof]);
+    let Job::Formalize {
+        statement: above, ..
+    } = &jobs[6]
+    else {
+        panic!("the proof is formalized")
+    };
+    assert!(above.is_some(), "the proof pairs with the statement piece");
+    let Job::Check { block, base, .. } = &jobs[7] else {
+        panic!("the proof is checked")
+    };
+    assert_eq!(
+        (*block, *base),
+        (proof, 0),
+        "a proof is checked on its statement's base"
+    );
+
+    assert_eq!(
+        statuses(&mls),
+        [(0, Status::Verified), (0, Status::Verified)]
+    );
+    let keys: Vec<u64> = mls.dots().iter().map(|dot| dot.key).collect();
+    assert_eq!(keys, [statement, proof]);
+}
+
+#[test]
+fn a_definition_a_statement_and_a_proof_in_one_paragraph_are_three_blocks() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def d. / Lemma t. / Proof. ok ∎"]));
+    run(&mut mls, answer);
+    let labels: Vec<Label> = mls.blocks.iter().map(|block| block.label).collect();
+    assert_eq!(labels, [Label::Definition, Label::Statement, Label::Proof]);
+    assert_eq!(
+        statuses(&mls),
+        [
+            (0, Status::Verified),
+            (0, Status::Verified),
+            (0, Status::Verified)
+        ]
+    );
+}
+
+#[test]
+fn a_proof_that_starts_in_a_split_paragraph_continues_in_the_next() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t. / Proof. begin", "then more ∎"]));
+    run(&mut mls, answer);
+    let ranges: Vec<(usize, usize)> = mls.dots().iter().map(|d| (d.paragraph, d.last)).collect();
+    assert_eq!(ranges, [(0, 0), (0, 1)]);
+    assert_eq!(
+        statuses(&mls),
+        [(0, Status::Verified), (0, Status::Verified)]
+    );
+}
+
+#[test]
+fn a_split_that_does_not_reproduce_the_paragraph_reads_it_whole_and_is_not_asked_again() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma UNSPLIT / t."]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(kinds(&jobs), ["classify", "split", "formalize", "check"]);
+    assert_eq!(statuses(&mls), [(0, Status::Sorry)]);
+    assert_eq!(formalize_texts(&jobs), ["Lemma UNSPLIT / t."]);
+
+    mls.sync(&paras(&["Lemma UNSPLIT / t.", "Hello."]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(
+        kinds(&jobs),
+        ["classify"],
+        "neither cut nor formalized again"
+    );
+    assert_eq!(statuses(&mls), [(0, Status::Sorry)]);
+}
+
+#[test]
+fn a_split_service_failure_is_a_red_dot_until_a_retry() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t. / Proof. ok ∎", "Hello."]));
+    let jobs = run(&mut mls, split_down);
+    assert_eq!(kinds(&jobs), ["classify", "split"]);
+    assert!(mls.next_job().is_none());
+
+    let dots = mls.dots();
+    assert_eq!(dots.len(), 1);
+    assert_eq!((dots[0].paragraph, dots[0].last), (0, 0));
+    assert_eq!(dots[0].key, id_of(&mls, 0));
+    assert_eq!(dots[0].status, Status::Failed);
+    assert_eq!(
+        mls.details(id_of(&mls, 0)),
+        Some(Details {
+            error: Some(MISSING_KEY.to_string()),
+            service: true,
+            ..Details::default()
+        })
+    );
+
+    mls.retry();
+    let job = mls.next_job().expect("retry asks for the split again");
+    assert!(matches!(
+        &job,
+        Job::Split { paragraph, .. } if *paragraph == id_of(&mls, 0)
+    ));
+}
+
+#[test]
+fn editing_only_the_proof_piece_keeps_the_statement_pieces_block() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t. / Proof. ok ∎"]));
+    run(&mut mls, answer);
+    let (statement, proof) = (mls.blocks[0].id, mls.blocks[1].id);
+    let version = version_of(&mls, statement);
+
+    mls.sync(&paras(&["Lemma t. / Proof. fine ∎"]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(
+        kinds(&jobs),
+        ["classify", "split", "classify", "formalize", "check"]
+    );
+    assert_eq!(mls.blocks[0].id, statement);
+    assert_eq!(version_of(&mls, statement), version);
+    assert_ne!(mls.blocks[1].id, proof);
+    assert_eq!(formalized(&jobs), [mls.blocks[1].id]);
+    assert_eq!(
+        statuses(&mls),
+        [(0, Status::Verified), (0, Status::Verified)]
+    );
+}
+
+#[test]
+fn a_twin_restores_the_split_so_a_reopened_document_asks_no_model() {
+    let lines = [
+        "Hello there.",
+        "Lemma t. / Proof. ok ∎",
+        "Lemma UNSPLIT / u.",
+    ];
+    let mut first = Mls::new();
+    first.sync(&paras(&lines));
+    run(&mut first, answer);
+
+    let twin = first.twin();
+    assert!(twin.contains("\"splits\":[{"), "{twin}");
+    let mut second = restored(&twin, &lines);
+    let jobs = run(&mut second, answer);
+    assert_eq!(kinds(&jobs), ["check", "check", "check"]);
+    assert_eq!(statuses(&second), statuses(&first));
+}
+
+#[test]
+fn a_restored_split_that_drops_text_is_ignored_and_asked_again() {
+    let lines = ["Hello there.", "Lemma t. / Proof. ok ∎"];
+    let mut first = Mls::new();
+    first.sync(&paras(&lines));
+    run(&mut first, answer);
+
+    let twin = first.twin();
+    let edited = twin.replace("[\"Lemma t. /\",\"Proof. ok ∎\"]", "[\"Lemma t. /\"]");
+    assert_ne!(edited, twin, "the split entry is edited");
+    let mut second = restored(&edited, &lines);
+    let jobs = run(&mut second, answer);
+    assert_eq!(
+        kinds(&jobs),
+        ["split", "check", "check"],
+        "only the split is asked again; the labels and formals are restored"
+    );
+    assert_eq!(statuses(&second), statuses(&first));
 }
 
 /// The chart's node for the block with `key`.

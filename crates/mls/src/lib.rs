@@ -46,12 +46,15 @@ impl Label {
     }
 }
 
-/// What Jev said about one paragraph: its label, and whether it continues the paragraph above as
-/// part of the same definition, statement or proof.
+/// What Jev said about one paragraph: its label, whether it continues the paragraph above as
+/// part of the same definition, statement or proof, and whether it holds several items.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tag {
     pub label: Label,
     pub joins: bool,
+    /// The paragraph holds more than one item, so it is read as its pieces (see `Job::Split`). A
+    /// piece is never split again, so the `split` of a piece's tag is ignored.
+    pub split: bool,
 }
 
 /// The state shown beside a block.
@@ -105,6 +108,7 @@ pub struct Checked {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Job {
     Classify {
+        /// The id of the paragraph, or of the piece of one, being classified.
         paragraph: u64,
         /// The block or prose run directly above: every paragraph grouped into it so far, joined by
         /// a blank line. None for the first paragraph. Jev is asked whether `text` continues it.
@@ -112,6 +116,9 @@ pub enum Job {
         text: String,
         proof_open: bool,
     },
+    /// Once per paragraph that holds several items: its cut into pieces, each a verbatim part of
+    /// `text`, in order. The reply checks that together they are the whole paragraph.
+    Split { paragraph: u64, text: String },
     Formalize {
         block: u64,
         version: u64,
@@ -154,11 +161,19 @@ pub enum Job {
 #[derive(Clone, Debug)]
 pub enum Reply {
     Classified {
+        /// The id of the paragraph, or of the piece of one, that was classified.
         paragraph: u64,
         previous: Option<String>,
         text: String,
         proof_open: bool,
         result: Result<Tag, Failure>,
+    },
+    /// The answer to a `Job::Split`, which it echoes: the pieces, or why the paragraph could not be
+    /// cut.
+    Split {
+        paragraph: u64,
+        text: String,
+        result: Result<Vec<String>, Failure>,
     },
     Formalized {
         block: u64,

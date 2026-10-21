@@ -229,7 +229,7 @@ pub struct LiveLine {
 /// The documents for the live test. Expected dots are the intended behaviour, written from the
 /// text; they are never derived from a run.
 #[allow(dead_code)] // Read only by the live test, which the scripted test does not compile.
-pub const LIVE_DOCUMENTS: [LiveDocument; 4] = [
+pub const LIVE_DOCUMENTS: [LiveDocument; 5] = [
     LiveDocument {
         name: "supplied note",
         lines: &[
@@ -454,6 +454,19 @@ pub const LIVE_DOCUMENTS: [LiveDocument; 4] = [
             },
             LiveLine {
                 text: r"*Proof.* Expanding the squares, $Q(u + v) = (u_1 + v_1)^2 + (u_2 + v_2)^2 = u_1^2 + v_1^2 + u_2^2 + v_2^2 + 2 (u_1 v_1 + u_2 v_2) = Q(u) + Q(v) + 2 B(u, v)$. Since $B(u, v) = 0$, the last term vanishes, so $Q(u + v) = Q(u) + Q(v)$. ∎",
+                expect: Some(Status::Verified),
+            },
+        ],
+    },
+    LiveDocument {
+        name: "several items in a paragraph",
+        lines: &[
+            LiveLine {
+                text: r"**Lemma.** Let $T : V \to W$ be a linear map between real normed spaces with $c\|x\| \le \|Tx\|$ for some $c > 0$ and all $x$. Then $T$ is injective. Indeed, if $Tx = 0$ then $c\|x\| \le 0$, hence $x = 0$. ∎",
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: r"Define $q(x) = (x - 1)^2$ for real $x$. Then $q(x) \ge 0$ for every real $x$, since squares are nonnegative.",
                 expect: Some(Status::Verified),
             },
         ],

@@ -186,7 +186,7 @@ fn event_json(event: Observed<'_>) -> Value {
                         }),
                     };
                 }
-                Reply::Checked { .. } => {}
+                Reply::Checked { .. } | Reply::Split { .. } => {}
                 Reply::Repaired { job, result } => {
                     if let Job::Repair {
                         block,
