@@ -62,10 +62,20 @@ fn answer(job: &Job) -> Reply {
             if text.contains("FALSE") {
                 lean.push_str("\n-- FALSE");
             }
+            // A block that only fixes notation declares nothing, so its Lean is blank.
+            if text.contains("NOTATION") {
+                lean.clear();
+            }
             // A block whose text contains USES mentions every name above, as Lean that relies on
-            // them would. `uses` then finds the ones it does not declare itself.
+            // them would. `uses` then finds the ones it does not declare itself. A statement must end
+            // in its `sorry` (see `rules::reject`), so its example goes above it.
             if text.contains("USES") {
-                lean.push_str(&format!("\nexample := [{}]", names_above.join(", ")));
+                let example = format!("example := [{}]", names_above.join(", "));
+                if *label == Label::Statement {
+                    lean = format!("{example}\n{lean}");
+                } else {
+                    lean.push_str(&format!("\n{example}"));
+                }
             }
             let uses = crate::rules::uses(&lean, names_above);
             Reply::Formalized {
@@ -316,18 +326,67 @@ fn a_proof_continues_over_lowercase_paragraphs_until_its_end_mark() {
 }
 
 #[test]
-fn an_unfinished_proof_at_the_end_gets_no_dot_and_no_formalize() {
+fn a_proof_without_an_end_mark_at_the_end_is_checked() {
     let mut mls = Mls::new();
     mls.sync(&paras(&["Lemma t.", "Proof. Never ends."]));
+    run(&mut mls, answer);
+
+    assert_eq!(
+        statuses(&mls),
+        [(0, Status::Verified), (1, Status::Verified)]
+    );
+}
+
+#[test]
+fn a_proof_ending_in_a_colon_at_the_end_waits_for_its_next_paragraph() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t.", "Proof. We compute:"]));
     let jobs = run(&mut mls, answer);
     let proof = id_of(&mls, 1);
 
-    assert_eq!(kinds(&jobs), ["classify", "classify", "formalize", "check"]);
     assert!(jobs.iter().all(|job| !matches!(
         job,
         Job::Formalize { block, .. } | Job::Check { block, .. } if *block == proof
     )));
     assert_eq!(statuses(&mls), [(0, Status::Sorry)]);
+}
+
+/// The shape of a document written without end marks: each proof ends where the next statement
+/// starts, and the last one is checked too.
+#[test]
+fn proofs_without_end_marks_each_get_a_dot() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&[
+        "Lemma a.",
+        "Proof. Argue.",
+        "Lemma b.",
+        "Proof. Argue again.",
+    ]));
+    run(&mut mls, answer);
+
+    assert_eq!(
+        statuses(&mls),
+        [
+            (0, Status::Verified),
+            (1, Status::Verified),
+            (2, Status::Verified),
+            (3, Status::Verified),
+        ]
+    );
+}
+
+#[test]
+fn a_definition_that_declares_nothing_gets_no_dot_and_the_blocks_below_go_on() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def NOTATION.", "Lemma t."]));
+    let jobs = run(&mut mls, answer);
+    let notation = id_of(&mls, 0);
+
+    assert!(jobs.iter().all(|job| !matches!(
+        job,
+        Job::Check { block, .. } if *block == notation
+    )));
+    assert_eq!(statuses(&mls), [(1, Status::Sorry)]);
 }
 
 #[test]
@@ -969,6 +1028,27 @@ fn a_proof_is_formalized_again_when_its_statement_changes_after_restore() {
 }
 
 #[test]
+fn a_proof_edited_with_its_statement_is_not_remembered_under_the_new_statement() {
+    let mut first = Mls::new();
+    first.sync(&paras(&["Lemma a.", "Proof. ok ∎"]));
+    run(&mut first, answer);
+
+    first.sync(&paras(&["Lemma b.", "Proof. ok ∎"]));
+    // The new statement is formalized and its proof is now stale, waiting to be formalized again.
+    let job = run_until(&mut first, |job| matches!(job, Job::Formalize { .. }));
+    assert!(first.apply(answer(&job)));
+
+    let twin = first.twin();
+    let mut second = restored(&twin, &["Lemma b.", "Proof. ok ∎"]);
+    let jobs = run(&mut second, answer);
+    assert_eq!(
+        formalized(&jobs),
+        [id_of(&second, 1)],
+        "the stale proof is formalized again, not restored: {twin}"
+    );
+}
+
+#[test]
 fn lean_with_comment_delimiters_and_quotes_round_trips_through_the_twin() {
     const LEAN: &str = "def s := \"a \\\"q\\\" -/ /- b\"";
     fn with_lean(job: &Job) -> Reply {
@@ -1042,6 +1122,63 @@ fn a_rejected_formal_is_restored_as_a_failed_dot_without_a_request() {
     assert_eq!(
         second.details(id_of(&second, 0)).and_then(|d| d.error),
         Some(REJECTED.to_string())
+    );
+}
+
+#[test]
+fn a_restored_formal_that_the_rules_reject_is_a_failed_dot_and_is_never_checked() {
+    const STATEMENT: &str = "#eval 1\ntheorem t : True := by sorry";
+    const DEFINITION: &str = "axiom ax : False";
+    // Stands in for a twin whose memory holds Lean that no model reply could pass the rules with.
+    fn crafted(job: &Job) -> Reply {
+        match job {
+            Job::Formalize {
+                block,
+                version,
+                label,
+                ..
+            } => Reply::Formalized {
+                block: *block,
+                version: *version,
+                statement_version: None,
+                result: Ok(Formal {
+                    lean: match label {
+                        Label::Statement => STATEMENT,
+                        Label::Definition => DEFINITION,
+                        Label::Proof | Label::Skip => panic!("the document has no proof"),
+                    }
+                    .to_string(),
+                    lean_name: None,
+                    assumptions: Vec::new(),
+                    uses: Vec::new(),
+                }),
+            },
+            _ => answer(job),
+        }
+    }
+    let lines = ["Def d.", "Lemma a."];
+    let mut first = Mls::new();
+    first.sync(&paras(&lines));
+    run(&mut first, crafted);
+
+    let mut second = restored(&first.twin(), &lines);
+    let jobs = run(&mut second, answer);
+    assert!(
+        jobs.is_empty(),
+        "restored Lean is not sent to Lean: {:?}",
+        kinds(&jobs)
+    );
+    assert_eq!(
+        statuses(&second),
+        [(0, Status::Failed), (1, Status::Failed)]
+    );
+    assert_eq!(
+        second.details(id_of(&second, 0)).and_then(|d| d.error),
+        Some("The Lean declares an axiom.".to_string())
+    );
+    assert_eq!(
+        second.details(id_of(&second, 1)).and_then(|d| d.error),
+        Some("The Lean uses `#eval`, which is not allowed.".to_string())
     );
 }
 
@@ -1323,4 +1460,18 @@ fn the_twin_round_trips_the_uses_so_the_restored_chart_has_the_same_shape() {
         shape(&second),
         [(Status::Verified, 0, 0), (Status::Sorry, 1, 1)]
     );
+}
+
+#[test]
+fn jev_sees_every_paragraph_of_the_block_above_not_only_the_last() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma for all n,", "+ n = n.", "Proof. Clear. ∎"]));
+    let jobs = run(&mut mls, answer);
+    let proof = id_of(&mls, 2);
+
+    assert!(jobs.iter().any(|job| matches!(
+        job,
+        Job::Classify { paragraph, previous: Some(above), .. }
+            if *paragraph == proof && above == "Lemma for all n,\n\n+ n = n."
+    )));
 }

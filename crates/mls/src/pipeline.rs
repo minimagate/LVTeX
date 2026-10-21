@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{Value, json};
 
-use crate::rules::declared_names;
+use crate::rules::{declared_names, is_blank};
 use crate::{Checked, Failure, Formal, Job, Label, Outcome, Reply, Status, Tag};
 
 /// One non-blank line of the document. `open` while the caret is in it or a formula in it is unfinished.
@@ -89,8 +89,8 @@ struct FormalKey {
     statement: Option<String>,
 }
 
-/// What decides a paragraph's tag: the text itself, the settled text above it (Jev is asked
-/// whether it continues that) and whether a proof is open above it.
+/// What decides a paragraph's tag: the text itself, the unit above it (Jev is asked whether it
+/// continues that; see `segment`) and whether a proof is open above it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct TagKey {
     previous: Option<String>,
@@ -138,8 +138,7 @@ struct Block {
     text: String,
     /// Definition, Statement or Proof; never Skip.
     label: Label,
-    /// False while a proof is unfinished, or while a statement or definition ends in ':' or ','
-    /// and may still continue. See `segment`.
+    /// False while the last block ends in ':' or ',' and may still continue. See `segment`.
     closed: bool,
     /// The text of the prose unit right above `first`, if there is one.
     prose: Option<String>,
@@ -365,12 +364,16 @@ fn settled_text(para: &Para) -> &str {
 
 /// The key a block's formal is remembered under. A proof's key carries the Lean of its statement,
 /// so a proof is not restored against a statement that has changed. None when that statement has
-/// no formal Lean yet.
+/// no formal Lean yet, or when the proof's formal was made for an earlier version of the statement:
+/// its Lean would then be filed under the statement's new Lean and restored as if it proved it.
 fn formal_key(blocks: &[Block], block: &Block) -> Option<FormalKey> {
     let statement = match block.label {
         Label::Definition | Label::Statement | Label::Skip => None,
         Label::Proof => {
             let statement = blocks.iter().find(|b| Some(b.id) == block.statement)?;
+            if block.formal.is_some() && block.statement_version != Some(statement.version) {
+                return None;
+            }
             match &statement.formal {
                 Some(Ok(formal)) => Some(formal.lean.clone()),
                 Some(Err(_)) | None => return None,
@@ -414,22 +417,31 @@ fn formal_entry(entry: &Value) -> Option<(FormalKey, Result<Formal, String>)> {
     };
     let value = match entry.get("rejected") {
         Some(message) => Err(message.as_str()?.to_owned()),
-        None => Ok(Formal {
-            lean: entry.get("lean")?.as_str()?.to_owned(),
-            lean_name: nullable(entry.get("lean_name"))?,
-            assumptions: entry
-                .get("assumptions")?
-                .as_array()?
-                .iter()
-                .map(|assumption| assumption.as_str().map(str::to_owned))
-                .collect::<Option<_>>()?,
-            uses: entry
-                .get("uses")?
-                .as_array()?
-                .iter()
-                .map(|name| name.as_str().map(str::to_owned))
-                .collect::<Option<_>>()?,
-        }),
+        None => {
+            let formal = Formal {
+                lean: entry.get("lean")?.as_str()?.to_owned(),
+                lean_name: nullable(entry.get("lean_name"))?,
+                assumptions: entry
+                    .get("assumptions")?
+                    .as_array()?
+                    .iter()
+                    .map(|assumption| assumption.as_str().map(str::to_owned))
+                    .collect::<Option<_>>()?,
+                uses: entry
+                    .get("uses")?
+                    .as_array()?
+                    .iter()
+                    .map(|name| name.as_str().map(str::to_owned))
+                    .collect::<Option<_>>()?,
+            };
+            // A restored Lean is not trusted: it passes the rules a model's reply passes. The names
+            // above are not known here, so the redefinition rule is skipped; Lean rejects a duplicate
+            // declaration itself.
+            match crate::rules::reject(key.label, &formal, &[], key.statement.as_deref()) {
+                Ok(()) => Ok(formal),
+                Err(message) => Err(message),
+            }
+        }
     };
     Some((key, value))
 }
@@ -550,8 +562,9 @@ impl Mls {
     /// while Jev answers. A paragraph with no tag at all is the frontier: the first one counts as a
     /// separator, so nothing joins it until Jev answers, and a second one stops the walk. A pending
     /// Classify job always runs first, so a provisional tag never leads to a Formalize or Check.
-    /// A block is open, so it takes no formal yet, while its proof is unfinished or while its last
-    /// paragraph ends in ':' or ','.
+    /// The last block is open, so it takes no formal yet, while its last paragraph ends in ':' or
+    /// ','. A proof without ∎ is not open: Enter closes it like any other block, and a paragraph
+    /// that joins it later formalizes it again.
     fn segment(&mut self) {
         let paras = &self.paras;
         let labels = &self.labels;
@@ -573,12 +586,15 @@ impl Mls {
             let proof_open = unit
                 .as_ref()
                 .is_some_and(|u| u.kind == Label::Proof && !u.ended);
+            // Jev sees the whole unit the paragraph may join, every paragraph grouped so far, so it
+            // judges against the item and not only its last line. After a separator there is no
+            // unit, and it sees the paragraph just above.
+            let above: Option<String> = unit
+                .as_ref()
+                .map(|u| u.text.clone())
+                .or_else(|| previous.map(str::to_owned));
             let tag = match &para.label {
-                Some(l)
-                    if l.previous.as_deref() == previous
-                        && l.text == text
-                        && l.proof_open == proof_open =>
-                {
+                Some(l) if l.previous == above && l.text == text && l.proof_open == proof_open => {
                     match &l.result {
                         Ok(tag) => *tag,
                         Err(_) => {
@@ -592,7 +608,7 @@ impl Mls {
                 }
                 _ => {
                     let key = TagKey {
-                        previous: previous.map(str::to_owned),
+                        previous: above,
                         text: text.to_owned(),
                         proof_open,
                     };
@@ -705,22 +721,10 @@ impl Mls {
             }
             previous = Some(text);
         }
-        if let Some(Unit {
-            block: Some(b),
-            kind,
-            ended,
-            ..
-        }) = &unit
-        {
+        if let Some(Unit { block: Some(b), .. }) = &unit {
             let block = &mut new[*b];
-            let open = match kind {
-                Label::Proof => !*ended,
-                Label::Definition | Label::Statement | Label::Skip => {
-                    let last = settled_text(&paras[block.last]).trim_end();
-                    last.ends_with(':') || last.ends_with(',')
-                }
-            };
-            block.closed = !open;
+            let last = settled_text(&paras[block.last]).trim_end();
+            block.closed = !(last.ends_with(':') || last.ends_with(','));
         }
 
         let ids: HashSet<u64> = paras.iter().map(|para| para.id).collect();
@@ -1052,7 +1056,8 @@ impl Mls {
 
     /// Restores the labels and formalizations that `twin` remembers. Call it on a fresh or reset
     /// `Mls`, before the first `sync`. A twin without a version 2 memory changes nothing, and an
-    /// entry that is malformed is skipped.
+    /// entry that is malformed is skipped. Restored Lean passes the same rules as a model's reply:
+    /// a formal the rules reject is restored as a rejection, and is never checked by Lean.
     pub fn restore(&mut self, twin: &str) {
         let Some(start) = twin.rfind(MEMORY_OPEN) else {
             return;
@@ -1192,6 +1197,10 @@ impl Mls {
                     continue;
                 }
             };
+            // A definition block that only fixes notation declares nothing: no dot, nothing to check.
+            if b.label == Label::Definition && is_blank(&formal.lean) {
+                continue;
+            }
             // A name the Lean uses that no block above declares: the block it came from was renamed
             // or removed. A rejected block above may have declared it, so then it is not asked again.
             if let Some(name) = formal

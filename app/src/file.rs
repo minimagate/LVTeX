@@ -100,6 +100,10 @@ fn state_path() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .map(|home| PathBuf::from(home).join("Library/Application Support/Mathstral/last-file"))
 }
+/// The per-user Lake project an installed app checks with, beside the other state files.
+pub fn lean_dir() -> Option<PathBuf> {
+    state_path().map(|p| p.with_file_name("lean"))
+}
 pub fn last() -> Option<PathBuf> {
     let p = PathBuf::from(fs::read_to_string(state_path()?).ok()?);
     p.is_file().then_some(p)

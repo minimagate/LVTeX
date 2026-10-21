@@ -95,5 +95,6 @@ pub const CHART_MAX_LEVEL: usize = 6;
 pub const CHART_GAP: f32 = 10.0;
 pub const CHART_EDGE_WIDTH: f32 = 1.0;
 pub const CHART_EDGE_COLOR: u32 = 0x4A4846;
-// The Lake project with Mathlib and the REPL; MATHSTRAL_LEAN_PROJECT overrides it.
+// The checkout's Lake project with Mathlib and the REPL, used when building from source. An installed
+// app uses the per-user copy first, and MATHSTRAL_LEAN_PROJECT overrides both (see mls::lean_project).
 pub const LEAN_PROJECT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../lean");

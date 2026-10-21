@@ -76,6 +76,9 @@ export OPENROUTER_API_KEY=…     # optional; for example in ~/.zshrc
 open -a Mathstral               # or run target/release/mathstral
 ```
 
+An installed copy checks with the Lean project in
+`~/Library/Application Support/Mathstral/lean`; see [Lean project](#lean-project).
+
 ### Privacy: what runs where
 
 | Feature | Runs | Sends |
@@ -165,11 +168,14 @@ paragraph is a line; Enter closes it.
 For each paragraph, Jev (`typesafe/jev-1.13`) answers two questions: what it is (a
 definition, a statement (lemma, theorem, corollary, proposition), a proof, or
 anything else, which gets no dot), and whether it belongs to the same item as the
-paragraph above. Paragraphs that belong together form one block: a setup line and
+block above. Jev sees that whole block, every paragraph grouped into it so far, not
+only its last line. Paragraphs that belong together form one block: a setup line and
 its claim, a statement and the displayed formula under it, or a proof that runs
 over several paragraphs until one that is not part of it, or until it ends with ∎.
-A block's dot sits beside its first paragraph. The last block gets no dot and no
-request while it is an unfinished proof or ends in `:` or `,`.
+A block's dot sits beside its first paragraph. A proof does not need ∎: Enter
+closes it like any other block. The last block waits, with no dot and no request,
+only while it ends in `:` or `,`. A convention that only fixes notation ("Throughout,
+$n$ is a natural number") declares nothing and gets no dot.
 
 Claude Haiku 5.5 (`anthropic/claude-haiku-5.5`) formalizes each block into Lean as
 one item, given the Lean of the blocks above and the prose run above it; statements
@@ -225,7 +231,7 @@ as one red dot whose panel explains what to do; the next edit retries. Saving
 also writes the document's Lean twin, `<name>.mls.lean`, beside it: the Lean that
 checked, with a `-- mathstral:block <id>` comment per block, and a final
 `mathstral:memory` comment (`version` 2). It remembers each paragraph's label, the
-paragraph above it and whether it joins that one, and each block's Lean,
+block above it and whether it joins that one, and each block's Lean,
 assumptions and names it uses, or its rejection reason. Opening the document re-uses
 them, so unchanged text needs no model calls; Lean re-checks every block. A version 1
 twin is ignored, so its paragraphs are asked again once. MLS needs no Ollama.
@@ -268,9 +274,17 @@ lake exe cache get            # downloads prebuilt Mathlib
 lake build Mathlib repl
 ```
 
-A source build of Mathlib without the cache takes hours. Mathstral uses `lean/`
-of the checkout it was built from; set `MATHSTRAL_LEAN_PROJECT` to use another
-project. The model ids live in [`crates/mls/src/lib.rs`](crates/mls/src/lib.rs).
+A source build of Mathlib without the cache takes hours. Mathstral looks for the
+project in this order: `MATHSTRAL_LEAN_PROJECT` when it is set; then
+`~/Library/Application Support/Mathstral/lean` when it exists; then the `lean/` of
+the checkout it was built from.
+
+An installed copy (the release zip) has no checkout. Copy the repository's `lean/`
+files (`lakefile.toml`, `lean-toolchain` and `lake-manifest.json`) to
+`~/Library/Application Support/Mathstral/lean`, then run the same `lake exe cache get`
+and `lake build Mathlib repl` in that folder. A source build uses the checkout's
+`lean/`; `MATHSTRAL_LEAN_PROJECT` overrides both. The model ids live in
+[`crates/mls/src/lib.rs`](crates/mls/src/lib.rs).
 HTTPS requests go through the system `curl`, which reads the key from its
 standard input, never from its arguments.
 

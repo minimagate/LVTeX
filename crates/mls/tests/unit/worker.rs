@@ -72,7 +72,7 @@ fn classify_reports_the_label_jev_chose() {
         |url, body| {
             assert_eq!(url, DECISIONS_URL);
             assert_eq!(body["state"]["paragraph"], "Lemma. Every group is nice.");
-            assert_eq!(body["state"]["previous_paragraph"], "Let G be a group.");
+            assert_eq!(body["state"]["block_above"], "Let G be a group.");
             Ok(jev(Label::Statement, true))
         },
     );

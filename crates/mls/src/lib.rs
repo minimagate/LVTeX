@@ -106,8 +106,8 @@ pub struct Checked {
 pub enum Job {
     Classify {
         paragraph: u64,
-        /// The settled text of the nearest settled paragraph above, None for the first. Jev is
-        /// asked whether `text` continues it.
+        /// The block or prose run directly above: every paragraph grouped into it so far, joined by
+        /// a blank line. None for the first paragraph. Jev is asked whether `text` continues it.
         previous: Option<String>,
         text: String,
         proof_open: bool,

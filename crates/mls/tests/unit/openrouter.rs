@@ -160,7 +160,7 @@ fn classify_request_names_the_model_and_echoes_the_state() {
     ] {
         let request = classify_request(previous, text, proof_open);
         assert_eq!(request["model"], JEV_MODEL);
-        assert_eq!(request["state"]["previous_paragraph"], json!(previous));
+        assert_eq!(request["state"]["block_above"], json!(previous));
         assert_eq!(request["state"]["paragraph"], text);
         assert_eq!(
             request["state"]["proof_in_progress"], proof_open,
@@ -389,12 +389,6 @@ fn parse_formal_rejects_a_reply_with_a_bad_field() {
         ),
         (
             reply(json!(
-                r#"{"lean": " \n\t", "lean_name": null, "assumptions": []}"#
-            )),
-            Err(block(NO_LEAN)),
-        ),
-        (
-            reply(json!(
                 r#"{"lean": 3, "lean_name": null, "assumptions": []}"#
             )),
             Err(block(NO_LEAN)),
@@ -441,4 +435,14 @@ fn parse_formal_rejects_truncated_and_empty_replies() {
     for value in cases {
         assert_eq!(parse_formal(&value), Err(service(NO_CONTENT)), "{value}");
     }
+}
+
+#[test]
+fn parse_formal_accepts_blank_lean_for_a_block_that_declares_nothing() {
+    check_formal(vec![(
+        reply(json!(
+            r#"{"lean": " \n\t", "lean_name": null, "assumptions": []}"#
+        )),
+        Ok(formal("", None, &[])),
+    )]);
 }

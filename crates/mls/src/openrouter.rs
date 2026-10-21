@@ -13,9 +13,11 @@ pub(crate) const CHAT_URL: &str = "https://openrouter.ai/api/v1/chat/completions
 /// Bounds each request, so a stalled call cannot hold the worker indefinitely.
 const TIMEOUT_SECONDS: u32 = 120;
 
-const CLASSIFY: &str = "Classify one paragraph of a mathematical document. When proof_in_progress is true, the paragraph follows an unfinished proof: answer proof if it continues that argument.";
+/// Neutral about `proof_in_progress` on purpose: a proof often ends without ∎, and an instruction
+/// that favours proof while one is open makes every later claim a proof.
+const CLASSIFY: &str = "Classify one paragraph of a mathematical document. block_above is the block of one or more paragraphs just above it. proof_in_progress is true when a proof above has not ended with ∎; that proof may already be complete. The paragraph is a proof only if it argues for the statement being proved. A new claim is a statement even right after a proof, for example one that starts with \"It follows that\" or \"One might guess that\". A remark about the mathematics is skip.";
 
-const JOINS: &str = "Decide whether this paragraph belongs to the same mathematical item (a definition, a statement or a proof) as previous_paragraph, so that the two must be formalized together.";
+const JOINS: &str = "Decide whether this paragraph belongs to the same mathematical item (a definition, a statement or a proof) as block_above, so that they must be formalized together.";
 
 const SYSTEM: &str = r#"You formalize one block of a mathematical document into Lean 4 with Mathlib.
 
@@ -27,7 +29,7 @@ Return only a JSON object with three fields:
 - "assumptions": every assumption of your Lean, in plain language that a mathematician can check against the block: the types chosen (for example "n is a natural number, so n ≥ 0"), each hypothesis, quantifier and domain, and any Lean convention that changes the meaning (for example "division by zero is 0" or "subtraction on ℕ is truncated"). Write them from the Lean, not from the block. One short sentence each.
 
 Conventions by label:
-- definition: a `def`, `abbrev`, `structure`, `class` or `inductive`; use `noncomputable def` when needed. No `sorry`.
+- definition: a `def`, `abbrev`, `structure`, `class` or `inductive`; use `noncomputable def` when needed. No `sorry`. If the block only fixes what letters stand for (for example "Throughout, n is a natural number") and introduces no new notion, return an empty "lean", null "lean_name" and no assumptions.
 - statement (a lemma, theorem, corollary or proposition): exactly one `theorem` with a fresh, descriptive snake_case name, whose whole proof is `by sorry`, so the source ends with `:= by sorry`.
 - proof: restate the most recent statement exactly as it appears in the Lean above, with the same name, binders and type, character for character up to `:=`, and replace `sorry` with a complete proof. Never weaken or change the statement to make it provable. If the argument is wrong or incomplete, still give your most faithful proof attempt and let Lean reject it.
 
@@ -165,13 +167,13 @@ pub(crate) fn post(url: &str, body: &Value, key: Option<&str>) -> Result<Value, 
 }
 
 /// The Jev request that asks for the kind of one paragraph and whether it continues the one above.
-/// `previous` is None for the first paragraph; `proof_open` tells Jev whether the paragraph may
+/// `previous` is the block above (see `Job::Classify`), None for the first paragraph; `proof_open` tells Jev whether the paragraph may
 /// continue an unfinished proof.
 pub(crate) fn classify_request(previous: Option<&str>, text: &str, proof_open: bool) -> Value {
     json!({
         "model": JEV_MODEL,
         "state": {
-            "previous_paragraph": previous,
+            "block_above": previous,
             "paragraph": text,
             "proof_in_progress": proof_open,
         },
@@ -180,18 +182,18 @@ pub(crate) fn classify_request(previous: Option<&str>, text: &str, proof_open: b
                 "type": "choice",
                 "instructions": CLASSIFY,
                 "criteria": {
-                    (Label::Definition.name()): "Defines a new mathematical object, notion or notation.",
-                    (Label::Statement.name()): "States a lemma, theorem, corollary or proposition that is meant to be proved.",
-                    (Label::Proof.name()): "Proves the preceding statement, or continues a proof in progress.",
-                    (Label::Skip.name()): "Anything else: prose, motivation, examples, remarks, headings or a bare formula.",
+                    (Label::Definition.name()): "Introduces and names a new notion, object or notation, for example \"We call n even when …\". A convention that only fixes what letters stand for, such as \"Throughout, n is a natural number\", is skip.",
+                    (Label::Statement.name()): "Asserts a claim that is meant to be proved: a lemma, theorem, corollary or proposition, or a new claim in prose such as \"It follows that …\" or \"One might guess that … holds\".",
+                    (Label::Proof.name()): "Argues for the statement being proved, with reasons or computations, or continues that argument.",
+                    (Label::Skip.name()): "Anything else: prose, motivation, examples, remarks, headings, conventions that fix notation, or a bare formula.",
                 }
             },
             "joins": {
                 "type": "choice",
                 "instructions": JOINS,
                 "criteria": {
-                    "continues": "Belongs to the same definition, statement or proof as the previous paragraph: its setup (\"Let G be a group.\" followed by the claim), a displayed formula, a clause or list item, or the rest of a sentence the previous paragraph started.",
-                    "new": "Starts a new definition, statement or proof, or is unrelated prose, or previous_paragraph is null.",
+                    "continues": "Belongs to the same definition, statement or proof as block_above: its setup (\"Let G be a group.\" followed by the claim), a displayed formula, a clause or list item, or the rest of a sentence that block_above started.",
+                    "new": "Starts a new definition, statement or proof, or is unrelated prose, or block_above is null.",
                 }
             }
         }
@@ -302,9 +304,10 @@ pub(crate) fn parse_formal(response: &Value) -> Result<Formal, Failure> {
         .ok()
         .filter(Value::is_object)
         .ok_or_else(|| block_failure("Haiku did not return valid JSON."))?;
+    // Blank Lean is an answer: a definition block that only fixes notation declares nothing.
+    // `rules::reject` decides where blank Lean is allowed.
     let lean = json["lean"]
         .as_str()
-        .filter(|lean| !lean.trim().is_empty())
         .ok_or_else(|| block_failure("Haiku's JSON has no `lean`."))?
         .trim_end()
         .to_string();
