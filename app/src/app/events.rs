@@ -14,7 +14,7 @@ impl ApplicationHandler<Action> for App {
             return;
         }
         let mut attrs = Window::default_attributes()
-            .with_title("Mathstral")
+            .with_title("LVTeX")
             .with_inner_size(LogicalSize::new(
                 self.window_geometry.width,
                 self.window_geometry.height,

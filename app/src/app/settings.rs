@@ -321,7 +321,7 @@ impl App {
         if draft.is_empty() {
             return;
         }
-        if !mathstral_mls::key_is_valid(&draft) {
+        if !lvtex_mls::key_is_valid(&draft) {
             self.set_message("That does not look like an OpenRouter key.");
             return;
         }
@@ -332,7 +332,7 @@ impl App {
                 "Saved in your Keychain. OPENROUTER_API_KEY is set and takes precedence.".to_owned()
             }
             Ok(()) => "Saved in your Keychain.".to_owned(),
-            Err(reason) => format!("{reason} The key is used until Mathstral quits."),
+            Err(reason) => format!("{reason} The key is used until LVTeX quits."),
         };
         // The environment's key still comes first. Otherwise MLS uses the typed key, stored or not.
         self.mls_worker.set_key(environment.or(Some(draft)));

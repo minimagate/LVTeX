@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn hand_written_caret_is_located_erased_and_scales_with_script_size() {
     let caret = format!(r"\mathord{{\textcolor{{#{CARET_SENTINEL:06X}}}{{|}}}}");
-    let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
+    let mut renderer = Renderer::with_prelude(lvtex_latex::PRELUDE);
     let base = render_preview(&mut renderer, &format!(r"x{caret}")).unwrap();
     let script = render_preview(&mut renderer, &format!(r"x^{{2{caret}}}")).unwrap();
     let plain = render_preview(&mut renderer, "x^2").unwrap();
@@ -59,7 +59,7 @@ fn magenta_ink_survives_final_renders_and_previews_still_find_the_caret() {
             .filter(|p| **p == [255, 0, 255, 255])
             .count()
     };
-    let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
+    let mut renderer = Renderer::with_prelude(lvtex_latex::PRELUDE);
     let plain = render(&mut renderer, magenta).unwrap();
     let expected = magenta_pixels(&plain.inline);
     assert!(expected > 0, "magenta formula has no magenta ink");

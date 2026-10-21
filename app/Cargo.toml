@@ -1,5 +1,5 @@
 [package]
-name = "mathstral"
+name = "lvtex"
 description = "A native macOS editor for writing prose with inline math"
 version.workspace = true
 edition.workspace = true
@@ -18,8 +18,8 @@ unicode-segmentation = "=1.13.3"
 muda = { version = "=0.21.2", default-features = false }
 rfd = "=0.17.2"
 arboard = { version = "=3.7.0", default-features = false }
-mathstral-latex.workspace = true
-mathstral-render.workspace = true
-mathstral-mls.workspace = true
+lvtex-latex.workspace = true
+lvtex-render.workspace = true
+lvtex-mls.workspace = true
 serde_json.workspace = true
 base64 = "=0.22.1"

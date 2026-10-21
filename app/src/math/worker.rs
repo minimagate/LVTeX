@@ -6,7 +6,7 @@ use super::model::{
 };
 use super::render::{FormulaImage, render, render_preview};
 use crate::config::*;
-use mathstral_render::math::Renderer;
+use lvtex_render::math::Renderer;
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -62,10 +62,10 @@ impl Worker {
         let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(wake);
         let local = LocalWorker::new(replies.clone(), wake.clone());
         thread::Builder::new()
-            .name("mathstral-math".into())
+            .name("lvtex-math".into())
             .stack_size(32 * 1024 * 1024)
             .spawn(move || {
-                let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
+                let mut renderer = Renderer::with_prelude(lvtex_latex::PRELUDE);
                 let mut cache: HashMap<String, Arc<FormulaImage>> = HashMap::new();
                 let send = |reply| {
                     let _ = replies.send(reply);
@@ -152,10 +152,10 @@ impl LocalWorker {
         ));
         let worker_pending = pending.clone();
         thread::Builder::new()
-            .name("mathstral-render".into())
+            .name("lvtex-render".into())
             .stack_size(32 * 1024 * 1024)
             .spawn(move || {
-                let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
+                let mut renderer = Renderer::with_prelude(lvtex_latex::PRELUDE);
                 let mut prefer_preview = true;
                 loop {
                     let task = {
@@ -270,7 +270,7 @@ fn guarded<T>(
     work: impl FnOnce(&mut Renderer) -> Result<T, Error>,
 ) -> Result<T, Error> {
     panic::catch_unwind(AssertUnwindSafe(|| work(renderer))).unwrap_or_else(|_| {
-        *renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
+        *renderer = Renderer::with_prelude(lvtex_latex::PRELUDE);
         Err("renderer panicked".to_owned().into())
     })
 }

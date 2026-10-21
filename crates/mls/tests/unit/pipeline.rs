@@ -6,7 +6,7 @@ const REPL_DOWN: &str = "the Lean REPL is not running";
 
 /// The mock model's tags. "Def" is a definition, "Lemma" and "Then" a statement, "Proof" starts a
 /// proof, a lowercase line continues an open proof, and anything else is prose. A "Then" line
-/// and a "+" line continue the paragraph above.
+/// and a "+" line continue the paragraph above, and a line with " / " in it holds several items.
 fn tag_for(_previous: Option<&str>, text: &str, proof_open: bool) -> Tag {
     let label = if text.starts_with("Def") {
         Label::Definition
@@ -20,10 +20,13 @@ fn tag_for(_previous: Option<&str>, text: &str, proof_open: bool) -> Tag {
     Tag {
         label,
         joins: text.starts_with("Then") || text.starts_with('+'),
+        split: text.contains(" / "),
     }
 }
 
-/// The mock worker. Lean is deterministic: a statement ends in `sorry`, a proof replaces that
+/// The mock worker. A split cuts after each " / ", which stays at the end of its piece so that the
+/// pieces reproduce the paragraph, and text containing UNSPLIT cannot be cut. Lean is
+/// deterministic: a statement ends in `sorry`, a proof replaces that
 /// with `trivial`, and text containing FALSE produces Lean that the REPL rejects. A repair of a
 /// proof whose text also contains FIXABLE produces Lean that checks, so the first repair is green,
 /// and any other repair stays FALSE. A check's environment is 100 plus the block version, so each
@@ -41,6 +44,21 @@ fn answer(job: &Job) -> Reply {
             text: text.clone(),
             proof_open: *proof_open,
             result: Ok(tag_for(previous.as_deref(), text, *proof_open)),
+        },
+        Job::Split { paragraph, text } => Reply::Split {
+            paragraph: *paragraph,
+            text: text.clone(),
+            result: if text.contains("UNSPLIT") {
+                Err(Failure {
+                    message: "The paragraph could not be split into its items.".to_string(),
+                    service: false,
+                })
+            } else {
+                Ok(text
+                    .split_inclusive(" / ")
+                    .map(|piece| piece.trim().to_string())
+                    .collect())
+            },
         },
         Job::Formalize {
             block,
@@ -198,6 +216,7 @@ fn kinds(jobs: &[Job]) -> Vec<&'static str> {
     jobs.iter()
         .map(|job| match job {
             Job::Classify { .. } => "classify",
+            Job::Split { .. } => "split",
             Job::Formalize { .. } => "formalize",
             Job::Check { .. } => "check",
             Job::Repair { .. } => "repair",
@@ -210,6 +229,13 @@ fn statuses(mls: &Mls) -> Vec<(usize, Status)> {
         .iter()
         .map(|dot| (dot.paragraph, dot.status))
         .collect()
+}
+
+/// The details of the dot with `key`, which must hold one item.
+fn item(mls: &Mls, key: u64) -> Details {
+    let mut items = mls.details(key);
+    assert_eq!(items.len(), 1, "the dot holds one item");
+    items.remove(0)
 }
 
 fn id_of(mls: &Mls, index: usize) -> u64 {
@@ -286,7 +312,7 @@ fn a_statement_then_its_proof_is_formalized_and_checked_in_order() {
     let file = mls.twin();
     assert!(
         file.contains(&format!(
-            "\n-- mathstral:block {proof} proof\ntheorem t{statement} : True := by trivial\n"
+            "\n-- lvtex:block {proof} proof\ntheorem t{statement} : True := by trivial\n"
         )),
         "{file}"
     );
@@ -325,7 +351,7 @@ fn a_false_proof_fails_with_the_lean_error_and_the_statement_stays_sorry() {
     let proof = id_of(&mls, 1);
 
     assert_eq!(statuses(&mls), [(0, Status::Sorry), (1, Status::Failed)]);
-    let details = mls.details(proof).expect("the proof has a dot");
+    let details = item(&mls, proof);
     assert_eq!(details.error.as_deref(), Some("1:0: error"));
     assert!(!details.service);
 }
@@ -428,7 +454,7 @@ fn a_proof_with_no_statement_above_fails_without_a_formalize() {
         Job::Formalize { block, .. } | Job::Check { block, .. } if *block == proof
     )));
     assert_eq!(statuses(&mls), [(0, Status::Verified), (1, Status::Failed)]);
-    let details = mls.details(proof).expect("the proof has a dot");
+    let details = item(&mls, proof);
     assert_eq!(
         details.error.as_deref(),
         Some("There is no statement directly above this proof.")
@@ -630,11 +656,16 @@ fn a_classification_service_failure_stops_at_its_paragraph_until_a_change() {
     assert_eq!(dots[0].status, Status::Failed);
     assert_eq!(
         mls.details(id_of(&mls, 0)),
-        Some(Details {
+        [Details {
+            label: None,
+            status: Status::Failed,
+            assumptions: Vec::new(),
+            lean: None,
             error: Some(MISSING_KEY.to_string()),
             service: true,
-            ..Details::default()
-        })
+            uses: Vec::new(),
+            note: None,
+        }]
     );
 
     mls.sync(&paras(&["Hello there.", "World."]));
@@ -913,10 +944,7 @@ fn a_timed_out_check_clears_the_other_checks_so_they_run_again() {
         "the definition is checked on the new REPL: {jobs:?}"
     );
     assert_eq!(statuses(&mls), [(0, Status::Verified), (1, Status::Failed)]);
-    assert_eq!(
-        mls.details(a).and_then(|details| details.error),
-        Some(TIMED_OUT.to_string())
-    );
+    assert_eq!(item(&mls, a).error, Some(TIMED_OUT.to_string()));
 }
 
 #[test]
@@ -1114,7 +1142,7 @@ fn lean_with_comment_delimiters_and_quotes_round_trips_through_the_twin() {
     let jobs = run(&mut second, answer);
     assert_eq!(kinds(&jobs), ["check"]);
     assert_eq!(
-        second.details(id_of(&second, 0)).and_then(|d| d.lean),
+        item(&second, id_of(&second, 0)).lean,
         Some(LEAN.to_string())
     );
 }
@@ -1147,7 +1175,7 @@ fn a_rejected_formal_is_restored_as_a_failed_dot_without_a_request() {
     assert!(jobs.is_empty(), "{:?}", kinds(&jobs));
     assert_eq!(statuses(&second), [(0, Status::Failed)]);
     assert_eq!(
-        second.details(id_of(&second, 0)).and_then(|d| d.error),
+        item(&second, id_of(&second, 0)).error,
         Some(REJECTED.to_string())
     );
 }
@@ -1200,11 +1228,11 @@ fn a_restored_formal_that_the_rules_reject_is_a_failed_dot_and_is_never_checked(
         [(0, Status::Failed), (1, Status::Failed)]
     );
     assert_eq!(
-        second.details(id_of(&second, 0)).and_then(|d| d.error),
+        item(&second, id_of(&second, 0)).error,
         Some("The Lean declares an axiom.".to_string())
     );
     assert_eq!(
-        second.details(id_of(&second, 1)).and_then(|d| d.error),
+        item(&second, id_of(&second, 1)).error,
         Some("The Lean uses `#eval`, which is not allowed.".to_string())
     );
 }
@@ -1216,7 +1244,7 @@ fn a_missing_or_malformed_memory_restores_nothing() {
     first.sync(&paras(&lines));
     run(&mut first, answer);
     let twin = first.twin();
-    assert!(twin.contains("\"version\":2"), "{twin}");
+    assert!(twin.contains("\"version\":3"), "{twin}");
 
     let mut baseline = Mls::new();
     baseline.sync(&paras(&lines));
@@ -1231,7 +1259,11 @@ fn a_missing_or_malformed_memory_restores_nothing() {
         ),
         (
             "version 1 memory",
-            twin.replace("\"version\":2", "\"version\":1"),
+            twin.replace("\"version\":3", "\"version\":1"),
+        ),
+        (
+            "version 2 memory",
+            twin.replace("\"version\":3", "\"version\":2"),
         ),
         (
             "no closing delimiter",
@@ -1355,7 +1387,7 @@ fn the_twin_remembers_what_jev_said_about_joining() {
     run(&mut first, answer);
 
     let twin = first.twin();
-    assert!(twin.contains("\"version\":2"), "{twin}");
+    assert!(twin.contains("\"version\":3"), "{twin}");
     assert!(twin.contains("\"joins\":true"), "{twin}");
     assert!(twin.contains("\"previous\":\"Let x be real.\""), "{twin}");
 
@@ -1363,6 +1395,289 @@ fn the_twin_remembers_what_jev_said_about_joining() {
     let jobs = run(&mut second, answer);
     assert_eq!(kinds(&jobs), ["check"]);
     assert_eq!(statuses(&second), [(0, Status::Sorry)]);
+}
+
+/// The reply of a splitter that is down: the cut fails for a service.
+fn split_down(job: &Job) -> Reply {
+    match job {
+        Job::Split { paragraph, text } => Reply::Split {
+            paragraph: *paragraph,
+            text: text.clone(),
+            result: Err(Failure {
+                message: MISSING_KEY.to_string(),
+                service: true,
+            }),
+        },
+        _ => answer(job),
+    }
+}
+
+#[test]
+fn a_paragraph_with_a_statement_and_its_proof_is_read_as_two_blocks() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t. / Proof. ok ∎"]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(
+        kinds(&jobs),
+        [
+            "classify",
+            "split",
+            "classify",
+            "classify",
+            "formalize",
+            "check",
+            "formalize",
+            "check"
+        ]
+    );
+    let (statement, proof) = (mls.blocks[0].id, mls.blocks[1].id);
+    assert_ne!(statement, proof);
+    assert!(matches!(
+        &jobs[1],
+        Job::Split { paragraph, text } if *paragraph == id_of(&mls, 0) && text == "Lemma t. / Proof. ok ∎"
+    ));
+    assert!(matches!(
+        &jobs[2],
+        Job::Classify { paragraph, previous: None, text, .. } if *paragraph == statement && text == "Lemma t. /"
+    ));
+    assert!(matches!(
+        &jobs[3],
+        Job::Classify { paragraph, previous: Some(above), text, proof_open: false }
+            if *paragraph == proof && above == "Lemma t. /" && text == "Proof. ok ∎"
+    ));
+    assert_eq!(formalized(&jobs), [statement, proof]);
+    let Job::Formalize {
+        statement: above, ..
+    } = &jobs[6]
+    else {
+        panic!("the proof is formalized")
+    };
+    assert!(above.is_some(), "the proof pairs with the statement piece");
+    let Job::Check { block, base, .. } = &jobs[7] else {
+        panic!("the proof is checked")
+    };
+    assert_eq!(
+        (*block, *base),
+        (proof, 0),
+        "a proof is checked on its statement's base"
+    );
+
+    assert_eq!(statuses(&mls), [(0, Status::Verified)]);
+    let dots = mls.dots();
+    assert_eq!((dots[0].paragraph, dots[0].last), (0, 0));
+    assert_eq!(dots[0].key, statement, "the dot has its first item's key");
+    let items = mls.details(statement);
+    let labels: Vec<Option<Label>> = items.iter().map(|item| item.label).collect();
+    assert_eq!(labels, [Some(Label::Statement), Some(Label::Proof)]);
+    assert!(items.iter().all(|item| item.status == Status::Verified));
+    assert!(items.iter().all(|item| item.lean.is_some()));
+    assert!(
+        mls.details(proof).is_empty(),
+        "only a group's first key names it"
+    );
+}
+
+#[test]
+fn a_definition_a_statement_and_a_proof_in_one_paragraph_are_three_blocks_and_one_dot() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def d. / Lemma t. / Proof. ok ∎"]));
+    run(&mut mls, answer);
+    let labels: Vec<Label> = mls.blocks.iter().map(|block| block.label).collect();
+    assert_eq!(labels, [Label::Definition, Label::Statement, Label::Proof]);
+    assert_eq!(statuses(&mls), [(0, Status::Verified)]);
+    assert_eq!(mls.details(mls.blocks[0].id).len(), 3);
+}
+
+#[test]
+fn a_false_proof_in_a_split_paragraph_makes_the_dot_red_and_lists_each_items_status() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def d. / Lemma t. / Proof. FALSE ∎"]));
+    run(&mut mls, answer);
+    assert_eq!(statuses(&mls), [(0, Status::Failed)]);
+    let items = mls.details(mls.blocks[0].id);
+    let seen: Vec<(Option<Label>, Status)> =
+        items.iter().map(|item| (item.label, item.status)).collect();
+    assert_eq!(
+        seen,
+        [
+            (Some(Label::Definition), Status::Verified),
+            (Some(Label::Statement), Status::Sorry),
+            (Some(Label::Proof), Status::Failed)
+        ]
+    );
+    assert_eq!(items[2].error.as_deref(), Some("1:0: error"));
+    assert_eq!(items[0].error, None);
+}
+
+#[test]
+fn a_dot_takes_the_worst_status_of_its_items() {
+    // The statement piece has no proof, so it is amber beside the verified definition.
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def d. / Lemma t."]));
+    run(&mut mls, answer);
+    assert_eq!(statuses(&mls), [(0, Status::Sorry)]);
+
+    let items = |status: &[Status]| -> Vec<Dot> {
+        status
+            .iter()
+            .enumerate()
+            .map(|(i, &status)| dot(0, 0, i as u64, status))
+            .collect()
+    };
+    let worst = |status: &[Status]| merge_dots(&group_dots(&items(status))[0]).status;
+    assert_eq!(
+        worst(&[Status::Verified, Status::Sorry, Status::Checking]),
+        Status::Checking
+    );
+    assert_eq!(
+        worst(&[Status::Sorry, Status::Failed, Status::Checking]),
+        Status::Failed
+    );
+    assert_eq!(
+        worst(&[Status::Verified, Status::Verified]),
+        Status::Verified
+    );
+}
+
+#[test]
+fn dots_group_while_their_ranges_overlap_and_not_when_they_only_touch() {
+    let dots = [
+        dot(2, 2, 5, Status::Sorry),
+        dot(0, 0, 1, Status::Verified),
+        dot(0, 1, 2, Status::Verified),
+        dot(1, 1, 3, Status::Verified),
+        dot(3, 3, 6, Status::Verified),
+    ];
+    let keys: Vec<Vec<u64>> = group_dots(&dots)
+        .iter()
+        .map(|group| group.iter().map(|d| d.key).collect())
+        .collect();
+    assert_eq!(keys, [vec![1, 2, 3], vec![5], vec![6]]);
+}
+
+#[test]
+fn a_proof_that_starts_in_a_split_paragraph_continues_in_the_next() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t. / Proof. begin", "then more ∎"]));
+    run(&mut mls, answer);
+    let ranges: Vec<(usize, usize)> = mls.dots().iter().map(|d| (d.paragraph, d.last)).collect();
+    assert_eq!(ranges, [(0, 1)]);
+    assert_eq!(statuses(&mls), [(0, Status::Verified)]);
+    assert_eq!(mls.details(mls.blocks[0].id).len(), 2);
+}
+
+#[test]
+fn a_split_that_does_not_reproduce_the_paragraph_reads_it_whole_and_is_not_asked_again() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma UNSPLIT / t."]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(kinds(&jobs), ["classify", "split", "formalize", "check"]);
+    assert_eq!(statuses(&mls), [(0, Status::Sorry)]);
+    assert_eq!(formalize_texts(&jobs), ["Lemma UNSPLIT / t."]);
+
+    mls.sync(&paras(&["Lemma UNSPLIT / t.", "Hello."]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(
+        kinds(&jobs),
+        ["classify"],
+        "neither cut nor formalized again"
+    );
+    assert_eq!(statuses(&mls), [(0, Status::Sorry)]);
+}
+
+#[test]
+fn a_split_service_failure_is_a_red_dot_until_a_retry() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t. / Proof. ok ∎", "Hello."]));
+    let jobs = run(&mut mls, split_down);
+    assert_eq!(kinds(&jobs), ["classify", "split"]);
+    assert!(mls.next_job().is_none());
+
+    let dots = mls.dots();
+    assert_eq!(dots.len(), 1);
+    assert_eq!((dots[0].paragraph, dots[0].last), (0, 0));
+    assert_eq!(dots[0].key, id_of(&mls, 0));
+    assert_eq!(dots[0].status, Status::Failed);
+    assert_eq!(
+        mls.details(id_of(&mls, 0)),
+        [Details {
+            label: None,
+            status: Status::Failed,
+            assumptions: Vec::new(),
+            lean: None,
+            error: Some(MISSING_KEY.to_string()),
+            service: true,
+            uses: Vec::new(),
+            note: None,
+        }]
+    );
+
+    mls.retry();
+    let job = mls.next_job().expect("retry asks for the split again");
+    assert!(matches!(
+        &job,
+        Job::Split { paragraph, .. } if *paragraph == id_of(&mls, 0)
+    ));
+}
+
+#[test]
+fn editing_only_the_proof_piece_keeps_the_statement_pieces_block() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t. / Proof. ok ∎"]));
+    run(&mut mls, answer);
+    let (statement, proof) = (mls.blocks[0].id, mls.blocks[1].id);
+    let version = version_of(&mls, statement);
+
+    mls.sync(&paras(&["Lemma t. / Proof. fine ∎"]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(
+        kinds(&jobs),
+        ["classify", "split", "classify", "formalize", "check"]
+    );
+    assert_eq!(mls.blocks[0].id, statement);
+    assert_eq!(version_of(&mls, statement), version);
+    assert_ne!(mls.blocks[1].id, proof);
+    assert_eq!(formalized(&jobs), [mls.blocks[1].id]);
+    assert_eq!(statuses(&mls), [(0, Status::Verified)]);
+}
+
+#[test]
+fn a_twin_restores_the_split_so_a_reopened_document_asks_no_model() {
+    let lines = [
+        "Hello there.",
+        "Lemma t. / Proof. ok ∎",
+        "Lemma UNSPLIT / u.",
+    ];
+    let mut first = Mls::new();
+    first.sync(&paras(&lines));
+    run(&mut first, answer);
+
+    let twin = first.twin();
+    assert!(twin.contains("\"splits\":[{"), "{twin}");
+    let mut second = restored(&twin, &lines);
+    let jobs = run(&mut second, answer);
+    assert_eq!(kinds(&jobs), ["check", "check", "check"]);
+    assert_eq!(statuses(&second), statuses(&first));
+}
+
+#[test]
+fn a_restored_split_that_drops_text_is_ignored_and_asked_again() {
+    let lines = ["Hello there.", "Lemma t. / Proof. ok ∎"];
+    let mut first = Mls::new();
+    first.sync(&paras(&lines));
+    run(&mut first, answer);
+
+    let twin = first.twin();
+    let edited = twin.replace("[\"Lemma t. /\",\"Proof. ok ∎\"]", "[\"Lemma t. /\"]");
+    assert_ne!(edited, twin, "the split entry is edited");
+    let mut second = restored(&edited, &lines);
+    let jobs = run(&mut second, answer);
+    assert_eq!(
+        kinds(&jobs),
+        ["split", "check", "check"],
+        "only the split is asked again; the labels and formals are restored"
+    );
+    assert_eq!(statuses(&second), statuses(&first));
 }
 
 /// The chart's node for the block with `key`.
@@ -1389,10 +1704,7 @@ fn chart_links_a_statement_to_the_definition_it_uses() {
     assert_eq!(chart[1].level, 1);
     assert_eq!(chart[1].uses, [def]);
     assert_eq!(chart[1].status, Status::Sorry);
-    assert_eq!(
-        mls.details(lemma).map(|details| details.uses),
-        Some(vec![format!("d{def}")])
-    );
+    assert_eq!(item(&mls, lemma).uses, [format!("d{def}")]);
 }
 
 #[test]
@@ -1406,10 +1718,7 @@ fn a_proofs_uses_go_to_its_statements_node() {
     assert_eq!(chart.len(), 2, "{chart:?}");
     assert_eq!(node(&mls, lemma).uses, [def]);
     assert_eq!(node(&mls, lemma).status, Status::Verified);
-    assert_eq!(
-        mls.details(id_of(&mls, 2)).map(|details| details.uses),
-        Some(vec![format!("d{def}")])
-    );
+    assert_eq!(item(&mls, id_of(&mls, 2)).uses, [format!("d{def}")]);
 }
 
 #[test]
@@ -1442,7 +1751,7 @@ fn a_statement_that_uses_a_failed_definition_fails_without_a_check() {
     );
     assert_eq!(statuses(&mls), [(0, Status::Failed), (1, Status::Failed)]);
     assert_eq!(
-        mls.details(lemma).and_then(|details| details.note),
+        item(&mls, lemma).note,
         Some(format!("Uses `d{def}`, which does not check."))
     );
 }
@@ -1458,7 +1767,7 @@ fn a_proof_that_relies_on_an_unproved_statement_is_amber() {
         statuses(&mls),
         [(0, Status::Sorry), (1, Status::Sorry), (2, Status::Sorry)]
     );
-    let details = mls.details(proof).expect("the proof has a dot");
+    let details = item(&mls, proof);
     assert_eq!(
         details.note,
         Some(format!("Relies on `t{a}`, which is not proved yet."))
@@ -1569,7 +1878,7 @@ fn a_proof_that_still_fails_after_its_repair_is_red_and_is_not_repaired_again() 
     assert_eq!(kinds(&jobs).last(), Some(&"check"));
     let proof = id_of(&mls, 1);
     assert_eq!(statuses(&mls), [(0, Status::Sorry), (1, Status::Failed)]);
-    let details = mls.details(proof).expect("the proof has a dot");
+    let details = item(&mls, proof);
     assert_eq!(details.error.as_deref(), Some("1:0: error"));
     assert!(mls.next_job().is_none());
 }
@@ -1600,7 +1909,7 @@ fn a_proof_whose_check_times_out_is_not_repaired() {
     let proof = id_of(&mls, 1);
     let jobs = run(&mut mls, times_out(proof));
     assert_eq!(repairs(&jobs), 0);
-    let details = mls.details(proof).expect("the proof has a dot");
+    let details = item(&mls, proof);
     assert_eq!(details.error.as_deref(), Some(TIMED_OUT));
 }
 
@@ -1670,10 +1979,7 @@ fn a_repaired_proof_that_relies_on_an_unproved_statement_is_amber() {
         [(0, Status::Sorry), (1, Status::Sorry), (2, Status::Sorry)]
     );
     let note = format!("Relies on `t{}`, which is not proved yet.", id_of(&mls, 0));
-    assert_eq!(
-        mls.details(proof).and_then(|details| details.note),
-        Some(note)
-    );
+    assert_eq!(item(&mls, proof).note, Some(note));
 }
 
 #[test]
@@ -1715,10 +2021,7 @@ fn a_timeout_that_clears_a_failed_proof_does_not_repeat_its_repair() {
     let jobs = run(&mut mls, times_out(slow));
     assert_eq!(repairs(&jobs), 1);
     let proof = id_of(&mls, 1);
-    assert_eq!(
-        mls.details(proof).and_then(|details| details.error),
-        Some("1:0: error".to_string())
-    );
+    assert_eq!(item(&mls, proof).error, Some("1:0: error".to_string()));
 }
 
 /// The mock worker, except that every repair is rejected with `failure`.
@@ -1748,7 +2051,7 @@ fn a_rejected_repair_is_the_last_diagnostic_and_is_not_asked_again() {
     assert_eq!(kinds(&jobs).last(), Some(&"repair"));
     assert!(mls.next_job().is_none());
     assert_eq!(statuses(&mls), [(0, Status::Sorry), (1, Status::Failed)]);
-    let details = mls.details(id_of(&mls, 1)).expect("the proof has a dot");
+    let details = item(&mls, id_of(&mls, 1));
     assert_eq!(details.error.as_deref(), Some(rejection));
     assert!(!details.service);
 }
@@ -1767,7 +2070,7 @@ fn a_service_failure_during_repair_halts_with_its_own_message_until_a_retry() {
     );
     assert_eq!(repairs(&jobs), 1);
     assert!(mls.next_job().is_none(), "a service failure halts the walk");
-    let details = mls.details(id_of(&mls, 1)).expect("the proof has a dot");
+    let details = item(&mls, id_of(&mls, 1));
     assert_eq!(details.error.as_deref(), Some(outage));
     assert!(details.service);
 
@@ -1775,6 +2078,6 @@ fn a_service_failure_during_repair_halts_with_its_own_message_until_a_retry() {
     let jobs = run(&mut mls, answer);
     assert_eq!(repairs(&jobs), 1, "a retry asks for the repair again");
     assert_eq!(statuses(&mls), [(0, Status::Sorry), (1, Status::Failed)]);
-    let details = mls.details(id_of(&mls, 1)).expect("the proof has a dot");
+    let details = item(&mls, id_of(&mls, 1));
     assert_eq!(details.error.as_deref(), Some("1:0: error"));
 }

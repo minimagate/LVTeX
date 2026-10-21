@@ -41,7 +41,7 @@ fn export_appends_pdf_without_replacing_existing_extension() {
 }
 #[test]
 fn saves_unicode_and_replaces_existing_document() {
-    let p = std::env::temp_dir().join(format!("mathstral-test-{}.md", std::process::id()));
+    let p = std::env::temp_dir().join(format!("lvtex-test-{}.md", std::process::id()));
     write(&p, "α\n$\\int_0^1 x dx$").unwrap();
     assert_eq!(read(&p).unwrap(), "α\n$\\int_0^1 x dx$");
     write(&p, "new").unwrap();

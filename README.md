@@ -1,13 +1,13 @@
-<h1 align="center"><img src="assets/brand/mathstral.svg" width="360" alt="Mathstral"></h1>
+<h1 align="center"><img src="assets/brand/lvtex.svg" width="360" alt="LVTeX"></h1>
 
 <p align="center">Write mathematics in prose. Let Lean check it.</p>
 
 <p align="center"><sub>Alpha 2 · native macOS app for Apple Silicon · written in Rust</sub></p>
 
-Mathstral **alpha 2** is a native macOS editor for prose with inline math, written
+LVTeX **alpha 2** is a native macOS editor for prose with inline math, written
 in Rust. Press **⌘1** to write a formula with TeXmacs-style keys, or **⇧⌘1** to
 describe one to a local Ollama model; MiTeX and Typst render formulas in the
-background. Optionally, MLS, the Mathstral Language Server, checks each definition,
+background. Optionally, MLS, the Math Language Server, checks each definition,
 statement and proof against Lean and Mathlib, and shows the result as a small dot
 beside the block.
 
@@ -17,10 +17,10 @@ beside the block.
   MiTeX and Typst render it in the background, with no TeX install.
 - **AI formulas that stay on your Mac.** ⇧⌘1 turns a description into LaTeX with
   Gemma, run locally by Ollama. Nothing leaves the machine.
-- **Lean checking with MLS.** Each definition, statement and proof gets a dot: grey
-  while it is checked, amber when a statement compiles with `sorry`, green when it
-  is verified down to everything it uses, and red on an error. Paragraphs that
-  belong together are checked as one block.
+- **Lean checking with MLS.** Each definition, statement and proof is checked, and
+  each block gets one dot: grey while it is checked, amber when a statement compiles
+  with `sorry`, green when it is verified down to everything it uses, and red on an
+  error. Paragraphs that belong together are checked as one block.
 - **The Structure chart (⌘L).** A quiet chart at the top right lists each definition
   and statement, with lines to the blocks it uses. Click a row to scroll to its block.
 - **Plain Markdown files.** Documents stay Markdown-compatible text. Saving also
@@ -45,13 +45,13 @@ beside the block.
 
 ## Install
 
-Download the release zip, unzip it, and move `Mathstral.app` to `/Applications`.
+Download the release zip, unzip it, and move `LVTeX.app` to `/Applications`.
 macOS on Apple Silicon is the supported platform. The app is ad-hoc signed, not
 notarized; on first launch, right-click it and choose **Open**. If macOS still
 blocks your downloaded copy:
 
 ```sh
-xattr -dr com.apple.quarantine /Applications/Mathstral.app
+xattr -dr com.apple.quarantine /Applications/LVTeX.app
 ```
 
 For AI prompts, install [Ollama](https://ollama.com), run it locally on
@@ -66,18 +66,18 @@ No TeX distribution is required. Only AI prompts need Ollama: writing, manual ma
 saving and PDF export work without it.
 
 For Lean checking, add an [OpenRouter](https://openrouter.ai) key in
-**Mathstral → Settings…** (⌘,); it is saved to your login Keychain. You can also
-export `OPENROUTER_API_KEY` in the shell you launch Mathstral from. When it is set, it
+**LVTeX → Settings…** (⌘,); it is saved to your login Keychain. You can also
+export `OPENROUTER_API_KEY` in the shell you launch LVTeX from. When it is set, it
 takes precedence over the Keychain. Build the Lean project once (see
 [Lean checking (MLS)](#lean-checking-mls)):
 
 ```sh
 export OPENROUTER_API_KEY=…     # optional; for example in ~/.zshrc
-open -a Mathstral               # or run target/release/mathstral
+open -an LVTeX               # or run target/release/lvtex
 ```
 
 An installed copy checks with the Lean project in
-`~/Library/Application Support/Mathstral/lean`; see [Lean project](#lean-project).
+`~/Library/Application Support/LVTeX/lean`; see [Lean project](#lean-project).
 
 ### Privacy: what runs where
 
@@ -163,19 +163,30 @@ is retained as raw source; reopening without edits preserves the original source
 
 <img src="assets/brand/mls.svg" width="88" alt="MLS" align="right">
 
-MLS, the Mathstral Language Server, reads the document a block at a time. A
+MLS, the Math Language Server, reads the document a block at a time. A
 paragraph is a line; Enter closes it.
-For each paragraph, Jev (`typesafe/jev-1.13`) answers two questions: what it is (a
+For each paragraph, Jev (`typesafe/jev-1.13`) answers three questions: what it is (a
 definition, a statement (lemma, theorem, corollary, proposition), a proof, or
-anything else, which gets no dot), and whether it belongs to the same item as the
-block above. Jev sees that whole block, every paragraph grouped into it so far, not
-only its last line. Paragraphs that belong together form one block: a setup line and
-its claim, a statement and the displayed formula under it, or a proof that runs
-over several paragraphs until one that is not part of it, or until it ends with ∎.
-A block's dot sits beside its first paragraph. A proof does not need ∎: Enter
-closes it like any other block. The last block waits, with no dot and no request,
+anything else, which gets no dot), whether it belongs to the same item as the
+block above, and whether it holds several items. Jev sees that whole block, every
+paragraph grouped into it so far, not only its last line. Paragraphs that belong
+together form one block: a setup line and its claim, a statement and the displayed
+formula under it, or a proof that runs over several paragraphs until one that is not
+part of it, or until it ends with ∎.
+A block's dot sits beside its first paragraph. A paragraph cut into several items
+(below) still has one dot, coloured by the worst of its items: red, then grey, then
+amber, then green. A proof does not need ∎: Enter closes it like any other block.
+The last block waits, with no dot and no request,
 only while it ends in `:` or `,`. A convention that only fixes notation ("Throughout,
 $n$ is a natural number") declares nothing and gets no dot.
+
+A paragraph that holds several items, such as a statement followed by its proof, or a
+definition followed by a claim about it, needs no paragraph break. Claude Sonnet 5.5
+cuts it into verbatim pieces, and each piece is read as its own definition, statement
+or proof, exactly like a paragraph: a proof piece pairs with the statement piece
+directly above it, even in the same paragraph, and a piece can join the paragraph
+below. A piece is never cut again. A cut that does not reproduce the paragraph
+exactly is rejected, and the paragraph is read whole.
 
 Claude Sonnet 5.5 (`anthropic/claude-sonnet-5.5`) formalizes each block into Lean as
 one item, given the Lean of the blocks above and the prose run above it; statements
@@ -211,8 +222,10 @@ proved yet." If a block above has no valid Lean at all, a missing name is red, w
 Prose, examples and remarks get no dot. Hover or click a dot to see the block's
 panel: a note first, when a link explains the colour; then the assumptions in
 plain language, written from the Lean; then `Uses a, b.` for the names it uses from
-above. **Show Lean** reveals the Lean and any error. The panel opens below the
-block's last paragraph. Escape or a click elsewhere closes a pinned panel.
+above. A dot over several items lists each with its label and status, then its
+assumptions and uses. **Show Lean** reveals the Lean and any error of every item.
+The panel opens below the block's last paragraph. Escape or a click elsewhere
+closes a pinned panel.
 Checking runs in the background and never blocks typing. Editing a block
 re-formalizes that block, and any block below it that used a name the edit removed
 or renamed; the blocks below are re-checked with Lean. Editing a paragraph also asks
@@ -235,16 +248,17 @@ everything the block uses, directly or through other blocks, to be verified.
 A missing key, an unreachable OpenRouter or a Lean project that is not built shows
 as one red dot whose panel explains what to do; the next edit retries. Saving
 also writes the document's Lean twin, `<name>.mls.lean`, beside it: the Lean that
-checked, with a `-- mathstral:block <id>` comment per block, and a final
-`mathstral:memory` comment (`version` 2). It remembers each paragraph's label, the
-block above it and whether it joins that one, and each block's Lean,
-assumptions and names it uses, or its rejection reason. Opening the document re-uses
-them, so unchanged text needs no model calls; Lean re-checks every block. A version 1
-twin is ignored, so its paragraphs are asked again once. MLS needs no Ollama.
+checked, with a `-- lvtex:block <id>` comment per block, and a final
+`lvtex:memory` comment (`version` 3). It remembers each paragraph's and piece's
+label, the block above it and whether it joins that one, whether a paragraph holds
+several items and its pieces, and each block's Lean, assumptions and names it uses,
+or its rejection reason. Opening the document re-uses them, so unchanged text needs no
+model calls; Lean re-checks every block. A version 1 or 2 twin is ignored, so its
+paragraphs are asked again once. MLS needs no Ollama.
 
 ### Settings
 
-**Mathstral → Settings…** (⌘,) opens a quiet panel over the page, under the title
+**LVTeX → Settings…** (⌘,) opens a quiet panel over the page, under the title
 bar, in two sections. Escape closes it, and so does a click outside it.
 
 - **Writing · on this Mac** says that AI formulas (⇧⌘1) use `gemma4:e4b` through
@@ -256,16 +270,16 @@ bar, in two sections. Escape closes it, and so does a click outside it.
 
 With the switch off, MLS sends no requests, shows no dots, and the Structure chart
 says "Lean checking is off." The choice is remembered in a small `mls` file in
-`~/Library/Application Support/Mathstral`, beside `last-file`, holding `on` or `off`.
+`~/Library/Application Support/LVTeX`, beside `last-file`, holding `on` or `off`.
 A new install checks.
 
 The key field is masked: each character shows as a bullet, up to 48. Paste (⌘V) or type the
-key, then press Return. Mathstral saves it to the login Keychain (item "Mathstral
+key, then press Return. LVTeX saves it to the login Keychain (item "LVTeX
 OpenRouter", account "openrouter") through the system `security` tool, which gets the
 command on its standard input, so the key never touches a file or a process argument.
 **Remove key from Keychain** deletes it. `OPENROUTER_API_KEY`, when it is set, takes
 precedence over the Keychain, and the status line says which source is in use. If the
-Keychain cannot keep the key, Mathstral uses it until it quits.
+Keychain cannot keep the key, LVTeX uses it until it quits.
 
 ### Lean project
 
@@ -280,16 +294,16 @@ lake exe cache get            # downloads prebuilt Mathlib
 lake build Mathlib repl
 ```
 
-A source build of Mathlib without the cache takes hours. Mathstral looks for the
-project in this order: `MATHSTRAL_LEAN_PROJECT` when it is set; then
-`~/Library/Application Support/Mathstral/lean` when it exists; then the `lean/` of
+A source build of Mathlib without the cache takes hours. LVTeX looks for the
+project in this order: `LVTEX_LEAN_PROJECT` when it is set; then
+`~/Library/Application Support/LVTeX/lean` when it exists; then the `lean/` of
 the checkout it was built from.
 
 An installed copy (the release zip) has no checkout. Copy the repository's `lean/`
 files (`lakefile.toml`, `lean-toolchain` and `lake-manifest.json`) to
-`~/Library/Application Support/Mathstral/lean`, then run the same `lake exe cache get`
+`~/Library/Application Support/LVTeX/lean`, then run the same `lake exe cache get`
 and `lake build Mathlib repl` in that folder. A source build uses the checkout's
-`lean/`; `MATHSTRAL_LEAN_PROJECT` overrides both. The model ids live in
+`lean/`; `LVTEX_LEAN_PROJECT` overrides both. The model ids live in
 [`crates/mls/src/lib.rs`](crates/mls/src/lib.rs).
 HTTPS requests go through the system `curl`, which reads the key from its
 standard input, never from its arguments.
@@ -299,15 +313,15 @@ standard input, never from its arguments.
 Documents are Markdown-compatible text:
 
 - Inline math is `$…$`; display math uses `$$` on separate lines.
-- AI source prompts follow formulas in `<!--mathstral:BASE64URL-->` comments
+- AI source prompts follow formulas in `<!--lvtex:BASE64URL-->` comments
   (UTF-8, base64url without padding).
-- Pending AI prompts are saved as `<!--mathstral:pending:BASE64URL-->` comments
+- Pending AI prompts are saved as `<!--lvtex:pending:BASE64URL-->` comments
   (UTF-8, base64url without padding) and resume when opened.
 - Literal dollar signs in prose use `\$`.
 - An inline formula ending in a TeX `%` comment gains a newline before its closing
   `$`, so the delimiter is not swallowed by the comment.
 
-Settings live in `~/Library/Application Support/Mathstral`. The Lean checking switch
+Settings live in `~/Library/Application Support/LVTeX`. The Lean checking switch
 is the `mls` file there, beside `last-file`. A key saved in Settings is in the login
 Keychain, not in a file. The on-disk document and settings formats are compatibility
 boundaries.
@@ -321,9 +335,9 @@ uses `python3`, `plutil`, `codesign` and `ditto`.
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --release --locked --workspace
-sh scripts/build-app.sh     # target/Mathstral.app
-sh scripts/install.sh       # /Applications/Mathstral.app
-sh scripts/package.sh       # dist/Mathstral-<version>-alpha-macos-<arch>.zip
+sh scripts/build-app.sh     # target/LVTeX.app
+sh scripts/install.sh       # /Applications/LVTeX.app
+sh scripts/package.sh       # dist/LVTeX-<version>-alpha-macos-<arch>.zip
 ```
 
 The build script uses the repo-local `.cargo-home` offline when that cache exists;
@@ -332,11 +346,11 @@ Ollama, OpenRouter, Lean or a TeX installation. The optional checks are:
 
 ```sh
 # Manual-preview timing.
-cargo test --release --locked -p mathstral manual_preview_latency -- --ignored --nocapture
+cargo test --release --locked -p lvtex manual_preview_latency -- --ignored --nocapture
 # The four sample documents with scripted model answers, checked by Lean (needs lean/ built).
-cargo test --release --locked -p mathstral-mls scripted_documents -- --ignored --nocapture
+cargo test --release --locked -p lvtex-mls scripted_documents -- --ignored --nocapture
 # Eight documents through OpenRouter and Lean, three fresh runs each (needs OPENROUTER_API_KEY and lean/ built).
-cargo test --release --locked -p mathstral-mls --test documents -- --ignored --nocapture
+cargo test --release --locked -p lvtex-mls --test documents -- --ignored --nocapture
 ```
 
 The live documents are the four scripted ones plus the supplied note, prime notation, a long
@@ -366,7 +380,7 @@ explicitly when `OPENROUTER_API_KEY` or the Lean REPL is missing, because it run
 | `crates/mls/` | Lean checking: block state, OpenRouter, rejection rules, Lean REPL worker |
 | `lean/` | Pinned Lake project with Mathlib and the Lean REPL |
 | `app/tests/`, `crates/*/tests/` | Unit tests, integration scenarios and fixtures |
-| `assets/brand/` | Mathstral and MLS wordmarks |
+| `assets/brand/` | LVTeX and MLS wordmarks |
 | `assets/fonts/` | Required fonts and license notices |
 | `scripts/` | App build and release packaging |
 | `.agents/skills/`, `AGENTS.md` | Repository guidance for coding agents |

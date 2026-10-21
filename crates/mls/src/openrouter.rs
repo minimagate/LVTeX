@@ -1,4 +1,4 @@
-//! OpenRouter: the Jev decision and the formalization, sent through curl.
+//! OpenRouter: the Jev decision, the split of a paragraph and the formalization, sent through curl.
 
 use crate::{FORMALIZER_MODEL, Failure, Formal, JEV_MODEL, Label, Tag};
 use serde_json::{Value, json};
@@ -15,13 +15,17 @@ const TIMEOUT_SECONDS: u32 = 120;
 
 /// Neutral about `proof_in_progress` on purpose: a proof often ends without ∎, and an instruction
 /// that favours proof while one is open makes every later claim a proof.
-const CLASSIFY: &str = "Classify one paragraph of a mathematical document. block_above is the block of one or more paragraphs just above it. proof_in_progress is true when a proof above has not ended with ∎; that proof may already be complete. The paragraph is a proof only if it argues for the statement being proved. A new claim is a statement even right after a proof, for example one that starts with \"It follows that\" or \"One might guess that\". A remark about the mathematics is skip.";
+const CLASSIFY: &str = "Classify one paragraph of a mathematical document, or one part of a paragraph. block_above is the block of one or more paragraphs just above it. proof_in_progress is true when a proof above has not ended with ∎; that proof may already be complete. The paragraph is a proof only if it argues for the statement being proved. A new claim is a statement even right after a proof, for example one that starts with \"It follows that\" or \"One might guess that\". A remark about the mathematics is skip.";
 
 const JOINS: &str = "Decide whether this paragraph belongs to the same mathematical item (a definition, a statement or a proof) as block_above, so that they must be formalized together. Sharing a topic is not the same item: prose that motivates, previews or comments on a result is a separate item from that result, even when the result follows right after it. A named new lemma, theorem, corollary, definition or proof begins a new item, even directly after prose. Continue only when this paragraph completes block_above: a setup that is still incomplete (\"Let x be ...\" or hypotheses) followed by the claim it sets up, a standalone displayed formula or clause of the statement, or a further paragraph of a proof that is still going.";
 
+const ITEMS: &str = "Decide whether this paragraph holds several items that must be checked separately, for example a statement followed by its proof, a definition followed by a claim about it, or two separate claims. Setup, hypotheses, a heading such as \"Lemma.\" and remarks belong to the item they serve. A statement with its clauses is one item, and so is a proof however many steps it has.";
+
+const SPLIT: &str = "Cut one paragraph of a mathematical document into its items, in order: each definition, each statement and each proof. Every piece is a verbatim, contiguous part of the paragraph. Together the pieces are the whole paragraph, in order, with nothing left out, added, reordered or reworded. Setup that a definition or statement needs stays with it. Connecting words and remarks go with the item next to them. Return only a JSON object with the field \"pieces\": the array of pieces.";
+
 const SYSTEM: &str = r#"You formalize one block of a mathematical document into Lean 4 with Mathlib.
 
-You receive the Lean already accepted for the blocks above, in document order, each under a `-- mathstral:block <id>` comment; the prose paragraph just above the block, if any; the block's label; and the block itself, written in Markdown with LaTeX between dollar signs. A block may span several paragraphs, separated by blank lines: its setup, displayed formulas and clauses belong to it, so formalize them together as one item.
+You receive the Lean already accepted for the blocks above, in document order, each under a `-- lvtex:block <id>` comment; the prose paragraph just above the block, if any; the block's label; and the block itself, written in Markdown with LaTeX between dollar signs. A block may span several paragraphs, separated by blank lines: its setup, displayed formulas and clauses belong to it, so formalize them together as one item.
 
 Return only a JSON object with three fields:
 - "lean": Lean 4 source for this block alone. It is checked in an environment that already contains `import Mathlib` and the Lean above, so never write `import`, and never repeat a declaration from above. The one exception is a proof block restating its statement, described under proof.
@@ -62,7 +66,7 @@ fn checked_key(key: Option<&str>) -> Result<&str, Failure> {
         Some(key) if !key.trim().is_empty() => key,
         _ => {
             return Err(service_failure(
-                "No OpenRouter key. Add one in Mathstral → Settings, or export OPENROUTER_API_KEY and launch Mathstral from that terminal.",
+                "No OpenRouter key. Add one in LVTeX → Settings, or export OPENROUTER_API_KEY and launch LVTeX from that terminal.",
             ));
         }
     };
@@ -102,7 +106,7 @@ fn escape(text: &str) -> String {
 /// stays out of the process arguments and off the disk.
 fn curl_config(url: &str, key: &str, body: &str) -> String {
     format!(
-        "url = \"{}\"\nheader = \"Authorization: Bearer {}\"\nheader = \"Content-Type: application/json\"\nheader = \"X-Title: Mathstral\"\ndata-binary = \"{}\"\n",
+        "url = \"{}\"\nheader = \"Authorization: Bearer {}\"\nheader = \"Content-Type: application/json\"\nheader = \"X-Title: LVTeX\"\ndata-binary = \"{}\"\n",
         escape(url),
         escape(key),
         escape(body),
@@ -167,8 +171,9 @@ pub(crate) fn post(url: &str, body: &Value, key: Option<&str>) -> Result<Value, 
     response(&String::from_utf8_lossy(&output.stdout))
 }
 
-/// The Jev request that asks for the kind of one paragraph and whether it continues the one above.
-/// `previous` is the block above (see `Job::Classify`), None for the first paragraph; `proof_open` tells Jev whether the paragraph may
+/// The Jev request that asks for the kind of one paragraph (or piece of one), whether it continues
+/// the one above and whether it holds several items. `previous` is the block above (see
+/// `Job::Classify`), None for the first paragraph; `proof_open` tells Jev whether the paragraph may
 /// continue an unfinished proof.
 pub(crate) fn classify_request(previous: Option<&str>, text: &str, proof_open: bool) -> Value {
     json!({
@@ -196,13 +201,21 @@ pub(crate) fn classify_request(previous: Option<&str>, text: &str, proof_open: b
                     "continues": "Completes the same definition, statement or proof as block_above: the claim that an incomplete setup (\"Let G be a group.\" or hypotheses) was waiting for, a standalone displayed formula or clause of the statement, or a further paragraph of a proof that is still going.",
                     "new": "Starts a new definition, statement or proof; or is motivational, introductory or other topical prose, even when it leads straight into the next result; or is unrelated prose; or block_above is null.",
                 }
+            },
+            "items": {
+                "type": "choice",
+                "instructions": ITEMS,
+                "criteria": {
+                    "one": "A single definition, statement or proof with the setup, heading and remarks that go with it; or prose that is not an item.",
+                    "several": "Two or more items that must be checked separately, for example a statement and its proof, a definition and a claim about it, or two separate claims.",
+                }
             }
         }
     })
 }
 
-/// What Jev chose for one paragraph. A missing or unknown label, or a missing answer about joining,
-/// is a service failure, not a guess.
+/// What Jev chose for one paragraph. A missing or unknown label, or a missing answer about joining
+/// or about several items, is a service failure, not a guess.
 pub(crate) fn parse_tag(response: &Value) -> Result<Tag, Failure> {
     let label = response["answers"]["kind"]["choice"]
         .as_str()
@@ -217,7 +230,43 @@ pub(crate) fn parse_tag(response: &Value) -> Result<Tag, Failure> {
             ));
         }
     };
-    Ok(Tag { label, joins })
+    let split = match response["answers"]["items"]["choice"].as_str() {
+        Some("several") => true,
+        Some("one") => false,
+        _ => {
+            return Err(service_failure(
+                "Jev did not say whether the paragraph holds several items.",
+            ));
+        }
+    };
+    Ok(Tag {
+        label,
+        joins,
+        split,
+    })
+}
+
+/// The request that cuts one paragraph into its items (see `Job::Split`).
+pub(crate) fn split_request(text: &str) -> Value {
+    json!({
+        "model": FORMALIZER_MODEL,
+        "temperature": 0,
+        "max_tokens": 8192,
+        "messages": [
+            {"role": "system", "content": SPLIT},
+            {"role": "user", "content": text},
+        ],
+        "response_format": {"type": "json_schema", "json_schema": {
+            "name": "split",
+            "strict": true,
+            "schema": {
+                "type": "object",
+                "properties": {"pieces": {"type": "array", "items": {"type": "string"}}},
+                "required": ["pieces"],
+                "additionalProperties": false,
+            },
+        }}
+    })
 }
 
 /// The request that formalizes one block. The system prompt and the last Lean
@@ -237,7 +286,7 @@ pub(crate) fn formalize_request(
     ]});
     let mut parts: Vec<Value> = lean_above
         .iter()
-        .map(|(id, lean)| json!({"type": "text", "text": format!("-- mathstral:block {id}\n{lean}\n")}))
+        .map(|(id, lean)| json!({"type": "text", "text": format!("-- lvtex:block {id}\n{lean}\n")}))
         .collect();
     if let Some(last) = parts.last_mut() {
         last["cache_control"] = json!({"type": "ephemeral"});
@@ -293,12 +342,13 @@ fn unfenced(text: &str) -> &str {
     body.trim_end().strip_suffix("```").unwrap_or(body).trim()
 }
 
-/// The formalization in the model's reply. Rejects the reply as a whole if a field is
-/// missing or of the wrong type; empty names and assumptions are dropped.
-pub(crate) fn parse_formal(response: &Value) -> Result<Formal, Failure> {
+/// The JSON object in the model's reply to a request for `what`. A reply that was cut off, or whose
+/// content is not an object, is a failure of that one block; a reply with no content is the
+/// service's.
+fn reply_object(response: &Value, what: &str) -> Result<Value, Failure> {
     let choice = &response["choices"][0];
     if choice["finish_reason"] == "length" {
-        return Err(block_failure("The formalization was cut off."));
+        return Err(block_failure(format!("The {what} was cut off.")));
     }
     let content: Cow<str> = match &choice["message"]["content"] {
         Value::String(text) => Cow::Borrowed(text.as_str()),
@@ -310,10 +360,16 @@ pub(crate) fn parse_formal(response: &Value) -> Result<Formal, Failure> {
         ),
         _ => return Err(service_failure("The formalizer sent no content.")),
     };
-    let json = serde_json::from_str::<Value>(unfenced(content.trim()))
+    serde_json::from_str::<Value>(unfenced(content.trim()))
         .ok()
         .filter(Value::is_object)
-        .ok_or_else(|| block_failure("The formalizer did not return valid JSON."))?;
+        .ok_or_else(|| block_failure("The formalizer did not return valid JSON."))
+}
+
+/// The formalization in the model's reply. Rejects the reply as a whole if a field is
+/// missing or of the wrong type; empty names and assumptions are dropped.
+pub(crate) fn parse_formal(response: &Value) -> Result<Formal, Failure> {
+    let json = reply_object(response, "formalization")?;
     // Blank Lean is an answer: a definition block that only fixes notation declares nothing.
     // `rules::reject` decides where blank Lean is allowed.
     let lean = json["lean"]
@@ -342,6 +398,46 @@ pub(crate) fn parse_formal(response: &Value) -> Result<Formal, Failure> {
         assumptions,
         uses: Vec::new(),
     })
+}
+
+/// The pieces in the model's reply to a split of `text`, as the parts of `text` they stand for.
+/// Rejects a reply whose pieces are not the whole paragraph in order (see `parts`).
+pub(crate) fn parse_split(response: &Value, text: &str) -> Result<Vec<String>, Failure> {
+    let json = reply_object(response, "split")?;
+    let pieces = json
+        .get("pieces")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .map(|piece| piece.as_str().map(str::to_string))
+                .collect::<Option<Vec<_>>>()
+        })
+        .ok_or_else(|| block_failure("The formalizer's JSON has no `pieces`."))?;
+    parts(text, &pieces)
+        .ok_or_else(|| block_failure("The paragraph could not be split into its items."))
+}
+
+/// The part of `text` that each of `pieces` stands for, when the pieces are `text` cut in order
+/// with nothing left out, added or reworded. Whitespace is ignored where comparing, so a piece may
+/// differ from its part in spacing at the cuts and within it. Each part runs from its first to its
+/// last character in `text`. None when the pieces do not reproduce `text`, or one is blank.
+pub(crate) fn parts(text: &str, pieces: &[String]) -> Option<Vec<String>> {
+    let mut rest = text.char_indices().filter(|(_, c)| !c.is_whitespace());
+    let mut parts = Vec::new();
+    for piece in pieces {
+        let mut span: Option<(usize, usize)> = None;
+        for c in piece.chars().filter(|c| !c.is_whitespace()) {
+            let (at, d) = rest.next()?;
+            if c != d {
+                return None;
+            }
+            span = Some((span.map_or(at, |(start, _)| start), at + d.len_utf8()));
+        }
+        let (start, end) = span?;
+        parts.push(text[start..end].to_string());
+    }
+    rest.next().is_none().then_some(parts)
 }
 
 #[cfg(test)]

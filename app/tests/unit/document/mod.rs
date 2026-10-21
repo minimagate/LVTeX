@@ -22,10 +22,7 @@ fn assert_round_trip(d: &Document) {
     assert!(!reopened.dirty());
 }
 fn pending_comment(prompt: &str) -> String {
-    format!(
-        "<!--mathstral:pending:{}-->",
-        URL_SAFE_NO_PAD.encode(prompt)
-    )
+    format!("<!--lvtex:pending:{}-->", URL_SAFE_NO_PAD.encode(prompt))
 }
 fn image(latex: &str) -> Arc<FormulaImage> {
     let pixels = || crate::math::render::Image {

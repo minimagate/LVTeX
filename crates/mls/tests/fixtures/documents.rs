@@ -229,7 +229,7 @@ pub struct LiveLine {
 /// The documents for the live test. Expected dots are the intended behaviour, written from the
 /// text; they are never derived from a run.
 #[allow(dead_code)] // Read only by the live test, which the scripted test does not compile.
-pub const LIVE_DOCUMENTS: [LiveDocument; 4] = [
+pub const LIVE_DOCUMENTS: [LiveDocument; 5] = [
     LiveDocument {
         name: "supplied note",
         lines: &[
@@ -458,6 +458,19 @@ pub const LIVE_DOCUMENTS: [LiveDocument; 4] = [
             },
         ],
     },
+    LiveDocument {
+        name: "several items in a paragraph",
+        lines: &[
+            LiveLine {
+                text: r"**Lemma.** Let $T : V \to W$ be a linear map between real normed spaces with $c\|x\| \le \|Tx\|$ for some $c > 0$ and all $x$. Then $T$ is injective. Indeed, if $Tx = 0$ then $c\|x\| \le 0$, hence $x = 0$. ∎",
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: r"Define $q(x) = (x - 1)^2$ for real $x$. Then $q(x) \ge 0$ for every real $x$, since squares are nonnegative.",
+                expect: Some(Status::Verified),
+            },
+        ],
+    },
 ];
 
 /// The long proof must stay one paragraph of at least 2000 bytes, so the live test exercises a long
@@ -467,9 +480,9 @@ const _: () = assert!(
     "the long proof is shorter than 2000 bytes"
 );
 
-/// The project named by `MATHSTRAL_LEAN_PROJECT`, else the `lean/` project at the repository root.
+/// The project named by `LVTEX_LEAN_PROJECT`, else the `lean/` project at the repository root.
 pub fn lean_project() -> PathBuf {
-    match std::env::var_os("MATHSTRAL_LEAN_PROJECT") {
+    match std::env::var_os("LVTEX_LEAN_PROJECT") {
         Some(path) => PathBuf::from(path),
         None => PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../lean")),
     }

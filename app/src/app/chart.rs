@@ -1,7 +1,7 @@
 //! The Structure chart: the document's definitions and statements and what each uses.
 use super::mls::{contains, status_color};
 use super::*;
-use mathstral_mls::Node;
+use lvtex_mls::Node;
 
 /// The open chart. Areas are (x, y, w, h) in logical window coordinates, as the last draw left
 /// them.

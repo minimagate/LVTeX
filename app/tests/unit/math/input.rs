@@ -1,5 +1,5 @@
 use super::*;
-use mathstral_render::math::Renderer;
+use lvtex_render::math::Renderer;
 
 /// Feeds one key per character. The markers stand for the keys that are not characters, and
 /// the outcome of the last key is returned.
@@ -77,7 +77,7 @@ fn symbol_inside_a_parsed_fraction_takes_keys() {
 
 #[test]
 fn every_binding_renders() {
-    let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
+    let mut renderer = Renderer::with_prelude(lvtex_latex::PRELUDE);
     let failed: Vec<String> = BINDINGS
         .iter()
         .filter(|(_, latex)| crate::math::render::render(&mut renderer, latex).is_err())
@@ -99,7 +99,7 @@ fn bindings_fit_the_run_limit() {
 
 #[test]
 fn display_latex_renders_for_every_state() {
-    let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
+    let mut renderer = Renderer::with_prelude(lvtex_latex::PRELUDE);
     let mut empty_fraction = MathInput::new(MathTree::new());
     empty_fraction.key(MathKey::Alt {
         key: 'f',
@@ -146,7 +146,7 @@ fn widest_ink_gap(image: &crate::math::render::Image) -> usize {
 
 #[test]
 fn pending_command_backslash_sits_tight_against_its_letters() {
-    let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
+    let mut renderer = Renderer::with_prelude(lvtex_latex::PRELUDE);
     let latex = typed(r"\in").display_latex();
     // The live preview erases the caret marker, so the gap is measured between the command and
     // the letters only.

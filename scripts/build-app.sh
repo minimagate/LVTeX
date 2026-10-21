@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build the release binary and assemble target/Mathstral.app (ad-hoc signed).
+# Build the release binary and assemble target/LVTeX.app (ad-hoc signed).
 set -eu
 cd "$(dirname "$0")/.."
 root="$PWD"
@@ -16,36 +16,36 @@ version=$(cargo metadata --no-deps --format-version 1 --locked $offline |
     python3 -c '
 import json, sys
 for p in json.load(sys.stdin)["packages"]:
-    if p["name"] == "mathstral":
+    if p["name"] == "lvtex":
         print(p["version"])
         break
 else:
-    sys.exit("error: mathstral package not found")
+    sys.exit("error: lvtex package not found")
 ')
 
-cargo build $offline --release --locked -p mathstral
+cargo build $offline --release --locked -p lvtex
 
-bundle="$root/target/Mathstral.app"
+bundle="$root/target/LVTeX.app"
 contents="$bundle/Contents"
 mkdir -p "$contents/MacOS"
 
 # Replace the binary atomically so a running copy is never left half-written.
-cp target/release/mathstral "$contents/MacOS/Mathstral.next"
-mv -f "$contents/MacOS/Mathstral.next" "$contents/MacOS/Mathstral"
+cp target/release/lvtex "$contents/MacOS/LVTeX.next"
+mv -f "$contents/MacOS/LVTeX.next" "$contents/MacOS/LVTeX"
 
 cat > "$contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>Mathstral</string>
-<key>CFBundleIdentifier</key><string>local.mathstral.editor</string>
-<key>CFBundleName</key><string>Mathstral</string>
+<key>CFBundleExecutable</key><string>LVTeX</string>
+<key>CFBundleIdentifier</key><string>local.lvtex.editor</string>
+<key>CFBundleName</key><string>LVTeX</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleVersion</key><string>1</string>
 <key>CFBundleShortVersionString</key><string>$version</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>
-<key>NSHumanReadableCopyright</key><string>Mathstral</string>
+<key>NSHumanReadableCopyright</key><string>LVTeX</string>
 </dict></plist>
 PLIST
 plutil -lint "$contents/Info.plist" >/dev/null

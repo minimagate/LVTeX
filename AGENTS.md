@@ -3,7 +3,7 @@
 Always inspect the workspace and Git state at the start of a conversation,
 including voice sessions. Read this file and follow the user's current scope.
 
-Mathstral alpha 2 is a native macOS editor for prose with inline math, written in
+LVTeX alpha 2 is a native macOS editor for prose with inline math, written in
 Rust as a Cargo virtual workspace. Apple Silicon is the supported platform.
 **⌘1** opens manual math; **⇧⌘1** opens an optional AI prompt. A backslash in prose
 is literal. Ollama generates LaTeX; MiTeX and Typst convert and render it off the
@@ -37,7 +37,7 @@ status dot beside it.
   Put public library tests in ordinary Cargo integration targets. Do not widen
   production visibility solely for tests.
 - `assets/fonts/`: required embedded fonts and upstream notices.
-- `assets/brand/`: the Mathstral and MLS wordmarks (SVG, light and dark through `prefers-color-scheme`).
+- `assets/brand/`: the LVTeX and MLS wordmarks (SVG, light and dark through `prefers-color-scheme`).
 - `scripts/`: build and packaging. Generated output belongs in ignored `target/`
   and `dist/`, never in the tracked source tree.
 - `.agents/skills/`: reusable coding guidance; start with `how-we-work` unless the
@@ -61,8 +61,8 @@ sh scripts/package.sh
 ```
 
 The first three commands are local CI; there is no hosted CI configuration.
-The build script assembles and ad-hoc signs `target/Mathstral.app`; packaging
-writes `dist/Mathstral-<version>-alpha-macos-<arch>.zip`. A populated `.cargo-home`
+The build script assembles and ad-hoc signs `target/LVTeX.app`; packaging
+writes `dist/LVTeX-<version>-alpha-macos-<arch>.zip`. A populated `.cargo-home`
 is an optional offline cache used by the build script. For manual Cargo commands
 using that cache, prefix `CARGO_HOME="$PWD/.cargo-home"` and add `--offline`.
 
@@ -75,7 +75,7 @@ using that cache, prefix `CARGO_HOME="$PWD/.cargo-home"` and add `--offline`.
   comments, `\$` and `\\` escaping and pending-prompt comments. These and the
   settings format are compatibility boundaries.
 - Settings and the last-opened file live in
-  `~/Library/Application Support/Mathstral`. The Lean checking switch is the `mls`
+  `~/Library/Application Support/LVTeX`. The Lean checking switch is the `mls`
   file there (`on` or `off`), beside `last-file`.
 - Ollama runs at `127.0.0.1:11434`; `OLLAMA_MODEL` in `app/src/config.rs` selects
   the model (currently `gemma4:e4b`). Only AI prompts need it. Model requests run
@@ -84,11 +84,11 @@ using that cache, prefix `CARGO_HOME="$PWD/.cargo-home"` and add `--offline`.
   pin the models (formalizer: `anthropic/claude-sonnet-5.5`). The key comes from `OPENROUTER_API_KEY` when it is set, else from
   the login Keychain through Settings. It must never be logged, printed, written to a
   file or passed as an argument; the Lean REPL runs without it. The Lean project is
-  `MATHSTRAL_LEAN_PROJECT` when set, else `~/Library/Application Support/Mathstral/lean`
+  `LVTEX_LEAN_PROJECT` when set, else `~/Library/Application Support/LVTeX/lean`
   when it exists, else the checkout's `lean/` (`LEAN_PROJECT` in `app/src/config.rs`)
   when it exists, else the Application Support path (`mls::lean_project`). Saving
   writes the document's Lean twin `<name>.mls.lean` (Lean plus a JSON memory comment,
-  `version` 2); opening restores
+  `version` 3); opening restores
   labels and Lean from it. Its format is a compatibility boundary.
 - Edition 2024; minimum Rust version is `workspace.package.rust-version` (1.92).
   Exact-pin external dependencies with `=`. Share repeated dependencies through

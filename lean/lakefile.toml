@@ -1,4 +1,4 @@
-name = "mathstral_mls"
+name = "lvtex_mls"
 
 [[require]]
 name = "mathlib"

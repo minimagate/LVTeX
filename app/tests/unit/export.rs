@@ -3,7 +3,7 @@ use crate::math;
 use std::sync::Arc;
 
 fn render_formulas(doc: &mut Document) {
-    let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
+    let mut renderer = Renderer::with_prelude(lvtex_latex::PRELUDE);
     for job in doc.jobs() {
         let Some(latex) = job.latex.as_deref() else {
             continue;
@@ -16,18 +16,18 @@ fn render_formulas(doc: &mut Document) {
 #[test]
 fn exports_typeset_pdf_with_prompts_and_escaped_prose() {
     let mut doc = Document::new(
-        "# Title\n\nA line with # * _ \\$ \\\\ @ < [ characters.\n\nInline $x^2$ here.\n\n$$\n\\int_0^1 x dx\n$$\n\n<!--mathstral:pending:aGFsZiBvZiB4-->",
+        "# Title\n\nA line with # * _ \\$ \\\\ @ < [ characters.\n\nInline $x^2$ here.\n\n$$\n\\int_0^1 x dx\n$$\n\n<!--lvtex:pending:aGFsZiBvZiB4-->",
     );
     assert_eq!(unrendered(&doc), 3);
     render_formulas(&mut doc);
     let source = typst_source(&doc);
     assert!(source.contains("#heading(level: 1)[#\"Title\"]"));
-    assert!(source.contains(&mathstral_latex::typst_string_literal(
+    assert!(source.contains(&lvtex_latex::typst_string_literal(
         "A line with # * _ $ \\ @ < [ characters."
     )));
     assert!(source.contains("$ #eval("));
-    assert!(source.contains(&mathstral_latex::typst_string_literal("half of x")));
-    assert!(!source.contains(&mathstral_latex::typst_string_literal("\\half of x\\")));
+    assert!(source.contains(&lvtex_latex::typst_string_literal("half of x")));
+    assert!(!source.contains(&lvtex_latex::typst_string_literal("\\half of x\\")));
     assert_eq!(unrendered(&doc), 1);
     assert!(pdf(&doc).unwrap().starts_with(b"%PDF-"));
 }

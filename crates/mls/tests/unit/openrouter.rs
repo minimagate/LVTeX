@@ -2,10 +2,13 @@ use super::*;
 use crate::{FORMALIZER_MODEL, Failure, Formal, JEV_MODEL, Label, Tag};
 use serde_json::{Value, json};
 
-const NOT_SET: &str = "No OpenRouter key. Add one in Mathstral → Settings, or export OPENROUTER_API_KEY and launch Mathstral from that terminal.";
+const NOT_SET: &str = "No OpenRouter key. Add one in LVTeX → Settings, or export OPENROUTER_API_KEY and launch LVTeX from that terminal.";
 const MALFORMED: &str = "The OpenRouter key is malformed.";
 const NO_LABEL: &str = "Jev gave no label.";
 const NO_JOINS: &str = "Jev did not say whether the paragraph continues the one above.";
+const NO_ITEMS: &str = "Jev did not say whether the paragraph holds several items.";
+const NO_PIECES: &str = "The formalizer's JSON has no `pieces`.";
+const NOT_SPLIT: &str = "The paragraph could not be split into its items.";
 const NO_CONTENT: &str = "The formalizer sent no content.";
 const CUT_OFF: &str = "The formalization was cut off.";
 const INVALID_JSON: &str = "The formalizer did not return valid JSON.";
@@ -102,7 +105,7 @@ fn curl_config_keeps_each_setting_on_one_line_and_the_key_in_its_header() {
         "url = \"https://example.test/api\"\n",
         "header = \"Authorization: Bearer sk-or-test\"\n",
         "header = \"Content-Type: application/json\"\n",
-        "header = \"X-Title: Mathstral\"\n",
+        "header = \"X-Title: LVTeX\"\n",
         r#"data-binary = "{\"q\": \"say \\\"hi\\\"\\\\ now\"}\nsecond""#,
         "\n",
     );
@@ -196,31 +199,51 @@ fn classify_request_asks_whether_the_paragraph_continues_the_one_above() {
 }
 
 #[test]
-fn parse_tag_reads_each_label_and_whether_it_joins() {
+fn classify_request_asks_whether_the_paragraph_holds_several_items() {
+    let request = classify_request(None, "Lemma. $x = x$. Indeed, it is trivial.", false);
+    assert_eq!(request["questions"]["items"]["type"], "choice");
+    let criteria = request["questions"]["items"]["criteria"]
+        .as_object()
+        .expect("criteria object");
+    let mut keys: Vec<&str> = criteria.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["one", "several"]);
+}
+
+#[test]
+fn parse_tag_reads_each_label_whether_it_joins_and_whether_it_holds_several_items() {
     for label in Label::ALL {
         for (choice, joins) in [("continues", true), ("new", false)] {
-            let response = json!({"answers": {
-                "kind": {"choice": label.name()},
-                "joins": {"choice": choice},
-            }});
-            assert_eq!(
-                parse_tag(&response),
-                Ok(Tag { label, joins }),
-                "{} {choice}",
-                label.name()
-            );
+            for (items, split) in [("several", true), ("one", false)] {
+                let response = json!({"answers": {
+                    "kind": {"choice": label.name()},
+                    "joins": {"choice": choice},
+                    "items": {"choice": items},
+                }});
+                assert_eq!(
+                    parse_tag(&response),
+                    Ok(Tag {
+                        label,
+                        joins,
+                        split
+                    }),
+                    "{} {choice} {items}",
+                    label.name()
+                );
+            }
         }
     }
 }
 
 #[test]
 fn parse_tag_rejects_an_unknown_or_missing_label() {
+    let items = json!({"choice": "one"});
     let cases = [
-        json!({"answers": {"kind": {"choice": "theorem"}, "joins": {"choice": "new"}}}),
-        json!({"answers": {"kind": {"choice": "Proof"}, "joins": {"choice": "new"}}}),
-        json!({"answers": {"kind": {"choice": null}, "joins": {"choice": "new"}}}),
-        json!({"answers": {"kind": {}, "joins": {"choice": "continues"}}}),
-        json!({"answers": {"joins": {"choice": "continues"}}}),
+        json!({"answers": {"kind": {"choice": "theorem"}, "joins": {"choice": "new"}, "items": items}}),
+        json!({"answers": {"kind": {"choice": "Proof"}, "joins": {"choice": "new"}, "items": items}}),
+        json!({"answers": {"kind": {"choice": null}, "joins": {"choice": "new"}, "items": items}}),
+        json!({"answers": {"kind": {}, "joins": {"choice": "continues"}, "items": items}}),
+        json!({"answers": {"joins": {"choice": "continues"}, "items": items}}),
     ];
     for response in cases {
         assert_eq!(parse_tag(&response), Err(service(NO_LABEL)), "{response}");
@@ -229,13 +252,163 @@ fn parse_tag_rejects_an_unknown_or_missing_label() {
 
 #[test]
 fn parse_tag_rejects_a_missing_or_unknown_answer_about_joining() {
+    let items = json!({"choice": "one"});
     let cases = [
-        json!({"answers": {"kind": {"choice": "skip"}}}),
-        json!({"answers": {"kind": {"choice": "skip"}, "joins": {"choice": null}}}),
-        json!({"answers": {"kind": {"choice": "skip"}, "joins": {"choice": "maybe"}}}),
+        json!({"answers": {"kind": {"choice": "skip"}, "items": items}}),
+        json!({"answers": {"kind": {"choice": "skip"}, "joins": {"choice": null}, "items": items}}),
+        json!({"answers": {"kind": {"choice": "skip"}, "joins": {"choice": "maybe"}, "items": items}}),
     ];
     for response in cases {
         assert_eq!(parse_tag(&response), Err(service(NO_JOINS)), "{response}");
+    }
+}
+
+#[test]
+fn parse_tag_rejects_a_missing_or_unknown_answer_about_several_items() {
+    let kind = json!({"choice": "skip"});
+    let joins = json!({"choice": "new"});
+    let cases = [
+        json!({"answers": {"kind": kind, "joins": joins}}),
+        json!({"answers": {"kind": kind, "joins": joins, "items": {"choice": null}}}),
+        json!({"answers": {"kind": kind, "joins": joins, "items": {"choice": "many"}}}),
+    ];
+    for response in cases {
+        assert_eq!(parse_tag(&response), Err(service(NO_ITEMS)), "{response}");
+    }
+}
+
+#[test]
+fn split_request_sends_the_paragraph_to_the_formalizer_with_a_strict_schema() {
+    let text = "**Lemma.** $x = x$. Indeed, it is trivial. ∎";
+    let request = split_request(text);
+    assert_eq!(request["model"], FORMALIZER_MODEL);
+    assert_eq!(request["temperature"], 0);
+    assert_eq!(request["messages"][0]["role"], "system");
+    assert_eq!(request["messages"][0]["content"], SPLIT);
+    assert_eq!(request["messages"][1]["role"], "user");
+    assert_eq!(request["messages"][1]["content"], text);
+    let format = &request["response_format"];
+    assert_eq!(format["type"], "json_schema");
+    assert_eq!(format["json_schema"]["strict"], true);
+    let schema = &format["json_schema"]["schema"];
+    assert_eq!(schema["required"], json!(["pieces"]));
+    assert_eq!(schema["additionalProperties"], false);
+    assert_eq!(
+        schema["properties"]["pieces"],
+        json!({"type": "array", "items": {"type": "string"}})
+    );
+}
+
+/// The reply of a splitter whose pieces are `pieces`.
+fn split_reply(pieces: &[&str]) -> Value {
+    reply(json!(json!({"pieces": pieces}).to_string()))
+}
+
+#[test]
+fn parse_split_returns_the_parts_of_the_paragraph_the_pieces_stand_for() {
+    let text = "**Lemma.** If $x > 0$ then $x \\ne 0$.  Indeed, $x$ is positive. ∎";
+    let exact = [
+        "**Lemma.** If $x > 0$ then $x \\ne 0$.",
+        "Indeed, $x$ is positive. ∎",
+    ];
+    let respaced = [
+        "**Lemma.**If $x>0$ then $x\\ne 0$.  ",
+        " Indeed,$x$ is positive.∎",
+    ];
+    for pieces in [exact, respaced] {
+        assert_eq!(
+            parse_split(&split_reply(&pieces), text),
+            Ok(exact.iter().map(|piece| piece.to_string()).collect()),
+            "{pieces:?}"
+        );
+    }
+    assert_eq!(
+        parse_split(&split_reply(&[text]), text),
+        Ok(vec![text.to_string()]),
+        "one piece is the paragraph whole"
+    );
+    let fenced = reply(json!(format!("```json\n{}\n```", json!({"pieces": exact}))));
+    assert_eq!(
+        parse_split(&fenced, text),
+        Ok(exact.iter().map(|piece| piece.to_string()).collect())
+    );
+}
+
+#[test]
+fn parse_split_rejects_pieces_that_are_not_the_paragraph_cut_in_order() {
+    let text = "Let $x$ be real. Then $x = x$. Indeed, it is trivial.";
+    let cases: [(&str, &[&str]); 7] = [
+        (
+            "reworded",
+            &[
+                "Let $x$ be real.",
+                "Then $x$ equals $x$.",
+                "Indeed, it is trivial.",
+            ],
+        ),
+        (
+            "a piece left out",
+            &["Let $x$ be real.", "Indeed, it is trivial."],
+        ),
+        (
+            "a piece added",
+            &[
+                "Let $x$ be real.",
+                "Then $x = x$.",
+                "Indeed, it is trivial.",
+                "QED.",
+            ],
+        ),
+        (
+            "reordered",
+            &[
+                "Then $x = x$.",
+                "Let $x$ be real.",
+                "Indeed, it is trivial.",
+            ],
+        ),
+        (
+            "a blank piece",
+            &[
+                "Let $x$ be real. Then $x = x$.",
+                "  ",
+                "Indeed, it is trivial.",
+            ],
+        ),
+        ("no pieces", &[]),
+        ("cut mid-text", &["Let $x$ be real. Then $x = x$. Indeed,"]),
+    ];
+    for (name, pieces) in cases {
+        assert_eq!(
+            parse_split(&split_reply(pieces), text),
+            Err(block(NOT_SPLIT)),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn parse_split_rejects_truncated_malformed_and_empty_replies() {
+    let text = "Lemma. A. Proof. B.";
+    let truncated = json!({"choices": [{"finish_reason": "length",
+        "message": {"role": "assistant", "content": "{\"pieces\": [\"Lemma. A."}}]});
+    let cases = [
+        (truncated, block("The split was cut off.")),
+        (reply(json!("not json")), block(INVALID_JSON)),
+        (reply(json!("[\"Lemma. A.\"]")), block(INVALID_JSON)),
+        (reply(json!("{}")), block(NO_PIECES)),
+        (
+            reply(json!(r#"{"pieces": "Lemma. A. Proof. B."}"#)),
+            block(NO_PIECES),
+        ),
+        (
+            reply(json!(r#"{"pieces": ["Lemma. A.", 3]}"#)),
+            block(NO_PIECES),
+        ),
+        (reply(Value::Null), service(NO_CONTENT)),
+    ];
+    for (value, expected) in cases {
+        assert_eq!(parse_split(&value, text), Err(expected), "{value}");
     }
 }
 
@@ -270,7 +443,7 @@ fn formalize_request_caches_the_system_prompt_and_the_last_lean_segment() {
         );
     }
     assert_eq!(parts[2]["cache_control"], json!({"type": "ephemeral"}));
-    assert_eq!(parts[2]["text"], "-- mathstral:block 3\ndef c := 3\n");
+    assert_eq!(parts[2]["text"], "-- lvtex:block 3\ndef c := 3\n");
     assert!(parts[3].get("cache_control").is_none());
 }
 

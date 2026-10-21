@@ -1,7 +1,7 @@
 //! Formula rendering: Typst-backed images of formulas and the hand-written caret marker in them.
 
 use crate::config::*;
-use mathstral_render::math::Renderer;
+use lvtex_render::math::Renderer;
 
 /// The hand-written caret's box in an image, in pt like `baseline`: the horizontal centre of its
 /// stem, its top edge and its height.
@@ -54,7 +54,7 @@ fn render_formula(
     if latex.is_empty() || latex.len() > 16384 {
         return Err("empty or oversized expression".into());
     }
-    let body = mathstral_latex::convert(latex)?;
+    let body = lvtex_latex::convert(latex)?;
     let mut image = |display| {
         let equation = if display {
             format!("$ {body} $")
@@ -62,7 +62,7 @@ fn render_formula(
             format!("#math.equation(block: true, math.inline(${body}$))")
         };
         let pixels = renderer.render_source(format!(
-            "#set page(width: auto, height: auto, margin: 2pt, fill: none)\n#set text(font: \"Libertinus Serif\", size: {FONT_SIZE}pt, fill: rgb(\"{TEXT_COLOR:06x}\"))\n#show math.equation: set text(font: \"New Computer Modern Math\")\n{}\n{equation}", mathstral_latex::PRELUDE), 2.0)?;
+            "#set page(width: auto, height: auto, margin: 2pt, fill: none)\n#set text(font: \"Libertinus Serif\", size: {FONT_SIZE}pt, fill: rgb(\"{TEXT_COLOR:06x}\"))\n#show math.equation: set text(font: \"New Computer Modern Math\")\n{}\n{equation}", lvtex_latex::PRELUDE), 2.0)?;
         let (width, height) = (pixels.width() as usize, pixels.height() as usize);
         let mut rgba = pixels.data().to_vec();
         let caret = with_caret.then(|| take_caret(&mut rgba, width)).flatten();

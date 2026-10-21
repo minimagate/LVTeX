@@ -69,13 +69,13 @@ pub struct App {
     online: bool,
     math: Option<MathInput>,
     math_cache: HashMap<String, Arc<FormulaImage>>,
-    mls: mathstral_mls::Mls,
-    mls_worker: mathstral_mls::Worker,
+    mls: lvtex_mls::Mls,
+    mls_worker: lvtex_mls::Worker,
     // Whether Lean checking runs. Off, no job is submitted and no dot or chart row is shown.
     mls_on: bool,
     // Each paragraph's byte range, indexed like the paragraphs last given to MLS.
     mls_lines: Vec<Range<usize>>,
-    dots: Vec<mathstral_mls::Dot>,
+    dots: Vec<lvtex_mls::Dot>,
     fades: HashMap<u64, mls::Fade>,
     // True until the first sync, so a new or opened document checks every line, the caret's too.
     mls_fresh: bool,
@@ -107,12 +107,12 @@ impl App {
             let _ = wake.send_event(Action::MathReady);
         });
         let mls_wake = proxy.clone();
-        let mls_worker = mathstral_mls::Worker::new(mls::lean_project(), move || {
+        let mls_worker = lvtex_mls::Worker::new(mls::lean_project(), move || {
             let _ = mls_wake.send_event(Action::MlsReady);
         });
         let mut app = Self {
             worker,
-            mls: mathstral_mls::Mls::new(),
+            mls: lvtex_mls::Mls::new(),
             mls_worker,
             mls_on: file::mls_enabled(),
             mls_lines: Vec::new(),
@@ -220,7 +220,7 @@ impl App {
         if let Some(w) = &self.window {
             w.set_document_edited(self.doc.dirty());
             w.set_title(&format!(
-                "{}{} — Mathstral",
+                "{}{} — LVTeX",
                 self.path
                     .as_ref()
                     .and_then(|p| p.file_name())

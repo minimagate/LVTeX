@@ -26,7 +26,7 @@ pub enum Action {
 }
 pub fn install(proxy: EventLoopProxy<Action>) -> Menu {
     let menu = Menu::new();
-    let app = Submenu::new("Mathstral", true);
+    let app = Submenu::new("LVTeX", true);
     app.append(&PredefinedMenuItem::hide(None)).unwrap();
     app.append(&PredefinedMenuItem::hide_others(None)).unwrap();
     app.append(&PredefinedMenuItem::show_all(None)).unwrap();
@@ -45,7 +45,7 @@ pub fn install(proxy: EventLoopProxy<Action>) -> Menu {
         ),
         (
             &app,
-            "Quit Mathstral",
+            "Quit LVTeX",
             Code::KeyQ,
             Modifiers::META,
             Action::Quit,

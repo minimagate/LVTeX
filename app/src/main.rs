@@ -1,4 +1,4 @@
-//! Mathstral: a native macOS editor for prose with inline math.
+//! LVTeX: a native macOS editor for prose with inline math.
 mod app;
 mod config;
 mod document;

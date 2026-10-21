@@ -1,5 +1,5 @@
 //! Worker tests. The scripted document test needs the Lean project built; run it with
-//! `cargo test --release -p mathstral-mls scripted_documents -- --ignored --nocapture`.
+//! `cargo test --release -p lvtex-mls scripted_documents -- --ignored --nocapture`.
 
 use super::Worker;
 use crate::openrouter::{CHAT_URL, DECISIONS_URL};
@@ -29,12 +29,14 @@ fn reply(worker: &Worker) -> Reply {
         .expect("a reply within 10 seconds")
 }
 
-/// Jev's answers: the label, and whether the paragraph continues the one above.
+/// Jev's answers: the label, whether the paragraph continues the one above, and that it holds one
+/// item.
 fn jev(label: Label, joins: bool) -> Value {
     let joins = if joins { "continues" } else { "new" };
     json!({"answers": {
         "kind": {"type": "choice", "choice": label.name()},
         "joins": {"type": "choice", "choice": joins},
+        "items": {"type": "choice", "choice": "one"},
     }})
 }
 
@@ -254,10 +256,45 @@ fn classify_reports_the_label_jev_chose() {
                 Ok(Tag {
                     label: Label::Statement,
                     joins: true,
+                    split: false,
                 })
             );
         }
         other => panic!("expected a classification, got {other:?}"),
+    }
+}
+
+#[test]
+fn split_reports_the_pieces_of_the_paragraph_as_parts_of_its_text() {
+    let text = "Lemma. A. Proof. B.";
+    let worker = Worker::with_request(
+        PathBuf::new(),
+        || {},
+        |url, body| {
+            assert_eq!(url, CHAT_URL);
+            assert_eq!(body["messages"][1]["content"], "Lemma. A. Proof. B.");
+            let content = json!({"pieces": ["Lemma. A.", "Proof.  B."]});
+            Ok(json!({"choices": [{"finish_reason": "stop",
+                "message": {"content": content.to_string()}}]}))
+        },
+    );
+    worker.submit(Job::Split {
+        paragraph: 4,
+        text: text.to_string(),
+    });
+    match reply(&worker) {
+        Reply::Split {
+            paragraph,
+            text: echoed,
+            result,
+        } => {
+            assert_eq!((paragraph, echoed.as_str()), (4, text));
+            assert_eq!(
+                result,
+                Ok(vec!["Lemma. A.".to_string(), "Proof. B.".to_string()])
+            );
+        }
+        other => panic!("expected a split, got {other:?}"),
     }
 }
 
@@ -366,7 +403,7 @@ fn the_key_is_never_shown_by_debug() {
 #[test]
 fn check_without_a_lean_project_is_a_service_failure() {
     let worker = Worker::with_request(
-        PathBuf::from("/nonexistent/mathstral-mls-project"),
+        PathBuf::from("/nonexistent/lvtex-mls-project"),
         || {},
         no_request,
     );

@@ -1,5 +1,5 @@
 [package]
-name = "mathstral-render"
+name = "lvtex-render"
 description = "Typst-based math rendering and PDF compilation"
 version.workspace = true
 edition.workspace = true

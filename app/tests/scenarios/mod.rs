@@ -6,14 +6,11 @@ use crate::{
     view::{layout::Typesetter, render},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use mathstral_render::math::Renderer;
+use lvtex_render::math::Renderer;
 use std::{sync::Arc, time::Instant};
 
 fn pending(prompt: &str) -> String {
-    format!(
-        "<!--mathstral:pending:{}-->",
-        URL_SAFE_NO_PAD.encode(prompt)
-    )
+    format!("<!--lvtex:pending:{}-->", URL_SAFE_NO_PAD.encode(prompt))
 }
 
 fn finish(doc: &mut Document, renderer: &mut Renderer) {
@@ -54,7 +51,7 @@ fn mixed_page_baselines_roundtrip_pixels_and_atomic_editing() {
         pending("align x plus y equals 3 and x minus y equals 1"),
     );
     let mut doc = Document::new(&source);
-    let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
+    let mut renderer = Renderer::with_prelude(lvtex_latex::PRELUDE);
     finish(&mut doc, &mut renderer);
     let mut t = Typesetter::new();
     let saved = doc.markdown();
@@ -159,7 +156,7 @@ fn mixed_page_baselines_roundtrip_pixels_and_atomic_editing() {
 fn late_results_deleted_atoms_and_undo_never_target_other_text() {
     let mut d = Document::new(&format!("{} {}", pending("first"), pending("second")));
     let jobs = d.jobs();
-    let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
+    let mut renderer = Renderer::with_prelude(lvtex_latex::PRELUDE);
     let image = Arc::new(math::render::render(&mut renderer, "x^2").unwrap());
     d.move_to(0, false);
     d.replace("prefix ", false);
@@ -258,7 +255,7 @@ fn hand_written_formula_saves_as_plain_math() {
     assert_eq!(reopened.markdown(), "a $x^{2}$");
 }
 
-/// Run with `cargo test --release --locked -p mathstral manual_preview_latency -- --ignored --nocapture`.
+/// Run with `cargo test --release --locked -p lvtex manual_preview_latency -- --ignored --nocapture`.
 #[test]
 #[ignore = "manual release timing benchmark; run with the command in the test doc comment"]
 fn manual_preview_latency() {
@@ -268,7 +265,7 @@ fn manual_preview_latency() {
         ("nested fraction", r"\frac↵1↓\frac↵x↓y←→"),
         ("sum", "⇧S_i=1⤴^n⤴i^2←←→"),
     ];
-    let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
+    let mut renderer = Renderer::with_prelude(lvtex_latex::PRELUDE);
     let mut preparation_timings = Vec::new();
     let mut render_timings = Vec::new();
     let mut cold = None;
