@@ -14,14 +14,16 @@ status dot beside it.
 
 - `app/src/app/`: state and coordination in `mod.rs`; native events in `events.rs`,
   presentation in `drawing.rs`, plus input, commands, manual math sessions, the
-  Lean dots and panel (`mls.rs`) and the Structure chart (`chart.rs`).
+  Lean dots and panel (`mls.rs`), the Structure chart (`chart.rs`) and Settings
+  (`settings.rs`).
 - `app/src/document/`: document model, codec, cursor, history and formula sessions.
 - `app/src/math/`: key bindings, input, parsing, formula tree and serialization,
   model protocol, render preparation and workers.
 - `app/src/view/`: caret and pixel drawing; `layout/` owns document typesetting,
   paragraph styles, font shaping and hit testing.
-- `app/src/{config,export,file,markdown,menu}.rs`: configuration, PDF export,
-  platform file operations, Markdown and native menus.
+- `app/src/{config,export,file,keychain,markdown,menu}.rs`: configuration, PDF
+  export, platform file operations, the OpenRouter key in the login Keychain through
+  `security` (`keychain.rs`), Markdown and native menus.
 - `crates/latex/`: LaTeX conversion; `vendor/mitex/` contains required Typst
   definitions and their upstream license.
 - `crates/render/`: Typst world, math rasterization and PDF compilation.
@@ -35,6 +37,7 @@ status dot beside it.
   Put public library tests in ordinary Cargo integration targets. Do not widen
   production visibility solely for tests.
 - `assets/fonts/`: required embedded fonts and upstream notices.
+- `assets/brand/`: the Mathstral and MLS logo marks (SVG).
 - `scripts/`: build and packaging. Generated output belongs in ignored `target/`
   and `dist/`, never in the tracked source tree.
 - `.agents/skills/`: reusable coding guidance; start with `how-we-work` unless the
@@ -72,13 +75,15 @@ using that cache, prefix `CARGO_HOME="$PWD/.cargo-home"` and add `--offline`.
   comments, `\$` and `\\` escaping and pending-prompt comments. These and the
   settings format are compatibility boundaries.
 - Settings and the last-opened file live in
-  `~/Library/Application Support/Mathstral`.
+  `~/Library/Application Support/Mathstral`. The Lean checking switch is the `mls`
+  file there (`on` or `off`), beside `last-file`.
 - Ollama runs at `127.0.0.1:11434`; `OLLAMA_MODEL` in `app/src/config.rs` selects
   the model (currently `gemma4:e4b`). Only AI prompts need it. Model requests run
   serially; local renders and previews have a separate worker.
 - MLS uses OpenRouter only: `JEV_MODEL` and `HAIKU_MODEL` in `crates/mls/src/lib.rs`
-  pin the models. The key comes from `OPENROUTER_API_KEY` and must never be logged,
-  printed, written or passed as an argument; the Lean REPL runs without it. The
+  pin the models. The key comes from `OPENROUTER_API_KEY` when it is set, else from
+  the login Keychain through Settings. It must never be logged, printed, written to a
+  file or passed as an argument; the Lean REPL runs without it. The
   Lean project defaults to `lean/` (`LEAN_PROJECT` in `app/src/config.rs`;
   `MATHSTRAL_LEAN_PROJECT` overrides it). Saving writes the document's Lean twin
   `<name>.mls.lean` (Lean plus a JSON memory comment, `version` 2); opening restores

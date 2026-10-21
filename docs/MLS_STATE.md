@@ -98,8 +98,9 @@ formalization says what you meant.
     then one segment per block above (the last one carries `cache_control`), then
     the prose above and the block. The reply is validated before use.
     Transport is the system `curl`, configured on stdin, so the key never appears
-    in arguments, logs or files. The key comes from `OPENROUTER_API_KEY`; when it
-    is missing, the first paragraph shows one red dot that says so.
+    in arguments, logs or files. The key comes from `OPENROUTER_API_KEY` or, failing
+    that, the Keychain (Phase 4); when both are missing, the first paragraph shows one
+    red dot that says so.
   - `rules.rs`: rejected before Lean, marked red: `axiom` and `admit`; `sorry` in
     a definition or proof (a statement must end in `sorry`); commands that run
     code or change limits while Lean elaborates (`#eval` and every `#` command,
@@ -144,8 +145,8 @@ lake build Mathlib repl      # the REPL executable; Mathlib is then up to date
 `lean/lean-toolchain` pins Lean 4.35.0, and `lake-manifest.json` pins Mathlib
 `v4.35.0` (`56a0058`) and REPL `v4.35.0` (`58bdde1`). The app uses `lean/` of
 the checkout it was built from (`LEAN_PROJECT`); `MATHSTRAL_LEAN_PROJECT`
-overrides it. Export `OPENROUTER_API_KEY` in `~/.zshrc` and launch Mathstral
-from that terminal.
+overrides it. Add the key in Settings (⌘,), or export `OPENROUTER_API_KEY` in
+`~/.zshrc` and launch Mathstral from that terminal.
 
 ### Verified here (Linux cloud container)
 
@@ -163,7 +164,7 @@ from that terminal.
 - UI under Xvfb on Linux, through the shim: dots in all four colours with real
   Lean results restored from a hand-written twin, with no model calls; the panel
   with assumptions, Show Lean and the Lean error; the red "OPENROUTER_API_KEY is
-  not set" dot and its panel.
+  not set" dot and its panel. That message now reads "No OpenRouter key. …" (Phase 4).
 - Killing the REPL stops Lean. Started through `lake env`, it was left running
   as an orphan, which is why it is now started directly.
 
@@ -176,7 +177,7 @@ from that terminal.
   with a `choice` question and `criteria`; answer at
   `answers.kind.choice`) come from OpenRouter's public pages through web search,
   not from a live call. If Jev's request shape differs, `classify_request` and
-  `parse_label` in `crates/mls/src/openrouter.rs` are the only places to change.
+  `parse_tag` in `crates/mls/src/openrouter.rs` are the only places to change.
 - OpenRouter's migration notes say Claude 5.5 models ignore `temperature`.
   OpenRouter drops unsupported parameters, so `temperature: 0` is sent and may
   have no effect. Haiku's prompt caching (`cache_control`) is passed as documented
@@ -191,8 +192,8 @@ Manual check list on the Mac: build with `sh scripts/build-app.sh`, open
 test documents from `crates/mls/tests/fixtures/documents.rs`. Expect grey, then
 the expected colours. Hover each dot, and click one to pin it and toggle Lean.
 Edit a statement and watch only it and the blocks below re-check. Save, quit,
-reopen: the dots go grey and back with no network traffic. Unset the key and
-relaunch: one red dot explains why.
+reopen: the dots go grey and back with no network traffic. Unset the key,
+remove any saved key in Settings, and relaunch: one red dot explains why.
 
 ### Known limitations (V1)
 
@@ -306,3 +307,59 @@ this container and no key is set.
 - The chart is drawn over the page and can cover text in a narrow window. Rows that
   do not fit its height are not drawn.
 - One job still runs at a time.
+
+## Phase 4: Settings
+
+Settings is where the user turns Lean checking on or off and saves the OpenRouter
+key. Mathstral → Settings… (⌘,) opens it.
+
+### What it does
+
+- **Panel.** It is drawn over the page under the title bar, in two sections:
+  "Writing · on this Mac" and "Lean checking · OpenRouter". Escape closes it, and so
+  does a click outside it. While it is open, keys go to the panel and not to the
+  document, and an IME commit is dropped.
+- **Writing · on this Mac.** States that AI formulas use `OLLAMA_MODEL` through
+  Ollama at `OLLAMA_ADDRESS`, that nothing is sent anywhere else, and whether Ollama
+  is running.
+- **Switch.** "Check definitions, statements and proofs with Lean." Off sends no
+  MLS job, clears the dots and the panel, and makes the Structure chart say "Lean
+  checking is off."; replies that arrive while it is off change no dots. On checks
+  every paragraph again, the caret's included. The choice is saved to the `mls`
+  file (`on` or `off`) beside `last-file`. A missing file means on.
+- **Key status.** One line says where the key comes from: `OPENROUTER_API_KEY` (set
+  and not blank, and it takes precedence), the Keychain, or none yet. Opening
+  Settings reads the Keychain once to show this.
+- **Key field.** Masked, one bullet per character up to 48. Paste (⌘V) and typing
+  both drop whitespace and control characters.
+- **Saving.** Return checks the draft with `key_is_valid`, which refuses quotes and
+  backslashes ("That does not look like an OpenRouter key."). A valid key goes to
+  the Keychain as item "Mathstral OpenRouter", account "openrouter", through
+  `/usr/bin/security -i`: the add command goes on its standard input, and a
+  read-back confirms it. If the Keychain does not keep it, the message ends "The key
+  is used until Mathstral quits." Saving sets the MLS worker's key and retries MLS.
+  With `OPENROUTER_API_KEY` set, the environment key still wins.
+- **Remove.** "Remove key from Keychain" deletes the item. MLS then uses the
+  environment's key, if there is one.
+- **Worker.** `Worker::set_key` gives the key to the MLS thread. A request already in
+  flight keeps the key it started with. A missing or blank key fails each request
+  with "No OpenRouter key. …"; `checked_key` also refuses a key with quotes,
+  backslashes, whitespace or control characters ("The OpenRouter key is malformed.").
+- **Launch.** `App::new` sets the worker's key from `effective_key()`. The Keychain
+  is read there only when `OPENROUTER_API_KEY` is unset, even when Lean checking is
+  off.
+
+### Verified here (Linux, through the shim and Xvfb)
+
+- The window with its two sections, the masked field and the key status line.
+- Return with no Keychain available (`/usr/bin/security` is absent here) shows "The
+  Keychain is not available. The key is used until Mathstral quits."
+- The switch hides the dots, and it persists `off` in the `mls` file.
+
+### Not verified here: please check on your Mac
+
+- The Keychain round trip through `security -i`: saving, reading back and removing a
+  real item.
+- ⌘, and the menu item (muda menus do not run on Linux).
+- The macOS Keychain access prompt. All Keychain calls run on the main thread, so a
+  prompt blocks the window until it is answered.
