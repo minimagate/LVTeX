@@ -27,6 +27,7 @@ fn live_documents_end_with_their_dots() {
     }
     for document in &DOCUMENTS {
         let worker = Worker::new(project.clone(), || {});
+        worker.set_key(std::env::var("OPENROUTER_API_KEY").ok());
         let mut mls = Mls::new();
         let lines: Vec<&str> = document.lines.iter().map(|line| line.text).collect();
         drive(&mut mls, &worker, &lines)

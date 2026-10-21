@@ -10,7 +10,6 @@ use std::{
 
 pub(crate) const DECISIONS_URL: &str = "https://openrouter.ai/api/alpha/decisions";
 pub(crate) const CHAT_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
-const KEY_VAR: &str = "OPENROUTER_API_KEY";
 /// Bounds each request, so a stalled call cannot hold the worker indefinitely.
 const TIMEOUT_SECONDS: u32 = 120;
 
@@ -54,13 +53,13 @@ fn block_failure(message: impl Into<String>) -> Failure {
     }
 }
 
-/// The key from the environment. It is never put in an argument, a file or a message.
+/// The caller's key, checked before use. It is never put in an argument, a file or a message.
 fn checked_key(key: Option<&str>) -> Result<&str, Failure> {
     let key = match key {
         Some(key) if !key.trim().is_empty() => key,
         _ => {
             return Err(service_failure(
-                "OPENROUTER_API_KEY is not set. Export it and launch Mathstral from that terminal.",
+                "No OpenRouter key. Add one in Mathstral → Settings, or export OPENROUTER_API_KEY and launch Mathstral from that terminal.",
             ));
         }
     };
@@ -69,9 +68,15 @@ fn checked_key(key: Option<&str>) -> Result<&str, Failure> {
         .chars()
         .any(|c| matches!(c, '"' | '\\') || c.is_whitespace() || c.is_control())
     {
-        return Err(service_failure("OPENROUTER_API_KEY is malformed."));
+        return Err(service_failure("The OpenRouter key is malformed."));
     }
     Ok(key)
+}
+
+/// Whether `key` is usable as an OpenRouter key. The app calls it before saving a key, so the rule
+/// has one owner.
+pub fn key_is_valid(key: &str) -> bool {
+    checked_key(Some(key)).is_ok()
 }
 
 /// Escapes a value for a double-quoted curl config string.
@@ -117,10 +122,9 @@ fn response(stdout: &str) -> Result<Value, Failure> {
     serde_json::from_str(body).map_err(|_| service_failure("OpenRouter sent invalid JSON."))
 }
 
-/// Sends `body` to `url` through curl and returns the JSON reply.
-pub(crate) fn post(url: &str, body: &Value) -> Result<Value, Failure> {
-    let key = std::env::var(KEY_VAR).ok();
-    let key = checked_key(key.as_deref())?;
+/// Sends `body` to `url` through curl with `key` and returns the JSON reply.
+pub(crate) fn post(url: &str, body: &Value, key: Option<&str>) -> Result<Value, Failure> {
+    let key = checked_key(key)?;
     let timeout = TIMEOUT_SECONDS.to_string();
     let mut child = Command::new("curl")
         .args([

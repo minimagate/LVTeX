@@ -194,6 +194,13 @@ fn a_request_failure_is_passed_through_as_a_service_failure() {
 }
 
 #[test]
+fn the_key_is_never_shown_by_debug() {
+    let worker = Worker::with_request(PathBuf::new(), || {}, no_request);
+    worker.set_key(Some("sk-or-secret".into()));
+    assert!(!format!("{worker:?}").contains("sk-or-secret"));
+}
+
+#[test]
 fn check_without_a_lean_project_is_a_service_failure() {
     let worker = Worker::with_request(
         PathBuf::from("/nonexistent/mathstral-mls-project"),

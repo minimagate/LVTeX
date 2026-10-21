@@ -2,9 +2,8 @@ use super::*;
 use crate::{Failure, Formal, HAIKU_MODEL, JEV_MODEL, Label, Tag};
 use serde_json::{Value, json};
 
-const NOT_SET: &str =
-    "OPENROUTER_API_KEY is not set. Export it and launch Mathstral from that terminal.";
-const MALFORMED: &str = "OPENROUTER_API_KEY is malformed.";
+const NOT_SET: &str = "No OpenRouter key. Add one in Mathstral → Settings, or export OPENROUTER_API_KEY and launch Mathstral from that terminal.";
+const MALFORMED: &str = "The OpenRouter key is malformed.";
 const NO_LABEL: &str = "Jev gave no label.";
 const NO_JOINS: &str = "Jev did not say whether the paragraph continues the one above.";
 const NO_CONTENT: &str = "Haiku sent no content.";
@@ -64,6 +63,20 @@ fn checked_key_rejects_missing_and_malformed_keys() {
     ];
     for (key, expected) in cases {
         assert_eq!(checked_key(key), expected, "{key:?}");
+    }
+}
+
+#[test]
+fn key_is_valid_accepts_a_key_that_curl_can_send_and_nothing_else() {
+    let cases = [
+        ("sk-or-v1-abc123", true),
+        ("", false),
+        (" \t", false),
+        ("sk\"or", false),
+        ("sk\\or", false),
+    ];
+    for (key, expected) in cases {
+        assert_eq!(key_is_valid(key), expected, "{key:?}");
     }
 }
 

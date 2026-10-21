@@ -7,9 +7,10 @@ use crate::repl::Repl;
 use crate::{Checked, Failure, Job, Reply, rules};
 use serde_json::Value;
 use std::{
+    fmt,
     panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
-    sync::mpsc,
+    sync::{Arc, Mutex, PoisonError, mpsc},
     thread,
 };
 
@@ -18,12 +19,47 @@ use std::{
 pub struct Worker {
     tx: mpsc::Sender<Job>,
     pub rx: mpsc::Receiver<Reply>,
+    key: Key,
+}
+
+/// The OpenRouter key that model requests use. The worker's request and its owner share it, and
+/// `Debug` never shows it.
+#[derive(Clone, Default)]
+struct Key(Arc<Mutex<Option<String>>>);
+
+impl fmt::Debug for Key {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Key(..)")
+    }
 }
 
 impl Worker {
     /// `project` is the Lake project with Mathlib and the REPL; `wake` is called after each reply.
+    /// Model requests use the key from `set_key`, which is unset until one is given.
     pub fn new(project: PathBuf, wake: impl Fn() + Send + 'static) -> Self {
-        Self::with_request(project, wake, openrouter::post)
+        let key = Key::default();
+        let slot = key.clone();
+        let request = move |url: &str, body: &Value| {
+            // Copied out, so the lock is not held while the request runs.
+            let key = slot
+                .0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone();
+            openrouter::post(url, body, key.as_deref())
+        };
+        Self {
+            key,
+            ..Self::with_request(project, wake, request)
+        }
+    }
+
+    /// Sets the OpenRouter key that the next model request uses. `None` or a blank key means no key,
+    /// and a request then fails with a message saying so. A request already in flight keeps the key
+    /// it started with.
+    pub fn set_key(&self, key: Option<String>) {
+        let key = key.filter(|key| !key.trim().is_empty());
+        *self.key.0.lock().unwrap_or_else(PoisonError::into_inner) = key;
     }
 
     fn with_request(
@@ -59,7 +95,11 @@ impl Worker {
                 }
             })
             .expect("MLS worker");
-        Self { tx, rx }
+        Self {
+            tx,
+            rx,
+            key: Key::default(),
+        }
     }
 
     /// Queues a job. A send error means the worker has stopped, so the job is dropped.

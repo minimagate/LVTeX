@@ -1,7 +1,7 @@
 use super::*;
 use crate::{Checked, Failure, Formal, Job, Label, Outcome, Reply, Status, Tag};
 
-const MISSING_KEY: &str = "OPENROUTER_API_KEY is not set";
+const MISSING_KEY: &str = "No OpenRouter key";
 const REPL_DOWN: &str = "the Lean REPL is not running";
 
 /// The mock model's tags. "Def" is a definition, "Lemma" and "Then" a statement, "Proof" starts a
@@ -486,29 +486,51 @@ fn a_new_open_paragraph_gets_no_job_and_no_dot() {
     assert_eq!(statuses(&mls), [(0, Status::Verified)]);
 }
 
+/// The reply of a service that is down, as with a missing key: classification fails.
+fn service_down(job: &Job) -> Reply {
+    match job {
+        Job::Classify {
+            paragraph,
+            previous,
+            text,
+            proof_open,
+        } => Reply::Classified {
+            paragraph: *paragraph,
+            previous: previous.clone(),
+            text: text.clone(),
+            proof_open: *proof_open,
+            result: Err(Failure {
+                message: MISSING_KEY.to_string(),
+                service: true,
+            }),
+        },
+        _ => panic!("only classification runs while the service is down"),
+    }
+}
+
+#[test]
+fn retry_runs_the_failed_job_again_without_an_edit() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Hello.", "World."]));
+    let jobs = run(&mut mls, service_down);
+    let failed = match &jobs[..] {
+        [Job::Classify { paragraph, .. }, ..] => *paragraph,
+        other => panic!("expected a classification first, got {other:?}"),
+    };
+    assert!(mls.next_job().is_none());
+
+    mls.retry();
+    let job = mls
+        .next_job()
+        .expect("retry makes the failed job run again");
+    assert!(matches!(
+        &job,
+        Job::Classify { paragraph, text, .. } if *paragraph == failed && text == "Hello."
+    ));
+}
+
 #[test]
 fn a_classification_service_failure_stops_at_its_paragraph_until_a_change() {
-    fn service_down(job: &Job) -> Reply {
-        match job {
-            Job::Classify {
-                paragraph,
-                previous,
-                text,
-                proof_open,
-            } => Reply::Classified {
-                paragraph: *paragraph,
-                previous: previous.clone(),
-                text: text.clone(),
-                proof_open: *proof_open,
-                result: Err(Failure {
-                    message: MISSING_KEY.to_string(),
-                    service: true,
-                }),
-            },
-            _ => panic!("only classification runs while the service is down"),
-        }
-    }
-
     let mut mls = Mls::new();
     mls.sync(&paras(&["Hello.", "World."]));
     let jobs = run(&mut mls, service_down);

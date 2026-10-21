@@ -6,6 +6,7 @@ mod repl;
 mod rules;
 mod worker;
 
+pub use openrouter::key_is_valid;
 pub use pipeline::{Details, Dot, Mls, Node, Paragraph};
 pub use worker::Worker;
 
@@ -77,7 +78,8 @@ pub struct Formal {
     pub uses: Vec<String>,
 }
 
-/// A failure. A service failure (missing key, network, Lean setup) halts checking until the next edit.
+/// A failure. A service failure (missing key, network, Lean setup) halts checking until the next edit
+/// or `Mls::retry`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Failure {
     pub message: String,

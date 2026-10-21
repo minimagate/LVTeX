@@ -507,8 +507,16 @@ impl Mls {
         self.segment();
     }
 
-    /// Clears what a service failure left behind, so the next changed document tries again. A
-    /// lost REPL clears every check, since the environments they were made on are gone.
+    /// Tries the service again after a failure: clears what service failures left behind and
+    /// segments, so the next `next_job` runs the failed job again without an edit. Call it after the
+    /// key or the settings change. A job already in flight still finishes.
+    pub fn retry(&mut self) {
+        self.retry_services();
+        self.segment();
+    }
+
+    /// Clears what a service failure left behind, so the next edit or `retry` tries again. A lost
+    /// REPL clears every check, since the environments they were made on are gone.
     fn retry_services(&mut self) {
         for para in &mut self.paras {
             if matches!(&para.label, Some(Labelled { result: Err(f), .. }) if f.service) {
@@ -849,7 +857,7 @@ impl Mls {
                 result,
             } => {
                 match &result {
-                    // The REPL is gone. The next changed document retries (see `retry_services`).
+                    // The REPL is gone. The next edit or `retry` tries again (see `retry_services`).
                     Err(failure) if failure.service => self.repl_lost = true,
                     // A timeout kills the REPL, so every environment that a check was made on is
                     // gone. This block's own check is set below, when its reply is current.
