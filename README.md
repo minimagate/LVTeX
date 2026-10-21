@@ -58,6 +58,7 @@ window. The app remembers its window geometry and last-opened file.
 | Cut / Copy / Paste / Select All | ⌘X / ⌘C / ⌘V / ⌘A |
 | Insert Formula | ⌘1 |
 | Ask AI for Formula | ⇧⌘1 |
+| Structure chart (View → Structure) | ⌘L |
 | Close / Quit | ⌘W / ⌘Q |
 
 Saving replaces the file atomically and preserves its permissions. Opening
@@ -106,41 +107,74 @@ is retained as raw source; reopening without edits preserves the original source
 
 ## Lean checking
 
-MLS reads the document a paragraph at a time; Enter closes a paragraph. Jev
-(`typesafe/jev-1.13`) labels each one as a definition, a statement (lemma,
-theorem, corollary, proposition), a proof, or anything else, which gets no dot.
-A proof continues over the following paragraphs until one that is not part of
-it, or until it ends with ∎. Claude Haiku 5.5 (`anthropic/claude-haiku-5.5`)
-formalizes each block into Lean, given the Lean of the blocks above and the prose
-just above; statements are formalized with `sorry`, and a proof restates its
-statement with the real proof. Output that uses `axiom`, `admit`, `sorry` in a
-definition or proof, commands such as `#eval` or `set_option`, redefines a name
-from above, or changes the statement its proof belongs to, is rejected before
-Lean sees it. The Lean REPL then checks the block on top of the blocks above.
+MLS reads the document a block at a time. A paragraph is a line; Enter closes it.
+For each paragraph, Jev (`typesafe/jev-1.13`) answers two questions: what it is (a
+definition, a statement (lemma, theorem, corollary, proposition), a proof, or
+anything else, which gets no dot), and whether it belongs to the same item as the
+paragraph above. Paragraphs that belong together form one block: a setup line and
+its claim, a statement and the displayed formula under it, or a proof that runs
+over several paragraphs until one that is not part of it, or until it ends with ∎.
+A block's dot sits beside its first paragraph. The last block gets no dot and no
+request while it is an unfinished proof or ends in `:` or `,`.
+
+Claude Haiku 5.5 (`anthropic/claude-haiku-5.5`) formalizes each block into Lean as
+one item, given the Lean of the blocks above and the prose run above it; statements
+are formalized with `sorry`, and a proof restates its statement with the real proof.
+Output that uses `axiom`, `admit`, `sorry` in a definition or proof, commands such
+as `#eval` or `set_option`, redefines a name from above, or changes the statement
+its proof belongs to, is rejected before Lean sees it. The Lean REPL then checks the
+block on top of the blocks above.
+
+After a formalization passes these rules, MLS records which names declared by the
+blocks above it appear in its Lean (whole words outside comments, except names the
+block declares itself). These links drive checking, with no model calls. A block that
+uses a name that no block above declares any more (renamed or removed) is
+formalized again. A block that uses a red block is red, with the note "Uses `X`,
+which does not check.", and Lean is not run. A block whose Lean verifies but that
+uses a statement that is only amber stays amber, with "Relies on `X`, which is not
+proved yet." If a block above has no valid Lean at all, a missing name is red, with
+"Uses `X`, which is not defined above.", and Haiku is not asked again.
 
 | Dot | Meaning |
 | --- | --- |
 | Grey | Being checked |
-| Amber | The statement compiles with `sorry` |
-| Green | Verified: a definition, or a statement together with its proof |
-| Red | Lean reported an error, or the output was rejected |
+| Amber | The statement compiles with `sorry`, or the block relies on one that does |
+| Green | Verified: a definition, or a statement together with its proof, and everything it uses |
+| Red | Lean reported an error, the output was rejected, or the block uses one that does not check |
 
 Prose, examples and remarks get no dot. Hover or click a dot to see the block's
-assumptions in plain language, written from the Lean; **Show Lean** reveals the
-Lean and any error. Escape or a click elsewhere closes a pinned panel. Checking
-runs in the background and never blocks typing. Editing a block re-formalizes
-only that block and re-checks the blocks below it with Lean.
+panel: a note first, when a link explains the colour; then the assumptions in
+plain language, written from the Lean; then `Uses a, b.` for the names it uses from
+above. **Show Lean** reveals the Lean and any error. The panel opens below the
+block's last paragraph. Escape or a click elsewhere closes a pinned panel.
+Checking runs in the background and never blocks typing. Editing a block
+re-formalizes that block, and any block below it that used a name the edit removed
+or renamed; the blocks below are re-checked with Lean. Editing a paragraph also asks
+Jev again about it and about the paragraph below; until Jev answers, the blocks and
+dots stay where they were.
+
+**View → Structure** (⌘L) opens a quiet chart at the top right of the window: one
+row per definition and statement, in document order, with its Lean name (or the
+start of its text, when it has none) and its status colour. A row's dot is indented
+by its level: 0 for a block that uses no other block, otherwise one more than the
+deepest block it uses. Thin lines run from each block to the blocks it uses, and a
+proof adds what it uses to its statement's row. Click a row to scroll to its block.
+Escape closes the panel first, then the chart. The chart only shows Lean that
+exists, so a block with no Lean yet has no links.
 
 Green means *this Lean formalization is verified*, not that it says what you
-wrote. The assumptions panel is how you check that it does.
+wrote. The assumptions panel is how you check that it does. Green also requires
+everything the block uses, directly or through other blocks, to be verified.
 
 A missing key, an unreachable OpenRouter or a Lean project that is not built shows
 as one red dot whose panel explains what to do; the next edit retries. Saving
 also writes the document's Lean twin, `<name>.mls.lean`, beside it: the Lean that
 checked, with a `-- mathstral:block <id>` comment per block, and a final
-`mathstral:memory` comment that remembers each paragraph's label and each block's
-Lean. Opening the document re-uses them, so unchanged text needs no model calls;
-Lean re-checks every block. MLS needs no Ollama.
+`mathstral:memory` comment (`version` 2). It remembers each paragraph's label, the
+paragraph above it and whether it joins that one, and each block's Lean,
+assumptions and names it uses, or its rejection reason. Opening the document re-uses
+them, so unchanged text needs no model calls; Lean re-checks every block. A version 1
+twin is ignored, so its paragraphs are asked again once. MLS needs no Ollama.
 
 The Lean project is [`lean/`](lean): Lean 4.35.0 with Mathlib and the
 [Lean REPL](https://github.com/leanprover-community/repl), pinned in
@@ -196,7 +230,7 @@ Ollama, OpenRouter, Lean or a TeX installation. The optional checks are:
 ```sh
 # Manual-preview timing.
 cargo test --release --locked -p mathstral manual_preview_latency -- --ignored --nocapture
-# The three sample documents with scripted model answers, checked by Lean (needs lean/ built).
+# The four sample documents with scripted model answers, checked by Lean (needs lean/ built).
 cargo test --release --locked -p mathstral-mls scripted_documents -- --ignored --nocapture
 # The same documents through OpenRouter at temperature 0 (needs OPENROUTER_API_KEY too).
 cargo test --release --locked -p mathstral-mls --test documents -- --ignored --nocapture
@@ -207,7 +241,7 @@ Each optional MLS test skips with a message when its key or Lean project is miss
 
 | Path | Responsibility |
 | --- | --- |
-| `app/src/app/` | Window state, events, drawing, commands, math sessions, Lean dots and panel |
+| `app/src/app/` | Window state, events, drawing, commands, math sessions, Lean dots and panel, Structure chart |
 | `app/src/document/` | Text, formulas, file encoding, cursor and undo |
 | `app/src/math/` | Formula keys, tree, LaTeX parsing, Ollama and background work |
 | `app/src/view/` | Typesetting, hit testing, pixel rendering and carets |

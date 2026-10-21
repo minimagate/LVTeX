@@ -13,8 +13,8 @@ status dot beside it.
 ## Layout and boundaries
 
 - `app/src/app/`: state and coordination in `mod.rs`; native events in `events.rs`,
-  presentation in `drawing.rs`, plus input, commands, manual math sessions and the
-  Lean dots and panel (`mls.rs`).
+  presentation in `drawing.rs`, plus input, commands, manual math sessions, the
+  Lean dots and panel (`mls.rs`) and the Structure chart (`chart.rs`).
 - `app/src/document/`: document model, codec, cursor, history and formula sessions.
 - `app/src/math/`: key bindings, input, parsing, formula tree and serialization,
   model protocol, render preparation and workers.
@@ -81,7 +81,7 @@ using that cache, prefix `CARGO_HOME="$PWD/.cargo-home"` and add `--offline`.
   printed, written or passed as an argument; the Lean REPL runs without it. The
   Lean project defaults to `lean/` (`LEAN_PROJECT` in `app/src/config.rs`;
   `MATHSTRAL_LEAN_PROJECT` overrides it). Saving writes the document's Lean twin
-  `<name>.mls.lean` (Lean plus a JSON memory comment, `version` 1); opening restores
+  `<name>.mls.lean` (Lean plus a JSON memory comment, `version` 2); opening restores
   labels and Lean from it. Its format is a compatibility boundary.
 - Edition 2024; minimum Rust version is `workspace.package.rust-version` (1.92).
   Exact-pin external dependencies with `=`. Share repeated dependencies through

@@ -198,17 +198,111 @@ relaunch: one red dot explains why.
 
 - Green means the formalization is verified. Whether it is faithful is up to the
   reader of the assumptions.
-- A block keeps its Lean when blocks above it change. If a definition above is
-  renamed, a statement that used the old name turns red until it is edited.
-- A paragraph is a line: a display formula alone on a line is its own (skipped)
-  block. A proof must end with ∎, or be followed by another paragraph, to be
-  checked.
+- A block keeps its Lean when blocks above it change, unless it uses a name that no
+  block above declares any more. Then it is formalized again (Phase 3).
+- A paragraph is a line, and Jev decides which paragraphs make up a block (Phase 3).
+  A proof must end with ∎, or be followed by a paragraph that does not join it, to
+  be checked.
 - One job runs at a time. Jev labels every new paragraph before any
   formalization, and a long document's first pass takes a while.
 - Lean re-checks every block on open (about 10 s to import Mathlib, then the
   blocks). The twin restores labels and Lean, not verdicts.
 - A service failure (no key, network, Lean not built) halts checking at that
   block until the next edit.
-- No repair loops, no dependency graph and no back-translation, by design.
+- No repair loops and no back-translation, by design. The dependency graph is the
+  Structure chart (Phase 3).
 - The denylist of Lean commands is not a sandbox. The REPL runs with your user's
   permissions, without the API key.
+
+## Phase 3: blocks that belong together, and the links between them
+
+### The problem
+
+Phase 2 treated each line as a paragraph and formalized each block with the Lean
+above and the prose just above it. A setup line and its claim were two blocks, and
+a statement and the displayed formula under it were formalized apart. Nothing
+recorded which block relies on which, although the Lean already names what it
+uses. So a proof that relied on an unproved lemma was not shown as depending on it.
+
+### The idea
+
+The document is a sequence of blocks, and the names that Lean uses link them.
+Grouping decides what a block is, the names decide the links, and the links feed
+back into checking and into the chart.
+
+**Green still means "this Lean formalization is verified", not that it matches what
+you wrote. It now also requires everything the block uses to be verified.**
+
+### What it does
+
+- **Grouping.** Jev answers two typed questions per paragraph, in one request: `kind`
+  (definition, statement, proof or skip, as before) and `joins` (`continues` or
+  `new`), whether the paragraph belongs to the same item as the paragraph above,
+  which Jev is given as context. A paragraph joins the block above when that block
+  has not ended with ∎ and either both are proofs (the V1 rule), or Jev says it
+  continues and the paragraph is skip, or the block above is prose, or the labels
+  match. So "Let G be a group." followed by "Then …" is one statement, whose dot sits
+  on the setup line. A statement and the display formula under it are one block,
+  which Haiku formalizes whole. The last block gets no dot and no request while it is
+  an unfinished proof or ends in `:` or `,`.
+  Jev's answers are remembered by the paragraph above, its text and whether a proof
+  is open. Editing a paragraph asks Jev again for it and for the paragraph below;
+  until Jev answers, the old answers keep the blocks and dots in place. A block's
+  prose context for Haiku is the whole prose run above it.
+- **Links.** After the rules accept a formalization, MLS records which names declared
+  by the blocks above it appear in its Lean: whole words outside comments, minus
+  names the block declares itself. The links drive checking, with no model calls:
+  - a block that uses a name no block above declares any more (renamed or removed)
+    is formalized again;
+  - a block that uses a red block is red, with the note "Uses `X`, which does not
+    check.", and Lean is not run;
+  - a block whose Lean verifies but that uses a statement that is only amber stays
+    amber, with the note "Relies on `X`, which is not proved yet.";
+  - if a block above has no valid Lean at all, a missing name is red, with "Uses `X`,
+    which is not defined above.", and Haiku is not asked again.
+  Green therefore means verified down to everything the block uses, transitively.
+- **Panel and chart.** The Lean panel shows the note first, then the assumptions,
+  then "Uses a, b.", and opens below the block's last paragraph. View → Structure
+  (⌘L) toggles a quiet chart at the top right of the window. It has one row per
+  definition and statement, in document order, with the Lean name (or the start of
+  the text, when there is none) and the status colour. A row's dot is indented by its
+  level: 0 for a block that uses no other block, otherwise one more than the deepest
+  block it uses. Thin lines run from each block to the blocks it uses. A proof adds
+  what it uses to its statement's row. Click a row to scroll to its block. Escape
+  closes the panel first, then the chart. The chart only reflects Lean that exists:
+  a block without Lean yet has no links.
+- **Twin memory.** The twin's memory is `version` 2. Label entries add `previous`
+  (the paragraph above, or null) and `joins`; accepted formal entries add `uses`. A
+  version 1 twin is ignored, so its document's paragraphs are asked again once.
+- **Tests.** A fourth sample document, "grouped lemma", holds a statement, its
+  displayed formula and its proof. The scripted test also checks the chart of the
+  group theory document: `IsInvolution` and `left_identity_unique` at level 0, and
+  `one_is_involution` at level 1, using `IsInvolution`.
+
+### Verified here (Linux cloud container)
+
+Through the local, uncommitted shim and Xvfb, a restored twin with grouped and linked
+blocks was checked by real Lean, with no model calls. It showed: a grouped statement
+with its display formula, green; a proof that Lean verified but that is amber,
+because it relies on an unproved lemma; the panel with its note and "Uses …"; and the
+chart with three levels and its lines. The chart was opened through a temporary local
+change, because muda menus do not run on Linux. Workspace tests: app 170, mls 98,
+plus the ignored ones.
+
+Not verified here: ⌘L itself, the Retina rendering of the chart, and clicking a row
+to scroll. No live Jev `joins` question has been asked: openrouter.ai is blocked from
+this container and no key is set.
+
+### Known limitations
+
+- Jev's `joins` answer is a judgement, and it is unverified live. Its request shape
+  is an assumption, like the rest of the Decisions request, to check on the Mac.
+  `classify_request` and `parse_tag` in `crates/mls/src/openrouter.rs` are the only
+  places to change.
+- A link exists only when the Lean uses the name. A block that restates a notion
+  instead of naming it has no link.
+- Names are matched as whole words, and `.` counts as part of a word, so dot notation
+  (`h.foo`) is not seen as a use of `foo`.
+- The chart is drawn over the page and can cover text in a narrow window. Rows that
+  do not fit its height are not drawn.
+- One job still runs at a time.
