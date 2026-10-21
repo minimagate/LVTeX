@@ -63,9 +63,15 @@ fn answer(job: &Job) -> Reply {
                 lean.push_str("\n-- FALSE");
             }
             // A block whose text contains USES mentions every name above, as Lean that relies on
-            // them would. `uses` then finds the ones it does not declare itself.
+            // them would. `uses` then finds the ones it does not declare itself. A statement must end
+            // in its `sorry` (see `rules::reject`), so its example goes above it.
             if text.contains("USES") {
-                lean.push_str(&format!("\nexample := [{}]", names_above.join(", ")));
+                let example = format!("example := [{}]", names_above.join(", "));
+                if *label == Label::Statement {
+                    lean = format!("{example}\n{lean}");
+                } else {
+                    lean.push_str(&format!("\n{example}"));
+                }
             }
             let uses = crate::rules::uses(&lean, names_above);
             Reply::Formalized {
@@ -969,6 +975,27 @@ fn a_proof_is_formalized_again_when_its_statement_changes_after_restore() {
 }
 
 #[test]
+fn a_proof_edited_with_its_statement_is_not_remembered_under_the_new_statement() {
+    let mut first = Mls::new();
+    first.sync(&paras(&["Lemma a.", "Proof. ok ∎"]));
+    run(&mut first, answer);
+
+    first.sync(&paras(&["Lemma b.", "Proof. ok ∎"]));
+    // The new statement is formalized and its proof is now stale, waiting to be formalized again.
+    let job = run_until(&mut first, |job| matches!(job, Job::Formalize { .. }));
+    assert!(first.apply(answer(&job)));
+
+    let twin = first.twin();
+    let mut second = restored(&twin, &["Lemma b.", "Proof. ok ∎"]);
+    let jobs = run(&mut second, answer);
+    assert_eq!(
+        formalized(&jobs),
+        [id_of(&second, 1)],
+        "the stale proof is formalized again, not restored: {twin}"
+    );
+}
+
+#[test]
 fn lean_with_comment_delimiters_and_quotes_round_trips_through_the_twin() {
     const LEAN: &str = "def s := \"a \\\"q\\\" -/ /- b\"";
     fn with_lean(job: &Job) -> Reply {
@@ -1042,6 +1069,63 @@ fn a_rejected_formal_is_restored_as_a_failed_dot_without_a_request() {
     assert_eq!(
         second.details(id_of(&second, 0)).and_then(|d| d.error),
         Some(REJECTED.to_string())
+    );
+}
+
+#[test]
+fn a_restored_formal_that_the_rules_reject_is_a_failed_dot_and_is_never_checked() {
+    const STATEMENT: &str = "#eval 1\ntheorem t : True := by sorry";
+    const DEFINITION: &str = "axiom ax : False";
+    // Stands in for a twin whose memory holds Lean that no model reply could pass the rules with.
+    fn crafted(job: &Job) -> Reply {
+        match job {
+            Job::Formalize {
+                block,
+                version,
+                label,
+                ..
+            } => Reply::Formalized {
+                block: *block,
+                version: *version,
+                statement_version: None,
+                result: Ok(Formal {
+                    lean: match label {
+                        Label::Statement => STATEMENT,
+                        Label::Definition => DEFINITION,
+                        Label::Proof | Label::Skip => panic!("the document has no proof"),
+                    }
+                    .to_string(),
+                    lean_name: None,
+                    assumptions: Vec::new(),
+                    uses: Vec::new(),
+                }),
+            },
+            _ => answer(job),
+        }
+    }
+    let lines = ["Def d.", "Lemma a."];
+    let mut first = Mls::new();
+    first.sync(&paras(&lines));
+    run(&mut first, crafted);
+
+    let mut second = restored(&first.twin(), &lines);
+    let jobs = run(&mut second, answer);
+    assert!(
+        jobs.is_empty(),
+        "restored Lean is not sent to Lean: {:?}",
+        kinds(&jobs)
+    );
+    assert_eq!(
+        statuses(&second),
+        [(0, Status::Failed), (1, Status::Failed)]
+    );
+    assert_eq!(
+        second.details(id_of(&second, 0)).and_then(|d| d.error),
+        Some("The Lean declares an axiom.".to_string())
+    );
+    assert_eq!(
+        second.details(id_of(&second, 1)).and_then(|d| d.error),
+        Some("The Lean uses `#eval`, which is not allowed.".to_string())
     );
 }
 

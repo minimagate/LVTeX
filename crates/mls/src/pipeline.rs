@@ -365,12 +365,16 @@ fn settled_text(para: &Para) -> &str {
 
 /// The key a block's formal is remembered under. A proof's key carries the Lean of its statement,
 /// so a proof is not restored against a statement that has changed. None when that statement has
-/// no formal Lean yet.
+/// no formal Lean yet, or when the proof's formal was made for an earlier version of the statement:
+/// its Lean would then be filed under the statement's new Lean and restored as if it proved it.
 fn formal_key(blocks: &[Block], block: &Block) -> Option<FormalKey> {
     let statement = match block.label {
         Label::Definition | Label::Statement | Label::Skip => None,
         Label::Proof => {
             let statement = blocks.iter().find(|b| Some(b.id) == block.statement)?;
+            if block.formal.is_some() && block.statement_version != Some(statement.version) {
+                return None;
+            }
             match &statement.formal {
                 Some(Ok(formal)) => Some(formal.lean.clone()),
                 Some(Err(_)) | None => return None,
@@ -414,22 +418,31 @@ fn formal_entry(entry: &Value) -> Option<(FormalKey, Result<Formal, String>)> {
     };
     let value = match entry.get("rejected") {
         Some(message) => Err(message.as_str()?.to_owned()),
-        None => Ok(Formal {
-            lean: entry.get("lean")?.as_str()?.to_owned(),
-            lean_name: nullable(entry.get("lean_name"))?,
-            assumptions: entry
-                .get("assumptions")?
-                .as_array()?
-                .iter()
-                .map(|assumption| assumption.as_str().map(str::to_owned))
-                .collect::<Option<_>>()?,
-            uses: entry
-                .get("uses")?
-                .as_array()?
-                .iter()
-                .map(|name| name.as_str().map(str::to_owned))
-                .collect::<Option<_>>()?,
-        }),
+        None => {
+            let formal = Formal {
+                lean: entry.get("lean")?.as_str()?.to_owned(),
+                lean_name: nullable(entry.get("lean_name"))?,
+                assumptions: entry
+                    .get("assumptions")?
+                    .as_array()?
+                    .iter()
+                    .map(|assumption| assumption.as_str().map(str::to_owned))
+                    .collect::<Option<_>>()?,
+                uses: entry
+                    .get("uses")?
+                    .as_array()?
+                    .iter()
+                    .map(|name| name.as_str().map(str::to_owned))
+                    .collect::<Option<_>>()?,
+            };
+            // A restored Lean is not trusted: it passes the rules a model's reply passes. The names
+            // above are not known here, so the redefinition rule is skipped; Lean rejects a duplicate
+            // declaration itself.
+            match crate::rules::reject(key.label, &formal, &[], key.statement.as_deref()) {
+                Ok(()) => Ok(formal),
+                Err(message) => Err(message),
+            }
+        }
     };
     Some((key, value))
 }
@@ -1052,7 +1065,8 @@ impl Mls {
 
     /// Restores the labels and formalizations that `twin` remembers. Call it on a fresh or reset
     /// `Mls`, before the first `sync`. A twin without a version 2 memory changes nothing, and an
-    /// entry that is malformed is skipped.
+    /// entry that is malformed is skipped. Restored Lean passes the same rules as a model's reply:
+    /// a formal the rules reject is restored as a rejection, and is never checked by Lean.
     pub fn restore(&mut self, twin: &str) {
         let Some(start) = twin.rfind(MEMORY_OPEN) else {
             return;
