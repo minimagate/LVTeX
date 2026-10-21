@@ -329,11 +329,23 @@ Ollama, OpenRouter, Lean or a TeX installation. The optional checks are:
 cargo test --release --locked -p mathstral manual_preview_latency -- --ignored --nocapture
 # The four sample documents with scripted model answers, checked by Lean (needs lean/ built).
 cargo test --release --locked -p mathstral-mls scripted_documents -- --ignored --nocapture
-# The same documents through OpenRouter at temperature 0 (needs OPENROUTER_API_KEY too).
+# Seven documents through OpenRouter and Lean, three fresh runs each (needs OPENROUTER_API_KEY and lean/ built).
 cargo test --release --locked -p mathstral-mls --test documents -- --ignored --nocapture
 ```
 
-Each optional MLS test skips with a message when its key or Lean project is missing.
+The live documents are the four scripted ones plus the supplied note, prime notation and a long
+paragraph. Each run writes raw results to `target/mls-live/<phase>/`: a JSON record per document and
+run (every job and reply, the final dots, the chart and the pinned model ids) and the Mls twin. Narrow
+a live run with environment variables:
+
+```sh
+MLS_LIVE_RUNS=1 cargo test ... --test documents -- --ignored --nocapture        # one run, not three
+MLS_LIVE_FILTER=prime cargo test ... --test documents -- --ignored --nocapture  # documents whose name contains "prime"
+MLS_LIVE_PHASE=retry-1 cargo test ... --test documents -- --ignored --nocapture # target/mls-live/retry-1/
+```
+
+The scripted test skips with a message when the Lean project is missing. The live test fails
+explicitly when `OPENROUTER_API_KEY` or the Lean REPL is missing, because it runs only on request.
 `crates/mls` builds and tests on Linux too; the app itself is macOS-only.
 
 | Path | Responsibility |

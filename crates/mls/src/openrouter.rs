@@ -17,28 +17,29 @@ const TIMEOUT_SECONDS: u32 = 120;
 /// that favours proof while one is open makes every later claim a proof.
 const CLASSIFY: &str = "Classify one paragraph of a mathematical document. block_above is the block of one or more paragraphs just above it. proof_in_progress is true when a proof above has not ended with ∎; that proof may already be complete. The paragraph is a proof only if it argues for the statement being proved. A new claim is a statement even right after a proof, for example one that starts with \"It follows that\" or \"One might guess that\". A remark about the mathematics is skip.";
 
-const JOINS: &str = "Decide whether this paragraph belongs to the same mathematical item (a definition, a statement or a proof) as block_above, so that they must be formalized together.";
+const JOINS: &str = "Decide whether this paragraph belongs to the same mathematical item (a definition, a statement or a proof) as block_above, so that they must be formalized together. Sharing a topic is not the same item: prose that motivates, previews or comments on a result is a separate item from that result, even when the result follows right after it. A named new lemma, theorem, corollary, definition or proof begins a new item, even directly after prose. Continue only when this paragraph completes block_above: a setup that is still incomplete (\"Let x be ...\" or hypotheses) followed by the claim it sets up, a standalone displayed formula or clause of the statement, or a further paragraph of a proof that is still going.";
 
 const SYSTEM: &str = r#"You formalize one block of a mathematical document into Lean 4 with Mathlib.
 
 You receive the Lean already accepted for the blocks above, in document order, each under a `-- mathstral:block <id>` comment; the prose paragraph just above the block, if any; the block's label; and the block itself, written in Markdown with LaTeX between dollar signs. A block may span several paragraphs, separated by blank lines: its setup, displayed formulas and clauses belong to it, so formalize them together as one item.
 
 Return only a JSON object with three fields:
-- "lean": Lean 4 source for this block alone. It is checked in an environment that already contains `import Mathlib` and the Lean above, so never write `import`, and never repeat a declaration from above.
+- "lean": Lean 4 source for this block alone. It is checked in an environment that already contains `import Mathlib` and the Lean above, so never write `import`, and never repeat a declaration from above. The one exception is a proof block restating its statement, described under proof.
 - "lean_name": the name of the main declaration, or null if there is none.
 - "assumptions": every assumption of your Lean, in plain language that a mathematician can check against the block: the types chosen (for example "n is a natural number, so n ≥ 0"), each hypothesis, quantifier and domain, and any Lean convention that changes the meaning (for example "division by zero is 0" or "subtraction on ℕ is truncated"). Write them from the Lean, not from the block. One short sentence each.
 
 Conventions by label:
 - definition: a `def`, `abbrev`, `structure`, `class` or `inductive`; use `noncomputable def` when needed. No `sorry`. If the block only fixes what letters stand for (for example "Throughout, n is a natural number") and introduces no new notion, return an empty "lean", null "lean_name" and no assumptions.
 - statement (a lemma, theorem, corollary or proposition): exactly one `theorem` with a fresh, descriptive snake_case name, whose whole proof is `by sorry`, so the source ends with `:= by sorry`.
-- proof: restate the most recent statement exactly as it appears in the Lean above, with the same name, binders and type, character for character up to `:=`, and replace `sorry` with a complete proof. Never weaken or change the statement to make it provable. If the argument is wrong or incomplete, still give your most faithful proof attempt and let Lean reject it.
+- proof: the only block that repeats a declaration. Its "lean" is never empty: it restates the statement given under "Most recent statement" in the prompt, with the same name, binders and type, character for character up to `:=`, and replaces `sorry` with a complete proof. The pending statement, the `by sorry` version of that statement, is absent where this proof is checked, so the proof must not use it to prove itself. Never weaken or change the statement to make it provable. If the argument is wrong or incomplete, still give your most faithful proof attempt and let Lean reject it.
 
 Rules:
 - Never use `axiom`, `admit`, `sorry` (except as the whole proof of a statement), `native_decide`, `set_option`, `unsafe`, `#eval` or `#print`.
 - Make each declaration self-contained with explicit binders. Do not use `variable`, `section`, `namespace` or `open ... in` blocks that span declarations.
-- Reuse definitions from the Lean above by name instead of redefining them, and prefer Mathlib's existing notions (Group, Filter.Tendsto, Real, Finset) over new ones.
+- Reuse definitions and results from the Lean above by their exact name and signature instead of redefining or reproving them: a corollary cites the theorem it follows from. Never cite a name you have not seen above or do not know to exist in Mathlib. Prefer Mathlib's existing notions (Group, Filter.Tendsto, Real, Finset) over new ones.
 - Use standard Mathlib names and notation (ℕ, ℤ, ℝ, ∀, ∃, →). Prefer robust tactics such as simp, ring, linarith, nlinarith, omega, positivity, field_simp and gcongr, together with explicit Mathlib lemmas.
-- Keep the formalization faithful to the block: the same objects, hypotheses and conclusion."#;
+- Keep the formalization faithful to the block: the same objects, hypotheses and conclusion.
+- Formalize the claim the block asserts or conjectures, even if it is false. Words such as "hope" or "guess" do not weaken the conclusion. Finite examples or computations never replace a universal claim, and never add a bound or hypothesis that the block does not state. A statement keeps its exact form with `by sorry` as its proof, whether or not it is true; a later proof may then fail in Lean."#;
 
 fn service_failure(message: impl Into<String>) -> Failure {
     Failure {
@@ -192,8 +193,8 @@ pub(crate) fn classify_request(previous: Option<&str>, text: &str, proof_open: b
                 "type": "choice",
                 "instructions": JOINS,
                 "criteria": {
-                    "continues": "Belongs to the same definition, statement or proof as block_above: its setup (\"Let G be a group.\" followed by the claim), a displayed formula, a clause or list item, or the rest of a sentence that block_above started.",
-                    "new": "Starts a new definition, statement or proof, or is unrelated prose, or block_above is null.",
+                    "continues": "Completes the same definition, statement or proof as block_above: the claim that an incomplete setup (\"Let G be a group.\" or hypotheses) was waiting for, a standalone displayed formula or clause of the statement, or a further paragraph of a proof that is still going.",
+                    "new": "Starts a new definition, statement or proof; or is motivational, introductory or other topical prose, even when it leads straight into the next result; or is unrelated prose; or block_above is null.",
                 }
             }
         }
