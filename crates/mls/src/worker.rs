@@ -4,7 +4,7 @@ use crate::openrouter::{
     self, CHAT_URL, DECISIONS_URL, classify_request, formalize_request, parse_formal, parse_tag,
 };
 use crate::repl::Repl;
-use crate::{Checked, Failure, Job, Reply, rules};
+use crate::{Checked, Failure, Formal, Job, Label, Reply, rules};
 use serde_json::Value;
 use std::{
     fmt,
@@ -144,27 +144,49 @@ fn run(
             statement,
         } => {
             let statement_lean = statement.as_ref().map(|(_, lean)| lean.as_str());
-            let result = request(
-                CHAT_URL,
-                &formalize_request(*label, text, prose.as_deref(), lean_above, statement_lean),
-            )
-            .and_then(|response| parse_formal(&response))
-            .and_then(|mut formal| {
-                rules::reject(*label, &formal, names_above, statement_lean)
-                    .map(|()| {
-                        formal.uses = rules::uses(&formal.lean, names_above);
-                        formal
-                    })
-                    .map_err(|message| Failure {
-                        message,
-                        service: false,
-                    })
-            });
+            let body = formalize_request(
+                *label,
+                text,
+                prose.as_deref(),
+                lean_above,
+                statement_lean,
+                None,
+            );
+            let result = checked_formal(request, &body, *label, names_above, statement_lean);
             Reply::Formalized {
                 block: *block,
                 version: *version,
                 statement_version: statement.as_ref().map(|(version, _)| *version),
                 result,
+            }
+        }
+        Job::Repair {
+            text,
+            prose,
+            lean_above,
+            names_above,
+            statement,
+            failed,
+            error,
+            ..
+        } => {
+            let body = formalize_request(
+                Label::Proof,
+                text,
+                prose.as_deref(),
+                lean_above,
+                Some(&statement.1),
+                Some((failed, error)),
+            );
+            Reply::Repaired {
+                job: job.clone(),
+                result: checked_formal(
+                    request,
+                    &body,
+                    Label::Proof,
+                    names_above,
+                    Some(&statement.1),
+                ),
             }
         }
         Job::Check {
@@ -179,6 +201,30 @@ fn run(
             result: check(repl, project, lean, *base),
         },
     }
+}
+
+/// Sends one formalization request and checks the reply with the rules. The formal carries the
+/// names from above that its Lean uses.
+fn checked_formal(
+    request: &mut impl FnMut(&str, &Value) -> Result<Value, Failure>,
+    body: &Value,
+    label: Label,
+    names_above: &[String],
+    statement: Option<&str>,
+) -> Result<Formal, Failure> {
+    request(CHAT_URL, body)
+        .and_then(|response| parse_formal(&response))
+        .and_then(|mut formal| {
+            rules::reject(label, &formal, names_above, statement)
+                .map(|()| {
+                    formal.uses = rules::uses(&formal.lean, names_above);
+                    formal
+                })
+                .map_err(|message| Failure {
+                    message,
+                    service: false,
+                })
+        })
 }
 
 /// Checks `lean` on the REPL, starting the REPL on first use. Any failed check drops the REPL: a
@@ -236,6 +282,10 @@ fn failure_reply(job: &Job, failure: Failure) -> Reply {
             block: *block,
             version: *version,
             base: *base,
+            result: Err(failure),
+        },
+        Job::Repair { .. } => Reply::Repaired {
+            job: job.clone(),
             result: Err(failure),
         },
     }

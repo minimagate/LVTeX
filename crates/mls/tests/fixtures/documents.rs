@@ -229,7 +229,7 @@ pub struct LiveLine {
 /// The documents for the live test. Expected dots are the intended behaviour, written from the
 /// text; they are never derived from a run.
 #[allow(dead_code)] // Read only by the live test, which the scripted test does not compile.
-pub const LIVE_DOCUMENTS: [LiveDocument; 3] = [
+pub const LIVE_DOCUMENTS: [LiveDocument; 4] = [
     LiveDocument {
         name: "supplied note",
         lines: &[
@@ -341,6 +341,119 @@ pub const LIVE_DOCUMENTS: [LiveDocument; 3] = [
             },
             LiveLine {
                 text: r"Proof. Let $a$ and $b$ be real numbers. The square of a number $x$ is the product $x^2 = x x$, so $(a + b)^2 = (a + b)(a + b)$, and the task is to expand this product into a sum of terms of the form $a a$, $a b$, $b a$ and $b b$. We use three properties of the real numbers, all for real numbers $x$, $y$ and $z$: the left distributive law $x (y + z) = x y + x z$, the right distributive law $(y + z) x = y x + z x$, and commutativity of multiplication $x y = y x$. The left distributive law is an axiom of the real numbers, and the right one follows from it and commutativity, since $(y + z) x = x (y + z) = x y + x z = y x + z x$. Apply the left distributive law with $x = a + b$, $y = a$ and $z = b$ to get $(a + b)(a + b) = (a + b) a + (a + b) b$, a sum of two products that each have a sum as one factor. Expand the first summand with the right distributive law, $(a + b) a = a a + b a$, and the second in the same way, $(a + b) b = a b + b b$. Substituting both back gives $(a + b)^2 = a a + b a + a b + b b$, a sum of four products. Addition is associative and commutative, so these four terms may be grouped in any order without changing the sum, and grouping the two middle terms together is what the next step needs. By the definition of the square, $a a = a^2$ and $b b = b^2$. By commutativity of multiplication, $b a = a b$, so the two middle terms are both equal to $a b$, and their sum $a b + a b$ is $2 a b$: for any real number $t$, the right distributive law gives $t + t = (1 + 1) t = 2 t$, because $1 + 1 = 2$ in the real numbers. Substituting, $(a + b)^2 = a^2 + 2 a b + b^2$. As a check on the arithmetic, take $a = 1$ and $b = 2$. The left side is $(1 + 2)^2 = 9$, and the right side is $1^2 + 2 \cdot 1 \cdot 2 + 2^2 = 1 + 4 + 4 = 9$, which agrees. The identity holds for every pair of real numbers, because the argument used only the distributive laws, commutativity of multiplication, associativity of addition and the numeral fact $1 + 1 = 2$. Commutativity is the one step that a noncommutative ring would not supply: for square matrices $b a$ and $a b$ need not be equal, so the middle term becomes $a b + b a$ rather than $2 a b$, and the identity fails in general. ∎",
+                expect: Some(Status::Verified),
+            },
+        ],
+    },
+    LiveDocument {
+        name: "plane energy and orthogonality",
+        lines: &[
+            LiveLine {
+                text: r"In this note we work in the real plane, whose vectors are pairs $u = (u_1, u_2)$ and $v = (v_1, v_2)$ of real numbers, and we write $0 = (0, 0)$ for the zero vector. Every identity below is checked by expanding coordinates, so the arguments need no geometry beyond that.",
+                expect: None,
+            },
+            LiveLine {
+                text: r"**Definition.** The energy of a vector $u$ is $Q(u) = u_1^2 + u_2^2$.",
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: r"**Definition.** The inner product of vectors $u$ and $v$ is $B(u, v) = u_1 v_1 + u_2 v_2$.",
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: r"**Definition.** The determinant of vectors $u$ and $v$ is $D(u, v) = u_1 v_2 - u_2 v_1$.",
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: r"Energy is the squared length of a vector, so it is never negative, and the next lemma says exactly when it is zero.",
+                expect: None,
+            },
+            LiveLine {
+                text: r"**Lemma.** For every vector $u$, $Q(u) \ge 0$, and $Q(u) = 0$ holds if and only if $u = 0$.",
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: r"*Proof.* Each of $u_1^2$ and $u_2^2$ is nonnegative, so $Q(u) \ge 0$. If $Q(u) = 0$, then both nonnegative terms vanish, so $u_1 = u_2 = 0$ and $u = 0$. Conversely, $Q(0) = 0^2 + 0^2 = 0$. ∎",
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: r"**Lemma (Lagrange identity).** For all vectors $u$ and $v$, the following identity holds:",
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: r"$$Q(u) Q(v) - B(u, v)^2 = D(u, v)^2.$$",
+                expect: None,
+            },
+            LiveLine {
+                text: r"*Proof.* Expanding the products, $Q(u) Q(v) = u_1^2 v_1^2 + u_1^2 v_2^2 + u_2^2 v_1^2 + u_2^2 v_2^2$ and $B(u, v)^2 = u_1^2 v_1^2 + 2 u_1 v_1 u_2 v_2 + u_2^2 v_2^2$.",
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: r"Subtracting the second expansion from the first, the terms $u_1^2 v_1^2$ and $u_2^2 v_2^2$ cancel, leaving $u_1^2 v_2^2 - 2 u_1 v_1 u_2 v_2 + u_2^2 v_1^2$. This is the square $(u_1 v_2 - u_2 v_1)^2 = D(u, v)^2$, which proves the identity. ∎",
+                expect: None,
+            },
+            LiveLine {
+                text: r"**Lemma.** For all vectors $u$ and $v$, $B(u, v)^2 \le Q(u) Q(v)$.",
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: r"*Proof.* By the Lagrange identity, $Q(u) Q(v) - B(u, v)^2 = D(u, v)^2$, and the square of a real number is nonnegative, so $Q(u) Q(v) - B(u, v)^2 \ge 0$. ∎",
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: r"**Lemma.** Equality holds in the Cauchy-Schwarz inequality, $B(u, v)^2 = Q(u) Q(v)$, if and only if $D(u, v) = 0$.",
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: r"*Proof.* By the Lagrange identity, the difference $Q(u) Q(v) - B(u, v)^2$ equals $D(u, v)^2$. This difference is zero exactly when $D(u, v)^2 = 0$, that is, when $D(u, v) = 0$. ∎",
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: r"A natural guess is that energy is superadditive, meaning the energy of a sum is at least the sum of the energies.",
+                expect: None,
+            },
+            LiveLine {
+                text: r"**Lemma.** For all vectors $u$ and $v$, $Q(u + v) \ge Q(u) + Q(v)$.",
+                expect: Some(Status::Sorry),
+            },
+            LiveLine {
+                text: r"*Proof.* Expanding the squares gives $Q(u + v) = Q(u) + Q(v) + 2 B(u, v)$, so the claim is equivalent to $B(u, v) \ge 0$. Since $B(u, v)^2 \ge 0$, we conclude $B(u, v) \ge 0$. ∎",
+                expect: Some(Status::Failed),
+            },
+            LiveLine {
+                text: r"The guess does not hold in general, but the parallelogram identity gives a correct substitute, with the energy of a sum bounded above rather than below.",
+                expect: None,
+            },
+            LiveLine {
+                text: r"**Lemma.** For all vectors $u$ and $v$, the parallelogram identity holds:",
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: r"$$Q(u + v) + Q(u - v) = 2 Q(u) + 2 Q(v).$$",
+                expect: None,
+            },
+            LiveLine {
+                text: r"*Proof.* Writing out the coordinates, $Q(u + v) = (u_1 + v_1)^2 + (u_2 + v_2)^2$ and $Q(u - v) = (u_1 - v_1)^2 + (u_2 - v_2)^2$. Adding these, the cross terms $2 u_1 v_1$, $-2 u_1 v_1$, $2 u_2 v_2$ and $-2 u_2 v_2$ cancel in pairs, leaving $2 u_1^2 + 2 v_1^2 + 2 u_2^2 + 2 v_2^2 = 2 Q(u) + 2 Q(v)$. ∎",
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: r"**Lemma.** For all vectors $u$ and $v$, $Q(u + v) \le 2 Q(u) + 2 Q(v)$.",
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: r"*Proof.* By the parallelogram identity, $Q(u + v) = 2 Q(u) + 2 Q(v) - Q(u - v)$, and $Q(u - v) \ge 0$ by positivity, so $Q(u + v) \le 2 Q(u) + 2 Q(v)$. ∎",
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: r"**Definition.** Vectors $u$ and $v$ are orthogonal when $B(u, v) = 0$.",
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: r"**Lemma.** If $u$ and $v$ are orthogonal, then $Q(u + v) = Q(u) + Q(v)$.",
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: r"*Proof.* Expanding the squares, $Q(u + v) = (u_1 + v_1)^2 + (u_2 + v_2)^2 = u_1^2 + v_1^2 + u_2^2 + v_2^2 + 2 (u_1 v_1 + u_2 v_2) = Q(u) + Q(v) + 2 B(u, v)$. Since $B(u, v) = 0$, the last term vanishes, so $Q(u + v) = Q(u) + Q(v)$. ∎",
                 expect: Some(Status::Verified),
             },
         ],

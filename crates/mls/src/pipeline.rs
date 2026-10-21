@@ -149,6 +149,9 @@ struct Block {
     statement_version: Option<u64>,
     /// The base environment it was checked on, and the result.
     check: Option<(u64, Result<Checked, Failure>)>,
+    /// Proofs: whether the one automatic repair has been asked for this version. Set when its reply
+    /// is accepted, so a repaired proof that still fails is final. A new formalization clears it.
+    repaired: bool,
 }
 
 /// Where segmentation stops. A `Classify` frontier is the first paragraph that needs a tag; its
@@ -353,6 +356,7 @@ fn new_block(
         formal: None,
         statement_version: None,
         check: None,
+        repaired: false,
     }
 }
 
@@ -539,6 +543,8 @@ impl Mls {
         for block in self.blocks.iter_mut().chain(self.parked.values_mut()) {
             if matches!(&block.formal, Some(Err(f)) if f.service) {
                 block.formal = None;
+                // A repair that failed for a service is asked again, as a formalization is.
+                block.repaired = false;
             }
             if repl_lost || matches!(&block.check, Some((_, Err(f))) if f.service) {
                 block.check = None;
@@ -736,6 +742,7 @@ impl Mls {
                     block.formal = prior.formal;
                     block.statement_version = prior.statement_version;
                     block.check = prior.check;
+                    block.repaired = prior.repaired;
                 }
                 prior => {
                     block.version = next();
@@ -850,6 +857,32 @@ impl Mls {
                 let b = &mut self.blocks[index];
                 b.formal = Some(result);
                 b.statement_version = statement_version;
+                b.check = None;
+                b.repaired = false;
+                self.remember_formal(index);
+                true
+            }
+            Reply::Repaired { job, result } => {
+                // Applied only while the plan still asks for this repair: an edit to the proof, its
+                // statement or the context above it, or a lost check, makes the reply stale.
+                let Job::Repair { block, version, .. } = &job else {
+                    return false;
+                };
+                if self.plan().job.as_ref() != Some(&job) {
+                    return false;
+                }
+                let Some(index) = self
+                    .blocks
+                    .iter()
+                    .position(|b| b.id == *block && b.version == *version)
+                else {
+                    return false;
+                };
+                let b = &mut self.blocks[index];
+                b.repaired = true;
+                // The repair's outcome is the block's formal, so a rejection shows as its last
+                // diagnostic and a service failure halts like any other (see `retry_services`).
+                b.formal = Some(result);
                 b.check = None;
                 self.remember_formal(index);
                 true
@@ -1249,6 +1282,30 @@ impl Mls {
                             halted |= failure.service;
                         }
                         Ok(Checked { env, outcome }) => match (b.label, outcome) {
+                            (Label::Proof, Outcome::Failed(error))
+                                if !b.repaired && stmt.is_some() =>
+                            {
+                                let statement = stmt
+                                    .as_ref()
+                                    .expect("a proof is checked against its statement");
+                                job.get_or_insert_with(|| Job::Repair {
+                                    block: b.id,
+                                    version: b.version,
+                                    text: b.text.clone(),
+                                    prose: b.prose.clone(),
+                                    lean_above: lean
+                                        .iter()
+                                        .map(|(id, _, lean)| (*id, lean.clone()))
+                                        .collect(),
+                                    names_above: names.clone(),
+                                    statement: (statement.version, statement.lean.clone()),
+                                    base,
+                                    failed: formal.lean.clone(),
+                                    error: error.clone(),
+                                });
+                                pending = true;
+                                dots.push(dot(b.first, b.last, b.id, Status::Checking));
+                            }
                             (
                                 Label::Definition | Label::Statement | Label::Proof | Label::Skip,
                                 Outcome::Failed(message),

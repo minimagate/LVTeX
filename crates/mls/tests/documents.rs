@@ -187,6 +187,30 @@ fn event_json(event: Observed<'_>) -> Value {
                     };
                 }
                 Reply::Checked { .. } => {}
+                Reply::Repaired { job, result } => {
+                    if let Job::Repair {
+                        block,
+                        version,
+                        failed,
+                        error,
+                        ..
+                    } = job
+                    {
+                        value["repair"] = json!({
+                            "block": block,
+                            "version": version,
+                            "failed_lean": failed,
+                            "error": error,
+                            "candidate": match result {
+                                Ok(formal) => json!({
+                                    "lean": formal.lean,
+                                    "uses": formal.uses,
+                                }),
+                                Err(failure) => json!({"failure": failure_json(failure)}),
+                            },
+                        });
+                    }
+                }
             }
             value
         }

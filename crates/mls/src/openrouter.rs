@@ -222,13 +222,15 @@ pub(crate) fn parse_tag(response: &Value) -> Result<Tag, Failure> {
 
 /// The request that formalizes one block. The system prompt and the last Lean
 /// segment carry cache_control, so an edit in the middle of the document invalidates
-/// only the cached suffix after it.
+/// only the cached suffix after it. `repair` is the failed Lean and Lean's error for a proof that
+/// is asked again (see `Job::Repair`).
 pub(crate) fn formalize_request(
     label: Label,
     text: &str,
     prose: Option<&str>,
     lean_above: &[(u64, String)],
     statement: Option<&str>,
+    repair: Option<(&str, &str)>,
 ) -> Value {
     let system = json!({"role": "system", "content": [
         {"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}
@@ -243,8 +245,15 @@ pub(crate) fn formalize_request(
     let statement = statement
         .map(|statement| format!("Most recent statement:\n{statement}\n\n"))
         .unwrap_or_default();
+    let repair = repair
+        .map(|(failed, error)| {
+            format!(
+                "\n\nThe Lean formalized for this proof before failed to check:\n{failed}\n\nLean's error:\n{error}\n\nReturn a repaired formalization of the same proof. Fix only what the error shows: keep the statement's name, binders and type exactly, keep the hypotheses and the argument of the block, and never use sorry."
+            )
+        })
+        .unwrap_or_default();
     let prompt = format!(
-        "Prose just above:\n{}\n\nLabel: {}\n\n{statement}Block:\n{text}",
+        "Prose just above:\n{}\n\nLabel: {}\n\n{statement}Block:\n{text}{repair}",
         prose.unwrap_or("(none)"),
         label.name(),
     );

@@ -246,7 +246,14 @@ fn formalize_request_caches_the_system_prompt_and_the_last_lean_segment() {
         (2, "def b := 2".to_string()),
         (3, "def c := 3".to_string()),
     ];
-    let request = formalize_request(Label::Definition, "Let $c$ be $a$.", None, &above, None);
+    let request = formalize_request(
+        Label::Definition,
+        "Let $c$ be $a$.",
+        None,
+        &above,
+        None,
+        None,
+    );
     assert_eq!(request["messages"][0]["role"], "system");
     let system = &request["messages"][0]["content"][0];
     assert_eq!(system["text"], SYSTEM);
@@ -269,7 +276,7 @@ fn formalize_request_caches_the_system_prompt_and_the_last_lean_segment() {
 
 #[test]
 fn formalize_request_sends_one_part_when_nothing_is_above() {
-    let request = formalize_request(Label::Skip, "Thanks.", None, &[], None);
+    let request = formalize_request(Label::Skip, "Thanks.", None, &[], None, None);
     let parts = request["messages"][1]["content"]
         .as_array()
         .expect("user content parts");
@@ -286,6 +293,7 @@ fn formalize_request_states_the_prose_label_statement_and_block() {
         Some("Let $G$ be a group."),
         &[],
         Some(statement),
+        None,
     );
     let parts = request["messages"][1]["content"]
         .as_array()
@@ -295,7 +303,7 @@ fn formalize_request_states_the_prose_label_statement_and_block() {
         "Prose just above:\nLet $G$ be a group.\n\nLabel: proof\n\nMost recent statement:\ntheorem t : True := by sorry\n\nBlock:\nby trivial"
     );
 
-    let request = formalize_request(Label::Skip, "Thanks.", None, &[], None);
+    let request = formalize_request(Label::Skip, "Thanks.", None, &[], None, None);
     let parts = request["messages"][1]["content"]
         .as_array()
         .expect("user content parts");
@@ -307,7 +315,7 @@ fn formalize_request_states_the_prose_label_statement_and_block() {
 
 #[test]
 fn formalize_request_uses_the_model_deterministically_with_a_strict_schema() {
-    let request = formalize_request(Label::Statement, "x", None, &[], None);
+    let request = formalize_request(Label::Statement, "x", None, &[], None, None);
     assert_eq!(request["model"], FORMALIZER_MODEL);
     assert_eq!(request["model"], "anthropic/claude-sonnet-5.5");
     assert_eq!(request["temperature"], 0);

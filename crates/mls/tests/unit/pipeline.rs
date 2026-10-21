@@ -24,8 +24,10 @@ fn tag_for(_previous: Option<&str>, text: &str, proof_open: bool) -> Tag {
 }
 
 /// The mock worker. Lean is deterministic: a statement ends in `sorry`, a proof replaces that
-/// with `trivial`, and text containing FALSE produces Lean that the REPL rejects. A check's
-/// environment is 100 plus the block version, so each check has a predictable environment.
+/// with `trivial`, and text containing FALSE produces Lean that the REPL rejects. A repair of a
+/// proof whose text also contains FIXABLE produces Lean that checks, so the first repair is green,
+/// and any other repair stays FALSE. A check's environment is 100 plus the block version, so each
+/// check has a predictable environment.
 fn answer(job: &Job) -> Reply {
     match job {
         Job::Classify {
@@ -82,6 +84,30 @@ fn answer(job: &Job) -> Reply {
                 block: *block,
                 version: *version,
                 statement_version: statement.as_ref().map(|(version, _)| *version),
+                result: Ok(Formal {
+                    lean,
+                    lean_name: None,
+                    assumptions: Vec::new(),
+                    uses,
+                }),
+            }
+        }
+        Job::Repair {
+            text,
+            statement,
+            names_above,
+            ..
+        } => {
+            let mut lean = statement.1.replace("sorry", "trivial");
+            if text.contains("USES") {
+                lean.push_str(&format!("\nexample := [{}]", names_above.join(", ")));
+            }
+            if text.contains("FALSE") && !text.contains("FIXABLE") {
+                lean.push_str("\n-- FALSE");
+            }
+            let uses = crate::rules::uses(&lean, names_above);
+            Reply::Repaired {
+                job: job.clone(),
                 result: Ok(Formal {
                     lean,
                     lean_name: None,
@@ -174,6 +200,7 @@ fn kinds(jobs: &[Job]) -> Vec<&'static str> {
             Job::Classify { .. } => "classify",
             Job::Formalize { .. } => "formalize",
             Job::Check { .. } => "check",
+            Job::Repair { .. } => "repair",
         })
         .collect()
 }
@@ -1474,4 +1501,280 @@ fn jev_sees_every_paragraph_of_the_block_above_not_only_the_last() {
         Job::Classify { paragraph, previous: Some(above), .. }
             if *paragraph == proof && above == "Lemma for all n,\n\n+ n = n."
     )));
+}
+
+fn version_of(mls: &Mls, id: u64) -> u64 {
+    mls.blocks
+        .iter()
+        .find(|b| b.id == id)
+        .expect("the block is in the document")
+        .version
+}
+
+fn repairs(jobs: &[Job]) -> usize {
+    kinds(jobs)
+        .into_iter()
+        .filter(|kind| *kind == "repair")
+        .count()
+}
+
+#[test]
+fn a_failed_proof_gets_one_repair_and_a_repair_that_checks_turns_green() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim FIXABLE. ∎"]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(
+        kinds(&jobs),
+        [
+            "classify",
+            "classify",
+            "formalize",
+            "check",
+            "formalize",
+            "check",
+            "repair",
+            "check",
+        ]
+    );
+    let proof = id_of(&mls, 1);
+    let Job::Repair {
+        block,
+        failed,
+        error,
+        ..
+    } = &jobs[6]
+    else {
+        panic!("the failed proof is repaired")
+    };
+    assert_eq!(*block, proof);
+    assert!(failed.contains("-- FALSE"), "{failed}");
+    assert_eq!(error, "1:0: error");
+    let Job::Check { lean, base, .. } = &jobs[7] else {
+        panic!("the repaired proof is checked")
+    };
+    assert!(!lean.contains("FALSE"), "{lean}");
+    assert_eq!(*base, 0, "the repair is checked on the statement's base");
+    assert_eq!(
+        statuses(&mls),
+        [(0, Status::Verified), (1, Status::Verified)]
+    );
+}
+
+#[test]
+fn a_proof_that_still_fails_after_its_repair_is_red_and_is_not_repaired_again() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim. ∎"]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(repairs(&jobs), 1);
+    assert_eq!(kinds(&jobs).last(), Some(&"check"));
+    let proof = id_of(&mls, 1);
+    assert_eq!(statuses(&mls), [(0, Status::Sorry), (1, Status::Failed)]);
+    let details = mls.details(proof).expect("the proof has a dot");
+    assert_eq!(details.error.as_deref(), Some("1:0: error"));
+    assert!(mls.next_job().is_none());
+}
+
+#[test]
+fn a_proof_is_grey_while_its_repair_is_pending() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim FIXABLE. ∎"]));
+    let job = run_until(&mut mls, |job| matches!(job, Job::Repair { .. }));
+    assert!(matches!(job, Job::Repair { .. }));
+    assert_eq!(statuses(&mls), [(0, Status::Sorry), (1, Status::Checking)]);
+    assert!(mls.next_job().is_none(), "one job is in flight at a time");
+}
+
+#[test]
+fn a_failed_statement_or_definition_is_not_repaired() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def d FALSE.", "Lemma t FALSE."]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(repairs(&jobs), 0, "{:?}", kinds(&jobs));
+    assert_eq!(statuses(&mls), [(0, Status::Failed), (1, Status::Failed)]);
+}
+
+#[test]
+fn a_proof_whose_check_times_out_is_not_repaired() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t.", "Proof. Trivially. ∎"]));
+    let proof = id_of(&mls, 1);
+    let jobs = run(&mut mls, times_out(proof));
+    assert_eq!(repairs(&jobs), 0);
+    let details = mls.details(proof).expect("the proof has a dot");
+    assert_eq!(details.error.as_deref(), Some(TIMED_OUT));
+}
+
+#[test]
+fn a_repair_reply_for_an_edited_proof_is_rejected() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim FIXABLE. ∎"]));
+    let job = run_until(&mut mls, |job| matches!(job, Job::Repair { .. }));
+    mls.sync(&paras(&[
+        "Lemma t.",
+        "Proof. FALSE claim FIXABLE, edited. ∎",
+    ]));
+    assert!(
+        !mls.apply(answer(&job)),
+        "a repair of the old proof is stale"
+    );
+}
+
+#[test]
+fn a_repair_reply_is_rejected_once_its_statement_is_edited() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim FIXABLE. ∎"]));
+    let job = run_until(&mut mls, |job| matches!(job, Job::Repair { .. }));
+    mls.sync(&paras(&["Lemma u.", "Proof. FALSE claim FIXABLE. ∎"]));
+    assert!(
+        !mls.apply(answer(&job)),
+        "a repair against the old statement is stale"
+    );
+}
+
+#[test]
+fn a_repair_reply_is_rejected_when_the_context_above_its_proof_changes() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim FIXABLE. ∎"]));
+    let job = run_until(&mut mls, |job| matches!(job, Job::Repair { .. }));
+    let proof = id_of(&mls, 1);
+    let version = version_of(&mls, proof);
+    mls.sync(&paras(&[
+        "Def d.",
+        "Lemma t.",
+        "Proof. FALSE claim FIXABLE. ∎",
+    ]));
+    assert_eq!(
+        version_of(&mls, proof),
+        version,
+        "the proof itself is unchanged"
+    );
+    assert!(
+        !mls.apply(answer(&job)),
+        "a repair checked above a different context is stale"
+    );
+}
+
+#[test]
+fn a_repaired_proof_that_relies_on_an_unproved_statement_is_amber() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&[
+        "Lemma t.",
+        "Lemma u USES.",
+        "Proof. FALSE claim FIXABLE USES. ∎",
+    ]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(repairs(&jobs), 1);
+    let proof = id_of(&mls, 2);
+    assert_eq!(
+        statuses(&mls),
+        [(0, Status::Sorry), (1, Status::Sorry), (2, Status::Sorry)]
+    );
+    let note = format!("Relies on `t{}`, which is not proved yet.", id_of(&mls, 0));
+    assert_eq!(
+        mls.details(proof).and_then(|details| details.note),
+        Some(note)
+    );
+}
+
+#[test]
+fn a_repaired_proof_is_restored_from_the_twin_and_checked_without_a_repair() {
+    let lines = ["Lemma t.", "Proof. FALSE claim FIXABLE. ∎"];
+    let mut mls = Mls::new();
+    mls.sync(&paras(&lines));
+    run(&mut mls, answer);
+    let twin = mls.twin();
+    assert!(!twin.contains("-- FALSE"), "{twin}");
+
+    let mut restored = Mls::new();
+    restored.restore(&twin);
+    restored.sync(&paras(&lines));
+    let jobs = run(&mut restored, answer);
+    assert_eq!(kinds(&jobs), ["check", "check"]);
+    assert_eq!(
+        statuses(&restored),
+        [(0, Status::Verified), (1, Status::Verified)]
+    );
+}
+
+#[test]
+fn a_failed_repair_is_not_asked_again_after_an_edit_below() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim. ∎"]));
+    run(&mut mls, answer);
+    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim. ∎", "Hello."]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(kinds(&jobs), ["classify"]);
+    assert_eq!(statuses(&mls), [(0, Status::Sorry), (1, Status::Failed)]);
+}
+
+#[test]
+fn a_timeout_that_clears_a_failed_proof_does_not_repeat_its_repair() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim. ∎", "Lemma v."]));
+    let slow = id_of(&mls, 2);
+    let jobs = run(&mut mls, times_out(slow));
+    assert_eq!(repairs(&jobs), 1);
+    let proof = id_of(&mls, 1);
+    assert_eq!(
+        mls.details(proof).and_then(|details| details.error),
+        Some("1:0: error".to_string())
+    );
+}
+
+/// The mock worker, except that every repair is rejected with `failure`.
+fn repair_fails(failure: Failure) -> impl Fn(&Job) -> Reply {
+    move |job| match job {
+        Job::Repair { .. } => Reply::Repaired {
+            job: job.clone(),
+            result: Err(failure.clone()),
+        },
+        _ => answer(job),
+    }
+}
+
+#[test]
+fn a_rejected_repair_is_the_last_diagnostic_and_is_not_asked_again() {
+    let rejection = "The Lean uses `native_decide`, which is not allowed.";
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim. ∎"]));
+    let jobs = run(
+        &mut mls,
+        repair_fails(Failure {
+            message: rejection.to_string(),
+            service: false,
+        }),
+    );
+    assert_eq!(repairs(&jobs), 1);
+    assert_eq!(kinds(&jobs).last(), Some(&"repair"));
+    assert!(mls.next_job().is_none());
+    assert_eq!(statuses(&mls), [(0, Status::Sorry), (1, Status::Failed)]);
+    let details = mls.details(id_of(&mls, 1)).expect("the proof has a dot");
+    assert_eq!(details.error.as_deref(), Some(rejection));
+    assert!(!details.service);
+}
+
+#[test]
+fn a_service_failure_during_repair_halts_with_its_own_message_until_a_retry() {
+    let outage = "OpenRouter is unreachable: no route";
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim. ∎"]));
+    let jobs = run(
+        &mut mls,
+        repair_fails(Failure {
+            message: outage.to_string(),
+            service: true,
+        }),
+    );
+    assert_eq!(repairs(&jobs), 1);
+    assert!(mls.next_job().is_none(), "a service failure halts the walk");
+    let details = mls.details(id_of(&mls, 1)).expect("the proof has a dot");
+    assert_eq!(details.error.as_deref(), Some(outage));
+    assert!(details.service);
+
+    mls.retry();
+    let jobs = run(&mut mls, answer);
+    assert_eq!(repairs(&jobs), 1, "a retry asks for the repair again");
+    assert_eq!(statuses(&mls), [(0, Status::Sorry), (1, Status::Failed)]);
+    let details = mls.details(id_of(&mls, 1)).expect("the proof has a dot");
+    assert_eq!(details.error.as_deref(), Some("1:0: error"));
 }

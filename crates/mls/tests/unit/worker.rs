@@ -3,7 +3,7 @@
 
 use super::Worker;
 use crate::openrouter::{CHAT_URL, DECISIONS_URL};
-use crate::{Failure, Formal, Job, Label, Mls, Paragraph, Reply, Status, Tag};
+use crate::{Failure, Formal, Job, Label, Mls, Outcome, Paragraph, Reply, Status, Tag};
 use documents::{DOCUMENTS, Line, assert_outcome, drive, lean_project, lean_ready};
 use serde_json::{Value, json};
 use std::{
@@ -11,6 +11,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
+        mpsc,
     },
     thread,
     time::{Duration, Instant},
@@ -62,6 +63,160 @@ fn no_request(_url: &str, _body: &Value) -> Result<Value, Failure> {
         message: "no request expected".to_string(),
         service: true,
     })
+}
+
+/// The statement of the regression: a proof whose `nlinarith` failed after a redundant `simp`.
+const STATEMENT: &str = "theorem quadraticEnergy_add_of_areOrthogonal (u v : ℝ × ℝ) (h : AreOrthogonal u v) : quadraticEnergy (u+v)=quadraticEnergy u+quadraticEnergy v := by sorry";
+const HEADER: &str = "theorem quadraticEnergy_add_of_areOrthogonal (u v : ℝ × ℝ) (h : AreOrthogonal u v) : quadraticEnergy (u+v)=quadraticEnergy u+quadraticEnergy v :=";
+const PROSE: &str = "Expand both sides in coordinates and use the orthogonality of $u$ and $v$. ∎";
+/// The candidate that Lean rejected, and Lean's error for its line 7.
+const FAILED: &str = "theorem quadraticEnergy_add_of_areOrthogonal (u v : ℝ × ℝ) (h : AreOrthogonal u v) : quadraticEnergy (u+v)=quadraticEnergy u+quadraticEnergy v := by\n  obtain ⟨a, b⟩ := u\n  obtain ⟨c, d⟩ := v\n  unfold AreOrthogonal scalarProductB at h\n  unfold quadraticEnergy\n  simp only [Prod.mk_add_mk] at *\n  simp only at h ⊢\n  nlinarith [h]";
+const ERROR: &str = "7:2: `simp` made no progress";
+/// The repaired candidate: the redundant `simp` is gone.
+const REPAIRED: &str = "theorem quadraticEnergy_add_of_areOrthogonal (u v : ℝ × ℝ) (h : AreOrthogonal u v) : quadraticEnergy (u+v)=quadraticEnergy u+quadraticEnergy v := by\n  obtain ⟨a, b⟩ := u\n  obtain ⟨c, d⟩ := v\n  unfold AreOrthogonal scalarProductB at h\n  unfold quadraticEnergy\n  simp only [Prod.mk_add_mk] at *\n  nlinarith [h]";
+
+/// The repair of the regression's proof, with the definitions above it.
+fn repair_job(failed: &str, error: &str) -> Job {
+    Job::Repair {
+        block: 4,
+        version: 12,
+        text: format!("*Proof.* {PROSE}"),
+        prose: Some("We keep the notation of the definitions above.".to_string()),
+        lean_above: vec![
+            (
+                1,
+                "def scalarProductB (u v : ℝ × ℝ) : ℝ := u.1 * v.1 + u.2 * v.2".to_string(),
+            ),
+            (
+                2,
+                "def AreOrthogonal (u v : ℝ × ℝ) : Prop := scalarProductB u v = 0".to_string(),
+            ),
+            (
+                3,
+                "def quadraticEnergy (u : ℝ × ℝ) : ℝ := u.1^2 + u.2^2".to_string(),
+            ),
+        ],
+        names_above: vec![
+            "scalarProductB".to_string(),
+            "AreOrthogonal".to_string(),
+            "quadraticEnergy".to_string(),
+        ],
+        statement: (5, STATEMENT.to_string()),
+        base: 7,
+        failed: failed.to_string(),
+        error: error.to_string(),
+    }
+}
+
+#[test]
+fn a_repair_request_sends_the_proof_its_statement_context_and_the_failed_lean_and_error() {
+    let (sent, bodies) = mpsc::channel();
+    let worker = Worker::with_request(
+        PathBuf::new(),
+        || {},
+        move |_, body| {
+            let _ = sent.send(body.clone());
+            Ok(formalization_reply(REPAIRED))
+        },
+    );
+    worker.submit(repair_job(FAILED, ERROR));
+    let body = bodies
+        .recv_timeout(TIMEOUT)
+        .expect("the repair sends one request")
+        .to_string();
+    for part in [
+        PROSE,
+        STATEMENT,
+        "def quadraticEnergy (u : ℝ × ℝ) : ℝ := u.1^2 + u.2^2",
+        "simp only [Prod.mk_add_mk] at *",
+        "simp only at h ⊢",
+        ERROR,
+        "Label: proof",
+    ] {
+        assert!(body.contains(part), "the request lacks {part:?}");
+    }
+    assert!(body.contains("Fix only what the error shows"), "{body}");
+}
+
+/// The result of a repair whose reply is `lean`.
+fn repaired_result(lean: &str) -> Result<Formal, Failure> {
+    let answer = formalization_reply(lean);
+    let worker = Worker::with_request(PathBuf::new(), || {}, move |_, _| Ok(answer.clone()));
+    worker.submit(repair_job(FAILED, ERROR));
+    match reply(&worker) {
+        Reply::Repaired { result, .. } => result,
+        other => panic!("expected a repair, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_repaired_proof_is_checked_by_the_same_rules_as_a_formalization() {
+    let cases = [
+        (format!("{HEADER} by\n  sorry"), "The proof uses sorry."),
+        (
+            format!("{HEADER} by\n  native_decide"),
+            "The Lean uses `native_decide`, which is not allowed.",
+        ),
+        (
+            "theorem other_name (u v : ℝ × ℝ) : True := by\n  trivial".to_string(),
+            "The proof changes the statement above.",
+        ),
+    ];
+    for (lean, message) in cases {
+        assert_eq!(
+            repaired_result(&lean),
+            Err(Failure {
+                message: message.to_string(),
+                service: false,
+            }),
+            "{lean}"
+        );
+    }
+}
+
+#[test]
+fn an_accepted_repair_is_echoed_with_its_job_and_the_names_it_uses_recomputed() {
+    let job = repair_job(FAILED, ERROR);
+    let worker = Worker::with_request(
+        PathBuf::new(),
+        || {},
+        |_, _| Ok(formalization_reply(REPAIRED)),
+    );
+    worker.submit(job.clone());
+    match reply(&worker) {
+        Reply::Repaired {
+            job: echoed,
+            result,
+        } => {
+            assert_eq!(echoed, job);
+            assert_eq!(
+                result.map(|formal| formal.uses),
+                Ok(vec![
+                    "scalarProductB".to_string(),
+                    "AreOrthogonal".to_string(),
+                    "quadraticEnergy".to_string(),
+                ])
+            );
+        }
+        other => panic!("expected a repair, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_repair_whose_request_fails_is_a_service_failure_for_its_job() {
+    let job = repair_job(FAILED, ERROR);
+    let worker = Worker::with_request(PathBuf::new(), || {}, no_request);
+    worker.submit(job.clone());
+    match reply(&worker) {
+        Reply::Repaired {
+            job: echoed,
+            result: Err(failure),
+        } => {
+            assert_eq!(echoed, job);
+            assert!(failure.service, "{}", failure.message);
+        }
+        other => panic!("expected a failed repair, got {other:?}"),
+    }
 }
 
 #[test]
@@ -361,4 +516,43 @@ fn scripted_documents_end_with_their_dots() {
             assert_eq!(chart[2].uses, [chart[0].key], "{chart:?}");
         }
     }
+}
+
+#[test]
+#[ignore = "needs the Lean project in lean/ built (lake build Mathlib repl)"]
+fn the_regression_fails_at_the_redundant_simp_and_its_repair_checks_on_the_same_base() {
+    let project = lean_project();
+    if !lean_ready(&project) {
+        eprintln!(
+            "skipping: the Lean REPL is not built in {}",
+            project.display()
+        );
+        return;
+    }
+    let Job::Repair { lean_above, .. } = repair_job(FAILED, ERROR) else {
+        unreachable!("repair_job builds a repair")
+    };
+    // The definitions above the proof, checked on the base the statement's proof is checked on.
+    let definitions = lean_above
+        .iter()
+        .map(|(_, lean)| lean.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let mut repl = None;
+    let base = super::check(&mut repl, &project, &definitions, 0).expect("the definitions check");
+    assert_eq!(base.outcome, Outcome::Verified, "{definitions}");
+
+    let failed = super::check(&mut repl, &project, FAILED, base.env).expect("the candidate checks");
+    match failed.outcome {
+        Outcome::Failed(message) => {
+            assert!(
+                message.contains("7:2: `simp` made no progress"),
+                "{message}"
+            )
+        }
+        other => panic!("the candidate should fail, got {other:?}"),
+    }
+    let repaired =
+        super::check(&mut repl, &project, REPAIRED, base.env).expect("the repair checks");
+    assert_eq!(repaired.outcome, Outcome::Verified);
 }

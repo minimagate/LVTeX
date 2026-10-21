@@ -102,7 +102,7 @@ pub struct Checked {
 }
 
 /// One unit of background work, produced by the pipeline and run by the worker.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Job {
     Classify {
         paragraph: u64,
@@ -130,6 +130,24 @@ pub enum Job {
         /// The REPL environment to check on; 0 is the environment right after `import Mathlib`.
         base: u64,
     },
+    /// Once per proof whose Lean failed to check: a repaired translation of the same proof, asked
+    /// with the failed candidate and Lean's error. Every field is the context it is checked against,
+    /// so a reply that no longer matches the plan is rejected.
+    Repair {
+        block: u64,
+        version: u64,
+        text: String,
+        prose: Option<String>,
+        lean_above: Vec<(u64, String)>,
+        names_above: Vec<String>,
+        /// The paired statement's version and Lean.
+        statement: (u64, String),
+        /// The REPL environment the statement's proof is checked on: the one the repair is checked on.
+        base: u64,
+        /// The Lean that failed, and the error Lean gave for it.
+        failed: String,
+        error: String,
+    },
 }
 
 /// The worker's answer to one job, echoing what it was computed from.
@@ -153,5 +171,10 @@ pub enum Reply {
         version: u64,
         base: u64,
         result: Result<Checked, Failure>,
+    },
+    /// The answer to a `Job::Repair`, which it echoes.
+    Repaired {
+        job: Job,
+        result: Result<Formal, Failure>,
     },
 }

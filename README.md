@@ -185,6 +185,12 @@ as `#eval` or `set_option`, redefines a name from above, or changes the statemen
 its proof belongs to, is rejected before Lean sees it. The Lean REPL then checks the
 block on top of the blocks above.
 
+If Lean reports an ordinary error in a proof, MLS makes exactly one repair attempt.
+The block stays grey while it repairs. The failed Lean and its error go, with the
+original context, to the same formalizer, and the repaired Lean must pass the same
+checks as the original before it is checked again on the same base. If the repair
+also fails, the block turns red. There are no further retries.
+
 After a formalization passes these rules, MLS records which names declared by the
 blocks above it appear in its Lean (whole words outside comments, except names the
 block declares itself). These links drive checking, with no model calls. A block that
@@ -329,12 +335,12 @@ Ollama, OpenRouter, Lean or a TeX installation. The optional checks are:
 cargo test --release --locked -p mathstral manual_preview_latency -- --ignored --nocapture
 # The four sample documents with scripted model answers, checked by Lean (needs lean/ built).
 cargo test --release --locked -p mathstral-mls scripted_documents -- --ignored --nocapture
-# Seven documents through OpenRouter and Lean, three fresh runs each (needs OPENROUTER_API_KEY and lean/ built).
+# Eight documents through OpenRouter and Lean, three fresh runs each (needs OPENROUTER_API_KEY and lean/ built).
 cargo test --release --locked -p mathstral-mls --test documents -- --ignored --nocapture
 ```
 
-The live documents are the four scripted ones plus the supplied note, prime notation and a long
-paragraph. Each run writes raw results to `target/mls-live/<phase>/`: a JSON record per document and
+The live documents are the four scripted ones plus the supplied note, prime notation, a long
+paragraph and plane energy and orthogonality. Each run writes raw results to `target/mls-live/<phase>/`: a JSON record per document and
 run (every job and reply, the final dots, the chart and the pinned model ids) and the Mls twin. Narrow
 a live run with environment variables:
 
