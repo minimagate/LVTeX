@@ -198,6 +198,7 @@ impl App {
                     self.changed(true);
                 }
             }
+            Action::ToggleChart => self.toggle_chart(),
         }
     }
 }

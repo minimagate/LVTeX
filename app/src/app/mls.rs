@@ -104,7 +104,7 @@ impl App {
         }
         self.pump_mls();
         self.refresh_dots();
-        if self.panel.is_some() {
+        if self.panel.is_some() || self.chart.is_some() {
             self.page_dirty = true;
         }
         self.redraw();
@@ -190,7 +190,7 @@ impl App {
         }
     }
 
-    fn repaint(&mut self) {
+    pub(super) fn repaint(&mut self) {
         self.page_dirty = true;
         self.redraw();
     }
@@ -261,7 +261,7 @@ impl App {
             if y + DOT_RADIUS < 0.0 || y - DOT_RADIUS > view {
                 continue;
             }
-            if panel.is_some_and(|area| contains(area, x, y)) {
+            if panel.is_some_and(|area| contains(area, x, y)) || self.chart_covers(x, y) {
                 continue;
             }
             render::dot(
@@ -284,7 +284,9 @@ impl App {
             .iter()
             .find(|dot| {
                 self.dot_center(dot.paragraph, left)
-                    .is_some_and(|(cx, cy)| (cx - x).hypot(cy - y) <= DOT_HIT_RADIUS)
+                    .is_some_and(|(cx, cy)| {
+                        !self.chart_covers(cx, cy) && (cx - x).hypot(cy - y) <= DOT_HIT_RADIUS
+                    })
             })
             .map(|dot| dot.key)
     }
@@ -300,7 +302,9 @@ impl App {
             return Some((vec![text], None));
         }
         let mut rows = Vec::new();
-        if details.assumptions.is_empty() {
+        if let Some(note) = &details.note {
+            rows.push(row(note.clone(), false, PANEL_TEXT_SCALE, TEXT_COLOR, 0.0));
+        } else if details.assumptions.is_empty() {
             let text = if status == Status::Checking {
                 "Checking…"
             } else {
@@ -321,6 +325,15 @@ impl App {
                 PANEL_TEXT_SCALE,
                 QUOTE_COLOR,
                 PANEL_GAP,
+            ));
+        }
+        if !details.uses.is_empty() {
+            rows.push(row(
+                format!("Uses {}.", details.uses.join(", ")),
+                false,
+                PANEL_TEXT_SCALE,
+                MARKER_COLOR,
+                PANEL_SECTION_GAP,
             ));
         }
         let mut toggle = None;
@@ -373,18 +386,18 @@ impl App {
             return;
         };
         let (key, show_lean) = (panel.key, panel.show_lean);
-        let Some(paragraph) = self
+        let Some((paragraph, last)) = self
             .dots
             .iter()
             .find(|dot| dot.key == key)
-            .map(|dot| dot.paragraph)
+            .map(|dot| (dot.paragraph, dot.last))
         else {
             return;
         };
         let Some((row_top, row_height)) = self.first_row(paragraph) else {
             return;
         };
-        let Some((last_top, last_height)) = self.last_row(paragraph) else {
+        let Some((last_top, last_height)) = self.last_row(last) else {
             return;
         };
         let Some((rows, toggle)) = self.panel_rows(key, show_lean) else {
@@ -487,7 +500,11 @@ impl App {
     pub(super) fn mls_hover(&mut self) {
         self.refresh_layout();
         let (x, y) = self.mouse;
-        let dot = self.dot_at(x, y);
+        let dot = if self.chart_covers(x, y) {
+            None
+        } else {
+            self.dot_at(x, y)
+        };
         let open = self.panel.as_ref().map(|panel| {
             // A new panel has no area until it is first drawn, so the pointer that opened it is not
             // inside it yet. It is still opening, so it stays.
@@ -507,7 +524,8 @@ impl App {
             .as_ref()
             .and_then(|panel| panel.toggle)
             .is_some_and(|rect| contains(rect, x, y));
-        self.set_pointer(dot.is_some() || over_toggle);
+        let over_row = self.chart_paragraph_at(x, y).is_some();
+        self.set_pointer(dot.is_some() || over_toggle || over_row);
     }
 
     /// A click on a dot pins its panel. A click on the toggle flips the Lean. Returns true when the
@@ -515,6 +533,17 @@ impl App {
     pub(super) fn mls_click(&mut self) -> bool {
         self.refresh_layout();
         let (x, y) = self.mouse;
+        if self.chart_covers(x, y) {
+            // A row scrolls its paragraph to 48 pt below the top, as the reveal does for the caret.
+            if let Some((top, _)) = self
+                .chart_paragraph_at(x, y)
+                .and_then(|paragraph| document_row(&self.mls_lines, &self.layout, paragraph))
+            {
+                self.scroll = (TOP + top - 48.0).max(0.0);
+                self.repaint();
+            }
+            return true;
+        }
         if let Some(key) = self.dot_at(x, y) {
             let closing = self
                 .panel
@@ -630,7 +659,7 @@ fn last_document_row(
     Some((row.top, row.height))
 }
 
-fn status_color(status: Status) -> u32 {
+pub(super) fn status_color(status: Status) -> u32 {
     match status {
         Status::Checking => DOT_CHECKING,
         Status::Sorry => DOT_SORRY,
@@ -667,7 +696,7 @@ fn mix(from: u32, to: u32, t: f32) -> u32 {
     channel(16) << 16 | channel(8) << 8 | channel(0)
 }
 
-fn contains((left, top, w, h): (f32, f32, f32, f32), x: f32, y: f32) -> bool {
+pub(super) fn contains((left, top, w, h): (f32, f32, f32, f32), x: f32, y: f32) -> bool {
     x >= left && x < left + w && y >= top && y < top + h
 }
 

@@ -72,7 +72,8 @@ pub struct Formal {
     pub lean: String,
     pub lean_name: Option<String>,
     pub assumptions: Vec<String>,
-    /// The names from the blocks above that the Lean uses (see `rules::uses`). The worker fills it in; it is empty in the model's answer.
+    /// The names from the blocks above that the Lean uses (see `rules::uses`). The worker fills it
+    /// in; it is empty in the model's answer.
     pub uses: Vec<String>,
 }
 

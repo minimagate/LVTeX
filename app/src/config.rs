@@ -66,5 +66,21 @@ pub const PANEL_BRIDGE: f32 = 12.0;
 pub const PANEL_TEXT_SCALE: f32 = 0.84;
 pub const PANEL_CODE_SCALE: f32 = 0.74;
 pub const PANEL_ERROR_COLOR: u32 = 0xB58682;
+
+// The Structure chart: the document's definitions and statements and what each uses.
+// Width of the chart, at the window's top right.
+pub const CHART_WIDTH: f32 = 300.0;
+// Top of the chart, below the macOS title bar.
+pub const CHART_TOP: f32 = 36.0;
+// Height of one definition or statement's row.
+pub const CHART_ROW: f32 = 22.0;
+// Horizontal step between dependency levels in the chart's graph column.
+pub const CHART_INDENT: f32 = 14.0;
+// Deepest level drawn with its own indent; deeper nodes share its column.
+pub const CHART_MAX_LEVEL: usize = 6;
+// Space between the graph column and a node's name.
+pub const CHART_GAP: f32 = 10.0;
+pub const CHART_EDGE_WIDTH: f32 = 1.0;
+pub const CHART_EDGE_COLOR: u32 = 0x4A4846;
 // The Lake project with Mathlib and the REPL; MATHSTRAL_LEAN_PROJECT overrides it.
 pub const LEAN_PROJECT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../lean");

@@ -72,7 +72,7 @@ impl App {
                 self.goal_x = None;
             }
             Key::Named(NamedKey::Escape) => {
-                if self.close_panel() {
+                if self.close_panel() || self.close_chart() {
                     return;
                 }
                 if self.doc.cancel() {

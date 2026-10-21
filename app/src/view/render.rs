@@ -210,6 +210,43 @@ pub fn dot(
         }
     }
 }
+/// An anti-aliased segment from (`x0`, `y0`) to (`x1`, `y1`) of the given thickness, in physical
+/// pixels, blended over the buffer.
+#[allow(clippy::too_many_arguments)] // mirrors `dot`: buffer, size, geometry and colour
+pub fn line(
+    pixels: &mut [u32],
+    width: usize,
+    height: usize,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    thickness: f32,
+    color: u32,
+) {
+    let reach = thickness / 2.0 + 1.0;
+    let x_min = ((x0.min(x1) - reach).floor() as i32).clamp(0, width as i32) as usize;
+    let x_max = ((x0.max(x1) + reach).ceil() as i32).clamp(0, width as i32) as usize;
+    let y_min = ((y0.min(y1) - reach).floor() as i32).clamp(0, height as i32) as usize;
+    let y_max = ((y0.max(y1) + reach).ceil() as i32).clamp(0, height as i32) as usize;
+    let (dx, dy) = (x1 - x0, y1 - y0);
+    let length_sq = dx * dx + dy * dy;
+    for row in y_min..y_max {
+        for col in x_min..x_max {
+            let px = col as f32 + 0.5 - x0;
+            let py = row as f32 + 0.5 - y0;
+            // The segment's nearest point to the pixel centre. A zero-length segment is a point.
+            let t = if length_sq > 0.0 {
+                ((px * dx + py * dy) / length_sq).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let distance = (px - t * dx).hypot(py - t * dy);
+            let coverage = (thickness / 2.0 + 0.5 - distance).clamp(0.0, 1.0);
+            blend(&mut pixels[row * width + col], color, coverage);
+        }
+    }
+}
 /// An anti-aliased filled rectangle with rounded corners, in physical pixels.
 #[allow(clippy::too_many_arguments)] // mirrors `rect`, plus the corner radius
 pub fn rounded_rect(

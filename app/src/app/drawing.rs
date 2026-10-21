@@ -68,6 +68,9 @@ impl App {
             if self.panel.is_some() {
                 self.draw_panel(width, height, scale, left, column);
             }
+            if self.chart.is_some() {
+                self.draw_chart(width, height, scale);
+            }
             self.page_dirty = false;
         }
         let manual_caret = self.manual_caret(left);

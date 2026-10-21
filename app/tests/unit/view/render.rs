@@ -93,3 +93,26 @@ fn blend_with_full_coverage_takes_the_colour() {
     blend(&mut pixel, TINT, 1.0);
     assert_eq!(pixel, TINT);
 }
+
+#[test]
+fn line_takes_the_colour_on_its_centre_and_leaves_pixels_far_away() {
+    let (w, h) = (12, 12);
+    let mut px = vec![BLACK; w * h];
+    // The line runs through the centres of row 6, so those pixels are fully covered.
+    line(&mut px, w, h, 1.5, 6.5, 10.5, 6.5, 1.0, TINT);
+    assert_eq!(px[6 * w + 6], TINT);
+    // Row 1's centre lies 5 px from the line.
+    assert_eq!(px[w + 6], BLACK);
+}
+
+#[test]
+fn line_partly_or_wholly_off_the_buffer_does_not_panic() {
+    let (w, h) = (6, 6);
+    let mut px = vec![BLACK; w * h];
+    line(&mut px, w, h, -10.0, -10.0, 20.0, 20.0, 1.0, WHITE);
+    // The diagonal passes through the centre of pixel (2, 2).
+    assert_eq!(px[2 * w + 2], WHITE);
+    line(&mut px, w, h, 50.0, 50.0, 80.0, 2.0, 2.0, WHITE);
+    line(&mut px, w, h, 3.0, 300.0, 3.0, 300.0, 2.0, WHITE);
+    line(&mut px, w, h, -40.0, 2.0, -30.0, 2.0, 2.0, WHITE);
+}

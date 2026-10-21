@@ -20,6 +20,7 @@ pub enum Action {
     SelectAll,
     InsertFormula,
     AskAiFormula,
+    ToggleChart,
     Quit,
 }
 pub fn install(proxy: EventLoopProxy<Action>) -> Menu {
@@ -31,6 +32,7 @@ pub fn install(proxy: EventLoopProxy<Action>) -> Menu {
     app.append(&PredefinedMenuItem::separator()).unwrap();
     let file = Submenu::new("File", true);
     let edit = Submenu::new("Edit", true);
+    let view = Submenu::new("View", true);
     let mut ids = vec![];
     for (parent, label, key, modifiers, action) in [
         (
@@ -96,6 +98,13 @@ pub fn install(proxy: EventLoopProxy<Action>) -> Menu {
             Modifiers::META | Modifiers::SHIFT,
             Action::AskAiFormula,
         ),
+        (
+            &view,
+            "Structure",
+            Code::KeyL,
+            Modifiers::META,
+            Action::ToggleChart,
+        ),
     ] {
         let item = MenuItem::new(label, true, Some(Accelerator::new(modifiers, key)));
         ids.push((item.id().clone(), action));
@@ -109,7 +118,8 @@ pub fn install(proxy: EventLoopProxy<Action>) -> Menu {
             &PredefinedMenuItem::fullscreen(None),
         ])
         .unwrap();
-    menu.append_items(&[&app, &file, &edit, &window]).unwrap();
+    menu.append_items(&[&app, &file, &edit, &view, &window])
+        .unwrap();
     menu.init_for_nsapp();
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
         if let Some((_, action)) = ids.iter().find(|(id, _)| id == &event.id) {

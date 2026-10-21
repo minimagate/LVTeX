@@ -1,4 +1,5 @@
 //! Application state and coordination of document, layout and background work.
+mod chart;
 mod commands;
 mod drawing;
 mod events;
@@ -76,6 +77,7 @@ pub struct App {
     // True until the first sync, so a new or opened document checks every line, the caret's too.
     mls_fresh: bool,
     panel: Option<mls::Panel>,
+    chart: Option<chart::Chart>,
     pointer: bool,
     frame_due: Option<Instant>,
 }
@@ -113,6 +115,7 @@ impl App {
             fades: HashMap::new(),
             mls_fresh: true,
             panel: None,
+            chart: None,
             pointer: false,
             frame_due: None,
             submitted: Default::default(),
