@@ -1,0 +1,15 @@
+<!-- MLS mark: a three-node Lean dependency graph with status dots. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>MLS</title>
+  <desc>Three status dots in a dependency graph: two verified, one that rests on an unproved step.</desc>
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="#1C1C1C"/>
+  <rect x="2" y="2" width="508" height="508" rx="110" fill="none" stroke="#2A2A29" stroke-width="2"/>
+  <g fill="none" stroke="#5A5856" stroke-width="12" stroke-linecap="round">
+    <path d="M 185 164 L 333 240"/>
+    <path d="M 185 164 L 249 364"/>
+    <path d="M 333 240 L 249 364"/>
+  </g>
+  <circle cx="185" cy="164" r="32" fill="#6F9A72"/>
+  <circle cx="333" cy="240" r="32" fill="#6F9A72"/>
+  <circle cx="249" cy="364" r="32" fill="#A88B5A"/>
+</svg>

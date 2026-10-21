@@ -1,0 +1,13 @@
+<!-- Mathstral mark: an upright integral sign, a pair of gusts and a verified full stop. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>Mathstral</title>
+  <desc>An upright integral sign beside a pair of wind gusts, with a green verified dot at lower right.</desc>
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="#1C1C1C"/>
+  <rect x="2" y="2" width="508" height="508" rx="110" fill="none" stroke="#2A2A29" stroke-width="2"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" transform="translate(-10 0)">
+    <path d="M 300 232 C 324 216, 348 248, 372 232" stroke="#73716F" stroke-width="14"/>
+    <path d="M 310 266 C 328 252, 346 280, 364 266" stroke="#73716F" stroke-width="14"/>
+    <path d="M 322 134 C 312 112, 276 104, 262 140 C 255 158, 254 176, 252 196 C 250 216, 240 357, 228 388 C 214 424, 178 416, 168 394" stroke="#C8C6C3" stroke-width="28"/>
+  </g>
+  <circle cx="382" cy="384" r="20" fill="#6F9A72"/>
+</svg>
