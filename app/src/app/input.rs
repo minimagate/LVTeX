@@ -11,6 +11,10 @@ impl App {
         if event.state != ElementState::Pressed || self.composing {
             return;
         }
+        if self.settings.is_some() {
+            self.settings_key(&event);
+            return;
+        }
         if self.math.is_some() {
             let keys = math_keys(&event, self.modifiers);
             self.math_input(keys);

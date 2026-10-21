@@ -75,6 +75,34 @@ impl App {
             self.apply_mls_replies();
             return;
         }
+        // While Settings is open, only its own actions and the ones that always apply act.
+        if self.settings.is_some() {
+            match action {
+                Action::Paste => {
+                    self.paste_key();
+                    return;
+                }
+                Action::Settings => {
+                    self.close_settings();
+                    return;
+                }
+                Action::MathReady | Action::Quit => {}
+                Action::MlsReady
+                | Action::New
+                | Action::Open
+                | Action::Save
+                | Action::SaveAs
+                | Action::ExportPdf
+                | Action::Undo
+                | Action::Redo
+                | Action::Cut
+                | Action::Copy
+                | Action::SelectAll
+                | Action::InsertFormula
+                | Action::AskAiFormula
+                | Action::ToggleChart => return,
+            }
+        }
         self.doc.break_group();
         self.goal_x = None;
         if self.math.is_some() {
@@ -199,6 +227,7 @@ impl App {
                 }
             }
             Action::ToggleChart => self.toggle_chart(),
+            Action::Settings => self.toggle_settings(),
         }
     }
 }

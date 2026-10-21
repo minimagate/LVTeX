@@ -71,6 +71,10 @@ impl App {
             if self.chart.is_some() {
                 self.draw_chart(width, height, scale);
             }
+            // Last, so the Settings panel is on top of the page, its chart and its panel.
+            if self.settings.is_some() {
+                self.draw_settings(width, height, scale);
+            }
             self.page_dirty = false;
         }
         let manual_caret = self.manual_caret(left);

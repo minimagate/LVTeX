@@ -6,6 +6,7 @@ mod events;
 mod input;
 mod math_session;
 mod mls;
+mod settings;
 
 use crate::{
     config::*,
@@ -70,6 +71,8 @@ pub struct App {
     math_cache: HashMap<String, Arc<FormulaImage>>,
     mls: mathstral_mls::Mls,
     mls_worker: mathstral_mls::Worker,
+    // Whether Lean checking runs. Off, no job is submitted and no dot or chart row is shown.
+    mls_on: bool,
     // Each paragraph's byte range, indexed like the paragraphs last given to MLS.
     mls_lines: Vec<Range<usize>>,
     dots: Vec<mathstral_mls::Dot>,
@@ -78,6 +81,7 @@ pub struct App {
     mls_fresh: bool,
     panel: Option<mls::Panel>,
     chart: Option<chart::Chart>,
+    settings: Option<settings::Settings>,
     pointer: bool,
     frame_due: Option<Instant>,
 }
@@ -110,12 +114,14 @@ impl App {
             worker,
             mls: mathstral_mls::Mls::new(),
             mls_worker,
+            mls_on: file::mls_enabled(),
             mls_lines: Vec::new(),
             dots: Vec::new(),
             fades: HashMap::new(),
             mls_fresh: true,
             panel: None,
             chart: None,
+            settings: None,
             pointer: false,
             frame_due: None,
             submitted: Default::default(),
@@ -147,6 +153,7 @@ impl App {
             window_geometry: file::window_geometry(),
             size_save_at: None,
         };
+        app.mls_worker.set_key(settings::effective_key());
         if let Some(path) = app.path.clone() {
             app.restore_mls(&path);
         }

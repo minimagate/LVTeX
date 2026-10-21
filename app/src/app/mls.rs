@@ -70,6 +70,12 @@ pub(super) fn lean_project() -> PathBuf {
 impl App {
     /// Gives MLS the document's paragraphs after an edit or a caret move.
     pub(super) fn sync_mls(&mut self) {
+        if !self.mls_on {
+            self.dots.clear();
+            self.fades.clear();
+            self.panel = None;
+            return;
+        }
         // The old paragraph indices still match `mls_lines` and the layout, so read the anchors now.
         // A dot that has already gone keeps its anchor: its index no longer names its paragraph.
         for fade in self.fades.values_mut().filter(|fade| fade.to.is_some()) {
@@ -92,6 +98,9 @@ impl App {
     }
 
     fn pump_mls(&mut self) {
+        if !self.mls_on {
+            return;
+        }
         if let Some(job) = self.mls.next_job() {
             self.mls_worker.submit(job);
         }
@@ -112,6 +121,10 @@ impl App {
 
     /// Rebuilds the dots from MLS, starting a fade wherever a dot's colour or presence changed.
     fn refresh_dots(&mut self) {
+        // Replies still arrive while off: they must not bring the dots back.
+        if !self.mls_on {
+            return;
+        }
         let now = Instant::now();
         let dots = self.mls.dots();
         let mut started = false;
@@ -261,7 +274,10 @@ impl App {
             if y + DOT_RADIUS < 0.0 || y - DOT_RADIUS > view {
                 continue;
             }
-            if panel.is_some_and(|area| contains(area, x, y)) || self.chart_covers(x, y) {
+            if panel.is_some_and(|area| contains(area, x, y))
+                || self.chart_covers(x, y)
+                || self.settings_covers(x, y)
+            {
                 continue;
             }
             render::dot(
@@ -498,6 +514,11 @@ impl App {
 
     /// Hover opens the panel for a dot, and closes an unpinned one once the pointer leaves it.
     pub(super) fn mls_hover(&mut self) {
+        // While Settings is open, the pointer over the page does nothing.
+        if self.settings.is_some() {
+            self.set_pointer(false);
+            return;
+        }
         self.refresh_layout();
         let (x, y) = self.mouse;
         let dot = if self.chart_covers(x, y) {
@@ -580,6 +601,19 @@ impl App {
         }
         self.show(None);
         true
+    }
+
+    /// Turns Lean checking on or off and remembers the choice. Off checks nothing and shows no dots.
+    /// On checks every paragraph again, the caret's included.
+    pub(super) fn set_mls_on(&mut self, on: bool) {
+        self.mls_on = on;
+        file::remember_mls_enabled(on);
+        if on {
+            self.mls_fresh = true;
+            self.mls.retry();
+        }
+        self.sync_mls();
+        self.repaint();
     }
 
     pub(super) fn reset_mls(&mut self) {

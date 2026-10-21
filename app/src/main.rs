@@ -4,6 +4,7 @@ mod config;
 mod document;
 mod export;
 mod file;
+mod keychain;
 mod markdown;
 mod math;
 mod menu;

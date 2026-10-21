@@ -16,6 +16,20 @@ fn window_geometry_keeps_screen_filling_size_position_and_legacy_settings() {
     assert!(WindowGeometry::parse("NaN 944").is_none());
 }
 #[test]
+fn lean_switch_is_on_unless_the_file_says_off() {
+    let cases = [
+        ("off", false),
+        ("off\n", false),
+        ("on", true),
+        ("on\n", true),
+        ("", true),
+        ("garbage", true),
+    ];
+    for (text, on) in cases {
+        assert_eq!(parse_mls(text), on, "switch file {text:?}");
+    }
+}
+#[test]
 fn export_appends_pdf_without_replacing_existing_extension() {
     assert_eq!(with_pdf_extension("a".into()), PathBuf::from("a.pdf"));
     assert_eq!(

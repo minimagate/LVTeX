@@ -21,6 +21,7 @@ pub enum Action {
     InsertFormula,
     AskAiFormula,
     ToggleChart,
+    Settings,
     Quit,
 }
 pub fn install(proxy: EventLoopProxy<Action>) -> Menu {
@@ -35,6 +36,13 @@ pub fn install(proxy: EventLoopProxy<Action>) -> Menu {
     let view = Submenu::new("View", true);
     let mut ids = vec![];
     for (parent, label, key, modifiers, action) in [
+        (
+            &app,
+            "Settings…",
+            Code::Comma,
+            Modifiers::META,
+            Action::Settings,
+        ),
         (
             &app,
             "Quit Mathstral",

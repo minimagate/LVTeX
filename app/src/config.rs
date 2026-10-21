@@ -67,6 +67,19 @@ pub const PANEL_TEXT_SCALE: f32 = 0.84;
 pub const PANEL_CODE_SCALE: f32 = 0.74;
 pub const PANEL_ERROR_COLOR: u32 = 0xB58682;
 
+// The Settings window: a panel under the title bar, with the Lean switch and the key field.
+pub const SETTINGS_WIDTH: f32 = 480.0;
+// The switch's pill, and how far the knob sits inside the pill's edge.
+pub const SETTINGS_SWITCH_W: f32 = 26.0;
+pub const SETTINGS_SWITCH_H: f32 = 14.0;
+pub const SETTINGS_KNOB_INSET: f32 = 2.0;
+// The key field's fill, and the space between its text and its edges.
+pub const SETTINGS_FIELD_COLOR: u32 = 0x262625;
+pub const SETTINGS_FIELD_INSET_X: f32 = 8.0;
+pub const SETTINGS_FIELD_INSET_Y: f32 = 4.0;
+// Most bullets the key field shows, however long the key.
+pub const SETTINGS_BULLETS: usize = 48;
+
 // The Structure chart: the document's definitions and statements and what each uses.
 // Width of the chart, at the window's top right.
 pub const CHART_WIDTH: f32 = 300.0;

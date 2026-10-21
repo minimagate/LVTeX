@@ -74,7 +74,10 @@ impl ApplicationHandler<Action> for App {
             }
             WindowEvent::Ime(Ime::Commit(text)) => {
                 self.composing = false;
-                self.text_input(&text);
+                // Settings takes its typed text from the keys, so an IME commit is dropped.
+                if self.settings.is_none() {
+                    self.text_input(&text);
+                }
             }
             WindowEvent::Ime(Ime::Disabled) => self.composing = false,
             WindowEvent::Focused(focused) => {
@@ -100,6 +103,10 @@ impl ApplicationHandler<Action> for App {
                 ..
             } => {
                 if state == ElementState::Pressed {
+                    if self.settings.is_some() {
+                        self.settings_click();
+                        return;
+                    }
                     if self.mls_click() {
                         return;
                     }

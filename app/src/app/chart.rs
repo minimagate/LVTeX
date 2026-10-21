@@ -91,7 +91,16 @@ impl App {
         if self.chart.is_none() {
             return;
         }
-        let nodes = self.mls.chart();
+        let nodes = if self.mls_on {
+            self.mls.chart()
+        } else {
+            Vec::new()
+        };
+        let empty = if self.mls_on {
+            "No definitions or statements yet."
+        } else {
+            "Lean checking is off."
+        };
         let view_width = width as f32 / scale;
         let view_height = height as f32 / scale;
         let w = CHART_WIDTH.min(view_width - 2.0 * PANEL_EDGE).max(0.0);
@@ -140,13 +149,7 @@ impl App {
             labels.push((layout, text_left, top));
         }
         if nodes.is_empty() && shown > 0 {
-            let message = fit(
-                &mut self.typesetter,
-                "No definitions or statements yet.",
-                inner,
-                false,
-                PANEL_TEXT_SCALE,
-            );
+            let message = fit(&mut self.typesetter, empty, inner, false, PANEL_TEXT_SCALE);
             let layout =
                 self.typesetter
                     .plain(&message, inner, false, PANEL_TEXT_SCALE, MARKER_COLOR);
