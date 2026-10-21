@@ -2,7 +2,7 @@ use super::*;
 use crate::{FORMALIZER_MODEL, Failure, Formal, JEV_MODEL, Label, Tag};
 use serde_json::{Value, json};
 
-const NOT_SET: &str = "No OpenRouter key. Add one in Mathstral → Settings, or export OPENROUTER_API_KEY and launch Mathstral from that terminal.";
+const NOT_SET: &str = "No OpenRouter key. Add one in LVTeX → Settings, or export OPENROUTER_API_KEY and launch LVTeX from that terminal.";
 const MALFORMED: &str = "The OpenRouter key is malformed.";
 const NO_LABEL: &str = "Jev gave no label.";
 const NO_JOINS: &str = "Jev did not say whether the paragraph continues the one above.";
@@ -105,7 +105,7 @@ fn curl_config_keeps_each_setting_on_one_line_and_the_key_in_its_header() {
         "url = \"https://example.test/api\"\n",
         "header = \"Authorization: Bearer sk-or-test\"\n",
         "header = \"Content-Type: application/json\"\n",
-        "header = \"X-Title: Mathstral\"\n",
+        "header = \"X-Title: LVTeX\"\n",
         r#"data-binary = "{\"q\": \"say \\\"hi\\\"\\\\ now\"}\nsecond""#,
         "\n",
     );
@@ -443,7 +443,7 @@ fn formalize_request_caches_the_system_prompt_and_the_last_lean_segment() {
         );
     }
     assert_eq!(parts[2]["cache_control"], json!({"type": "ephemeral"}));
-    assert_eq!(parts[2]["text"], "-- mathstral:block 3\ndef c := 3\n");
+    assert_eq!(parts[2]["text"], "-- lvtex:block 3\ndef c := 3\n");
     assert!(parts[3].get("cache_control").is_none());
 }
 

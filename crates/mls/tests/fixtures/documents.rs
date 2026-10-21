@@ -480,9 +480,9 @@ const _: () = assert!(
     "the long proof is shorter than 2000 bytes"
 );
 
-/// The project named by `MATHSTRAL_LEAN_PROJECT`, else the `lean/` project at the repository root.
+/// The project named by `LVTEX_LEAN_PROJECT`, else the `lean/` project at the repository root.
 pub fn lean_project() -> PathBuf {
-    match std::env::var_os("MATHSTRAL_LEAN_PROJECT") {
+    match std::env::var_os("LVTEX_LEAN_PROJECT") {
         Some(path) => PathBuf::from(path),
         None => PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../lean")),
     }

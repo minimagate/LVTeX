@@ -108,8 +108,8 @@ fn a_panel_covers_only_its_drawn_area() {
 #[test]
 fn lean_project_resolves_env_then_installed_copy_then_checkout() {
     let env = PathBuf::from("/env/lean");
-    let user = PathBuf::from("/Users/u/Library/Application Support/Mathstral/lean");
-    let checkout = PathBuf::from("/src/mathstral/lean");
+    let user = PathBuf::from("/Users/u/Library/Application Support/LVTeX/lean");
+    let checkout = PathBuf::from("/src/lvtex/lean");
     let cases = [
         (
             "the environment variable wins over both copies",

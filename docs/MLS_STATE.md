@@ -1,6 +1,6 @@
 # MLS state
 
-MLS checks the mathematics in a Mathstral document with Lean. It classifies each
+MLS checks the mathematics in an LVTeX document with Lean. It classifies each
 block, formalizes it into Lean and checks it, then shows the result as a dot
 beside the block. This file records what the codebase had before MLS, what MLS
 reuses, and what it adds.
@@ -126,7 +126,7 @@ formalization says what you meant.
   overlay the page, so the layout never shifts.
 - The Lean twin, `<name>.mls.lean`, is written beside the document on save and
   read on open. It holds `import Mathlib`, then the Lean that checked, each block
-  under `-- mathstral:block <id> <label>`. A final `/- mathstral:memory … -/`
+  under `-- lvtex:block <id> <label>`. A final `/- lvtex:memory … -/`
   comment holds JSON (`version` 1) with every paragraph's label and every block's
   Lean, assumptions or rejection reason. A proof's entry is keyed by its
   statement's exact Lean. On open, unchanged text needs no model calls; Lean
@@ -137,16 +137,16 @@ formalization says what you meant.
 
 ```sh
 curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh
-cd lean                      # in the Mathstral checkout
+cd lean                      # in the LVTeX checkout
 lake exe cache get           # prebuilt Mathlib (minutes)
 lake build Mathlib repl      # the REPL executable; Mathlib is then up to date
 ```
 
 `lean/lean-toolchain` pins Lean 4.35.0, and `lake-manifest.json` pins Mathlib
 `v4.35.0` (`56a0058`) and REPL `v4.35.0` (`58bdde1`). The app uses `lean/` of
-the checkout it was built from (`LEAN_PROJECT`); `MATHSTRAL_LEAN_PROJECT`
+the checkout it was built from (`LEAN_PROJECT`); `LVTEX_LEAN_PROJECT`
 overrides it. Add the key in Settings (⌘,), or export `OPENROUTER_API_KEY` in
-`~/.zshrc` and launch Mathstral from that terminal.
+`~/.zshrc` and launch LVTeX from that terminal.
 
 ### Verified here (Linux cloud container)
 
@@ -171,7 +171,7 @@ overrides it. Add the key in Settings (⌘,), or export `OPENROUTER_API_KEY` in
 ### Not verified here: please check on your Mac
 
 - openrouter.ai is blocked from this container and no key is set. Neither the
-  live documents test (`cargo test --release --locked -p mathstral-mls --test
+  live documents test (`cargo test --release --locked -p lvtex-mls --test
   documents -- --ignored --nocapture`) nor any real Jev or Haiku call has run.
   The model ids and the Decisions request shape (`model`, `state`, `questions`
   with a `choice` question and `criteria`; answer at
@@ -188,7 +188,7 @@ overrides it. Add the key in Settings (⌘,), or export `OPENROUTER_API_KEY` in
   once checking ends.
 
 Manual check list on the Mac: build with `sh scripts/build-app.sh`, open
-`target/Mathstral.app` from a terminal with the key exported, and paste the three
+`target/LVTeX.app` from a terminal with the key exported, and paste the three
 test documents from `crates/mls/tests/fixtures/documents.rs`. Expect grey, then
 the expected colours. Hover each dot, and click one to pin it and toggle Lean.
 Edit a statement and watch only it and the blocks below re-check. Save, quit,
@@ -311,7 +311,7 @@ this container and no key is set.
 ## Phase 4: Settings
 
 Settings is where the user turns Lean checking on or off and saves the OpenRouter
-key. Mathstral → Settings… (⌘,) opens it.
+key. LVTeX → Settings… (⌘,) opens it.
 
 ### What it does
 
@@ -334,10 +334,10 @@ key. Mathstral → Settings… (⌘,) opens it.
   both drop whitespace and control characters.
 - **Saving.** Return checks the draft with `key_is_valid`, which refuses quotes and
   backslashes ("That does not look like an OpenRouter key."). A valid key goes to
-  the Keychain as item "Mathstral OpenRouter", account "openrouter", through
+  the Keychain as item "LVTeX OpenRouter", account "openrouter", through
   `/usr/bin/security -i`: the add command goes on its standard input, and a
   read-back confirms it. If the Keychain does not keep it, the message ends "The key
-  is used until Mathstral quits." Saving sets the MLS worker's key and retries MLS.
+  is used until LVTeX quits." Saving sets the MLS worker's key and retries MLS.
   With `OPENROUTER_API_KEY` set, the environment key still wins.
 - **Remove.** "Remove key from Keychain" deletes the item. MLS then uses the
   environment's key, if there is one.
@@ -353,7 +353,7 @@ key. Mathstral → Settings… (⌘,) opens it.
 
 - The window with its two sections, the masked field and the key status line.
 - Return with no Keychain available (`/usr/bin/security` is absent here) shows "The
-  Keychain is not available. The key is used until Mathstral quits."
+  Keychain is not available. The key is used until LVTeX quits."
 - The switch hides the dots, and it persists `off` in the `mls` file.
 
 ### Not verified here: please check on your Mac

@@ -1,7 +1,7 @@
 //! Lean checking: syncing lines to MLS, applying its replies, and the dots and panel.
 use super::*;
 use crate::view::layout::Line;
-use mathstral_mls::{Details, Mls, Paragraph, Status};
+use lvtex_mls::{Details, Mls, Paragraph, Status};
 use std::path::{Path, PathBuf};
 use winit::window::CursorIcon;
 
@@ -82,14 +82,14 @@ fn item_heading(item: &Details) -> String {
 /// The Lake project for the REPL, chosen by `choose_lean_project`.
 pub(super) fn lean_project() -> PathBuf {
     choose_lean_project(
-        std::env::var_os("MATHSTRAL_LEAN_PROJECT").map(PathBuf::from),
+        std::env::var_os("LVTEX_LEAN_PROJECT").map(PathBuf::from),
         file::lean_dir(),
         PathBuf::from(LEAN_PROJECT),
         |path| path.is_dir(),
     )
 }
 
-/// Chooses the Lake project: `MATHSTRAL_LEAN_PROJECT` when set; else the per-user copy an installed
+/// Chooses the Lake project: `LVTEX_LEAN_PROJECT` when set; else the per-user copy an installed
 /// app uses, when it exists; else the checkout's `lean/`, when it exists. Otherwise the per-user path,
 /// so the REPL's "No Lean project at …" message names where to put it. `user` is None only without
 /// HOME, and then the checkout is the fallback.

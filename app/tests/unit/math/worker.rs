@@ -193,7 +193,7 @@ fn local_formulas_and_previews_render_while_model_backend_is_blocked() {
 
 #[test]
 fn prose_is_rejected_for_generated_math_but_words_render_as_user_math() {
-    let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
+    let mut renderer = Renderer::with_prelude(lvtex_latex::PRELUDE);
     for source in ["spa", "span", "spanning", "abcd", r"v_1+v_2\in span"] {
         assert_eq!(
             render(&mut renderer, source).unwrap().latex,
@@ -227,7 +227,7 @@ fn cleanup_and_rendered_repair_then_cache() {
         r"\frac{1}{3}"
     );
     assert_eq!(clean(r"Here it is: \[x^2\] This is squared."), "x^2");
-    let mut renderer = Renderer::with_prelude(mathstral_latex::PRELUDE);
+    let mut renderer = Renderer::with_prelude(lvtex_latex::PRELUDE);
     let mut cache = HashMap::new();
     let mut calls = 0;
     let job = Job {

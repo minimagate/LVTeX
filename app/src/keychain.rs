@@ -8,7 +8,7 @@ use std::{
 };
 
 const SECURITY: &str = "/usr/bin/security";
-const SERVICE: &str = "Mathstral OpenRouter";
+const SERVICE: &str = "LVTeX OpenRouter";
 const ACCOUNT: &str = "openrouter";
 
 /// The stored key, or None when the Keychain holds none or cannot be read.
@@ -27,7 +27,7 @@ pub fn read() -> Option<String> {
 }
 
 /// Stores `key` as the Keychain's OpenRouter key, replacing any stored one. `key` must pass
-/// `mathstral_mls::key_is_valid`, which keeps it free of quotes, so it can sit in a quoted command.
+/// `lvtex_mls::key_is_valid`, which keeps it free of quotes, so it can sit in a quoted command.
 /// No error message contains the key.
 pub fn store(key: &str) -> Result<(), String> {
     let mut child = Command::new(SECURITY)

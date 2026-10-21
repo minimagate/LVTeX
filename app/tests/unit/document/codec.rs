@@ -29,7 +29,7 @@ fn typed_backslashes_that_cannot_open_save_without_marker() {
 }
 #[test]
 fn old_literal_marker_is_ordinary_prose() {
-    let source = r"<!--mathstral:literal-->\x\";
+    let source = r"<!--lvtex:literal-->\x\";
     let d = Document::new(source);
     assert!(d.formulas.is_empty());
     assert_eq!(d.text(), source);
@@ -37,7 +37,7 @@ fn old_literal_marker_is_ordinary_prose() {
 }
 #[test]
 fn portable_math_is_never_in_visible_buffer() {
-    let source = "Before $\\frac{1}{3}$<!--mathstral:MSBvdmVyIDM--> after\n$$\n\\int_0^1 x dx\n$$";
+    let source = "Before $\\frac{1}{3}$<!--lvtex:MSBvdmVyIDM--> after\n$$\n\\int_0^1 x dx\n$$";
     let d = Document::new(source);
     assert_eq!(d.formulas.len(), 2);
     assert!(!d.text().contains("frac"));
@@ -300,17 +300,17 @@ fn backslash_prose_is_plain_text() {
 }
 #[test]
 fn pending_comment_format_is_pinned() {
-    let d = Document::new("<!--mathstral:pending:c3Vt-->");
+    let d = Document::new("<!--lvtex:pending:c3Vt-->");
     assert_eq!(d.formulas[&0].prompt.as_deref(), Some("sum"));
-    assert_eq!(d.markdown(), "<!--mathstral:pending:c3Vt-->");
+    assert_eq!(d.markdown(), "<!--lvtex:pending:c3Vt-->");
 }
 #[test]
 fn malformed_pending_comment_stays_plain_text() {
     for source in [
-        "a <!--mathstral:pending:!!!--> b",
-        "a <!--mathstral:pending:--> b",
-        "a <!--mathstral:pending:/w--> b",
-        "a <!--mathstral:pending:YQ b",
+        "a <!--lvtex:pending:!!!--> b",
+        "a <!--lvtex:pending:--> b",
+        "a <!--lvtex:pending:/w--> b",
+        "a <!--lvtex:pending:YQ b",
     ] {
         let d = Document::new(source);
         assert!(d.formulas.is_empty(), "{source:?}");
@@ -340,7 +340,7 @@ fn paragraphs_skip_blank_lines() {
 }
 #[test]
 fn paragraphs_write_ai_formulas_without_prompt_comments() {
-    let comment = format!("<!--mathstral:{}-->", URL_SAFE_NO_PAD.encode("the square"));
+    let comment = format!("<!--lvtex:{}-->", URL_SAFE_NO_PAD.encode("the square"));
     let d = Document::new(&format!("Area $x^2${comment} done"));
     assert_eq!(d.formulas[&5].prompt.as_deref(), Some("the square"));
     assert_eq!(

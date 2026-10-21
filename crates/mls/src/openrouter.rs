@@ -25,7 +25,7 @@ const SPLIT: &str = "Cut one paragraph of a mathematical document into its items
 
 const SYSTEM: &str = r#"You formalize one block of a mathematical document into Lean 4 with Mathlib.
 
-You receive the Lean already accepted for the blocks above, in document order, each under a `-- mathstral:block <id>` comment; the prose paragraph just above the block, if any; the block's label; and the block itself, written in Markdown with LaTeX between dollar signs. A block may span several paragraphs, separated by blank lines: its setup, displayed formulas and clauses belong to it, so formalize them together as one item.
+You receive the Lean already accepted for the blocks above, in document order, each under a `-- lvtex:block <id>` comment; the prose paragraph just above the block, if any; the block's label; and the block itself, written in Markdown with LaTeX between dollar signs. A block may span several paragraphs, separated by blank lines: its setup, displayed formulas and clauses belong to it, so formalize them together as one item.
 
 Return only a JSON object with three fields:
 - "lean": Lean 4 source for this block alone. It is checked in an environment that already contains `import Mathlib` and the Lean above, so never write `import`, and never repeat a declaration from above. The one exception is a proof block restating its statement, described under proof.
@@ -66,7 +66,7 @@ fn checked_key(key: Option<&str>) -> Result<&str, Failure> {
         Some(key) if !key.trim().is_empty() => key,
         _ => {
             return Err(service_failure(
-                "No OpenRouter key. Add one in Mathstral → Settings, or export OPENROUTER_API_KEY and launch Mathstral from that terminal.",
+                "No OpenRouter key. Add one in LVTeX → Settings, or export OPENROUTER_API_KEY and launch LVTeX from that terminal.",
             ));
         }
     };
@@ -106,7 +106,7 @@ fn escape(text: &str) -> String {
 /// stays out of the process arguments and off the disk.
 fn curl_config(url: &str, key: &str, body: &str) -> String {
     format!(
-        "url = \"{}\"\nheader = \"Authorization: Bearer {}\"\nheader = \"Content-Type: application/json\"\nheader = \"X-Title: Mathstral\"\ndata-binary = \"{}\"\n",
+        "url = \"{}\"\nheader = \"Authorization: Bearer {}\"\nheader = \"Content-Type: application/json\"\nheader = \"X-Title: LVTeX\"\ndata-binary = \"{}\"\n",
         escape(url),
         escape(key),
         escape(body),
@@ -286,7 +286,7 @@ pub(crate) fn formalize_request(
     ]});
     let mut parts: Vec<Value> = lean_above
         .iter()
-        .map(|(id, lean)| json!({"type": "text", "text": format!("-- mathstral:block {id}\n{lean}\n")}))
+        .map(|(id, lean)| json!({"type": "text", "text": format!("-- lvtex:block {id}\n{lean}\n")}))
         .collect();
     if let Some(last) = parts.last_mut() {
         last["cache_control"] = json!({"type": "ephemeral"});

@@ -95,7 +95,7 @@ fn parse_check_reads_each_answer_shape() {
 
 /// A fresh directory under the system temp dir, named for one test.
 fn scratch_dir(test: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("mathstral-repl-{test}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("lvtex-repl-{test}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("create scratch dir");
     dir
@@ -183,7 +183,7 @@ fn the_repl_inherits_only_the_allowed_environment() {
 
 #[test]
 fn a_missing_lake_says_lean_is_not_installed() {
-    let lake = Path::new("/nonexistent/mathstral-test/lake");
+    let lake = Path::new("/nonexistent/lvtex-test/lake");
     let failure = lake_env(lake, Path::new("."), "LEAN_PATH").expect_err("lake_env should fail");
     assert!(failure.service);
     assert_eq!(

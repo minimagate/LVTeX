@@ -1,22 +1,22 @@
 #!/bin/sh
 # Build the app bundle and package it, with the README and LICENSE, as
-# dist/Mathstral-<version>-alpha-macos-<arch>.zip.
+# dist/LVTeX-<version>-alpha-macos-<arch>.zip.
 set -eu
 cd "$(dirname "$0")/.."
 root="$PWD"
 
 sh "$root/scripts/build-app.sh"
 
-app="$root/target/Mathstral.app"
+app="$root/target/LVTeX.app"
 version=$(plutil -extract CFBundleShortVersionString raw -o - "$app/Contents/Info.plist")
 arch=$(uname -m)
-name="Mathstral-$version-alpha"
+name="LVTeX-$version-alpha"
 zip="$root/dist/$name-macos-$arch.zip"
 stage="$root/dist/stage/$name"
 
 rm -rf "$root/dist/stage"
 mkdir -p "$stage"
-ditto "$app" "$stage/Mathstral.app"
+ditto "$app" "$stage/LVTeX.app"
 cp README.md LICENSE "$stage/"
 
 rm -f "$zip"

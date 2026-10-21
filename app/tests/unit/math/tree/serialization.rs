@@ -36,16 +36,16 @@ fn rendered_caret_adds_no_relation_spacing_to_letter_runs() {
             sym(tree, &c.to_string());
         }
     });
-    let mut renderer = mathstral_render::math::Renderer::with_prelude(mathstral_latex::PRELUDE);
+    let mut renderer = lvtex_render::math::Renderer::with_prelude(lvtex_latex::PRELUDE);
 
     for caret_pos in [0, 2, 4] {
         letters.pos = caret_pos;
         let with_caret = letters.latex_with_caret();
         let without_ordinary_class = with_caret.replace(&marker, &old_marker);
-        let render = |renderer: &mut mathstral_render::math::Renderer, latex: &str| {
-            let body = mathstral_latex::convert(latex).unwrap();
+        let render = |renderer: &mut lvtex_render::math::Renderer, latex: &str| {
+            let body = lvtex_latex::convert(latex).unwrap();
             renderer
-                .render_math(&body, true, mathstral_render::math::SCALE)
+                .render_math(&body, true, lvtex_render::math::SCALE)
                 .unwrap()
         };
         let current = render(&mut renderer, &with_caret);
@@ -75,9 +75,9 @@ fn rendered_caret_adds_no_relation_spacing_to_letter_runs() {
         }),
         build(|tree| tree.make_fraction()),
     ] {
-        let body = mathstral_latex::convert(&tree.latex_with_caret()).unwrap();
+        let body = lvtex_latex::convert(&tree.latex_with_caret()).unwrap();
         let image = renderer
-            .render_math(&body, true, mathstral_render::math::SCALE)
+            .render_math(&body, true, lvtex_render::math::SCALE)
             .unwrap();
         assert!(
             image
@@ -86,9 +86,9 @@ fn rendered_caret_adds_no_relation_spacing_to_letter_runs() {
                 .any(|pixel| pixel.alpha() > 0 && pixel.green() == 0 && pixel.red() > 0)
         );
         tree.next_argument();
-        let body = mathstral_latex::convert(&tree.latex_with_caret()).unwrap();
+        let body = lvtex_latex::convert(&tree.latex_with_caret()).unwrap();
         let image = renderer
-            .render_math(&body, true, mathstral_render::math::SCALE)
+            .render_math(&body, true, lvtex_render::math::SCALE)
             .unwrap();
         assert!(
             image

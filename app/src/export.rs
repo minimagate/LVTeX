@@ -1,7 +1,7 @@
 //! PDF export: typesets the document with Typst, formulas as vector math.
 use crate::document::{Document, Formula};
 use crate::markdown::{self, Block};
-use mathstral_render::math::Renderer;
+use lvtex_render::math::Renderer;
 
 const PREAMBLE: &str = "#set page(paper: \"a4\", margin: 2.5cm)\n\
 #set text(font: \"Libertinus Serif\", size: 11pt, fill: black)\n\
@@ -16,7 +16,7 @@ const PREAMBLE: &str = "#set page(paper: \"a4\", margin: 2.5cm)\n\
 
 fn formula_source(f: &Formula) -> Option<String> {
     f.image.as_ref()?;
-    mathstral_latex::convert(f.latex.as_deref()?).ok()
+    lvtex_latex::convert(f.latex.as_deref()?).ok()
 }
 
 pub fn unrendered(doc: &Document) -> usize {
@@ -48,7 +48,7 @@ pub fn typst_source(doc: &Document) -> String {
         body.push_str(&typst);
         prev_list = Some(list);
     }
-    format!("{PREAMBLE}{}\n{body}\n", mathstral_latex::PRELUDE)
+    format!("{PREAMBLE}{}\n{body}\n", lvtex_latex::PRELUDE)
 }
 
 /// Typesets one line; returns the Typst block and whether it is a list item.
@@ -125,7 +125,7 @@ fn inline(doc: &Document, content: &str, base: usize) -> String {
             .then(|| opened.checked_sub(1).and_then(|k| closers.get(k)))
             .flatten();
         if let Some(url) = link {
-            let url = mathstral_latex::typst_string_literal(url);
+            let url = lvtex_latex::typst_string_literal(url);
             body = format!("#link({url})[{body}]");
         }
         out.push_str(&body);
@@ -179,7 +179,7 @@ fn prose(text: &str, code: bool) -> String {
     if text.is_empty() {
         return String::new();
     }
-    let literal = mathstral_latex::typst_string_literal(text);
+    let literal = lvtex_latex::typst_string_literal(text);
     if code {
         format!("#raw({literal})")
     } else {

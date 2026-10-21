@@ -1,5 +1,5 @@
 //! Worker tests. The scripted document test needs the Lean project built; run it with
-//! `cargo test --release -p mathstral-mls scripted_documents -- --ignored --nocapture`.
+//! `cargo test --release -p lvtex-mls scripted_documents -- --ignored --nocapture`.
 
 use super::Worker;
 use crate::openrouter::{CHAT_URL, DECISIONS_URL};
@@ -403,7 +403,7 @@ fn the_key_is_never_shown_by_debug() {
 #[test]
 fn check_without_a_lean_project_is_a_service_failure() {
     let worker = Worker::with_request(
-        PathBuf::from("/nonexistent/mathstral-mls-project"),
+        PathBuf::from("/nonexistent/lvtex-mls-project"),
         || {},
         no_request,
     );

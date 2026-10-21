@@ -71,7 +71,7 @@ impl Worker {
         let (tx, jobs) = mpsc::channel::<Job>();
         let (replies, rx) = mpsc::channel::<Reply>();
         thread::Builder::new()
-            .name("mathstral-mls".into())
+            .name("lvtex-mls".into())
             .spawn(move || {
                 let mut repl: Option<Repl> = None;
                 for job in jobs {

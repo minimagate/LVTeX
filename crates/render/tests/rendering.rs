@@ -1,4 +1,4 @@
-use mathstral_render::math::{Renderer, SCALE};
+use lvtex_render::math::{Renderer, SCALE};
 
 #[path = "fixtures/formulas.rs"]
 mod fixtures;

@@ -312,7 +312,7 @@ fn a_statement_then_its_proof_is_formalized_and_checked_in_order() {
     let file = mls.twin();
     assert!(
         file.contains(&format!(
-            "\n-- mathstral:block {proof} proof\ntheorem t{statement} : True := by trivial\n"
+            "\n-- lvtex:block {proof} proof\ntheorem t{statement} : True := by trivial\n"
         )),
         "{file}"
     );

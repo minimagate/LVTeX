@@ -1,5 +1,5 @@
 [package]
-name = "mathstral-latex"
+name = "lvtex-latex"
 description = "LaTeX to Typst math conversion through MiTeX"
 version.workspace = true
 edition.workspace = true
@@ -16,4 +16,4 @@ mitex = "=0.2.4"
 mitex-spec-gen = { version = "=0.2.4", features = ["prebuilt"] }
 
 [dev-dependencies]
-mathstral-render.workspace = true
+lvtex-render.workspace = true

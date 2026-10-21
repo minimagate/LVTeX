@@ -1,5 +1,5 @@
 use super::*;
-use mathstral_mls::{Label, Status};
+use lvtex_mls::{Label, Status};
 
 fn node(key: u64, level: usize, uses: Vec<u64>) -> Node {
     Node {

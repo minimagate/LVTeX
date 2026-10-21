@@ -1,5 +1,5 @@
-use mathstral_latex::{PRELUDE, convert, typst_string_literal};
-use mathstral_render::math::{Renderer, SCALE};
+use lvtex_latex::{PRELUDE, convert, typst_string_literal};
+use lvtex_render::math::{Renderer, SCALE};
 
 #[path = "fixtures/formulas.rs"]
 mod fixtures;

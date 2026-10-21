@@ -1,5 +1,5 @@
 [package]
-name = "mathstral-mls"
+name = "lvtex-mls"
 description = "Lean checking of a document's definitions, statements and proofs"
 version.workspace = true
 edition.workspace = true

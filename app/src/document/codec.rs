@@ -3,7 +3,7 @@ use super::{ATOM, ATOM_CHAR, Document, Formula};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use std::{collections::BTreeMap, ops::Range};
 
-const PENDING_PREFIX: &str = "<!--mathstral:pending:";
+const PENDING_PREFIX: &str = "<!--lvtex:pending:";
 
 impl Document {
     pub fn markdown(&self) -> String {
@@ -58,7 +58,7 @@ impl Document {
                         }
                         if let Some(prompt) = &f.prompt {
                             result.push_str(&format!(
-                                "<!--mathstral:{}-->",
+                                "<!--lvtex:{}-->",
                                 URL_SAFE_NO_PAD.encode(prompt)
                             ));
                         }
@@ -263,7 +263,7 @@ pub(super) fn decode(source: &str, unescape: bool) -> (String, BTreeMap<usize, F
                 };
                 i = end + delimiter.len();
                 let mut prompt = None;
-                let prefix = "<!--mathstral:";
+                let prefix = "<!--lvtex:";
                 if source[i..].starts_with(prefix)
                     && let Some(end) = source[i + prefix.len()..].find("-->")
                     && let encoded = &source[i + prefix.len()..i + prefix.len() + end]

@@ -1,5 +1,5 @@
-use mathstral_latex::{PRELUDE, convert};
-use mathstral_render::math::{Renderer, SCALE};
+use lvtex_latex::{PRELUDE, convert};
+use lvtex_render::math::{Renderer, SCALE};
 use mitex::{ArgPattern, ArgShape, CommandSpecItem};
 
 #[path = "fixtures/spec_allowlist.rs"]

@@ -209,7 +209,7 @@ fn clear_env(command: &mut Command) {
 fn spawn_reader(stdout: ChildStdout) -> Receiver<String> {
     let (tx, rx) = mpsc::channel();
     thread::Builder::new()
-        .name("mathstral-lean-output".into())
+        .name("lvtex-lean-output".into())
         .spawn(move || {
             let mut reader = BufReader::new(stdout);
             loop {

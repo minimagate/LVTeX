@@ -1,6 +1,6 @@
 //! The sample documents run through OpenRouter (Jev and the formalizer) and the Lean REPL. Needs the network,
 //! an OpenRouter key and the Lean project built. Run with
-//! `cargo test --release -p mathstral-mls --test documents -- --ignored --nocapture`.
+//! `cargo test --release -p lvtex-mls --test documents -- --ignored --nocapture`.
 //!
 //! Each document runs `MLS_LIVE_RUNS` times (default 3), each time with a fresh worker and Mls. Raw
 //! results go to `target/mls-live/<phase>/`: per document and run, a JSON record of every job and
@@ -8,7 +8,7 @@
 //! `MLS_LIVE_RUNS` (positive integer), `MLS_LIVE_FILTER` (case-insensitive substring of a document
 //! name), `MLS_LIVE_PHASE` (directory name under `target/mls-live`; default `unix-<seconds>`).
 
-use mathstral_mls::{
+use lvtex_mls::{
     Dot, FORMALIZER_MODEL, JEV_MODEL, Job, Label, Mls, Paragraph, Reply, Status, Worker,
 };
 
@@ -138,7 +138,7 @@ fn status_json(status: Option<Status>) -> Value {
     status.map_or(Value::Null, |status| json!(format!("{status:?}")))
 }
 
-fn failure_json(failure: &mathstral_mls::Failure) -> Value {
+fn failure_json(failure: &lvtex_mls::Failure) -> Value {
     json!({"message": failure.message, "service": failure.service})
 }
 

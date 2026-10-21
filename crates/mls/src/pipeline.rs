@@ -109,7 +109,7 @@ struct TagKey {
 }
 
 /// Opens the memory comment at the end of a twin. Its JSON is written on the lines after it.
-const MEMORY_OPEN: &str = "/- mathstral:memory\n";
+const MEMORY_OPEN: &str = "/- lvtex:memory\n";
 
 /// A fresh id for a paragraph, a piece or a version. Global, so a new `Mls` never reuses an id
 /// still in flight.
@@ -1418,7 +1418,7 @@ impl Mls {
         let mut twin = String::from("import Mathlib\n");
         for (id, label, lean) in self.plan().lean {
             twin.push_str(&format!(
-                "\n-- mathstral:block {id} {}\n{}\n",
+                "\n-- lvtex:block {id} {}\n{}\n",
                 label.name(),
                 lean.trim_end()
             ));

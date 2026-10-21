@@ -1909,15 +1909,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "mathstral"
+name = "lvtex"
 version = "0.2.0"
 dependencies = [
  "arboard",
  "base64 0.22.1",
  "cosmic-text",
- "mathstral-latex",
- "mathstral-mls",
- "mathstral-render",
+ "lvtex-latex",
+ "lvtex-mls",
+ "lvtex-render",
  "muda",
  "rfd",
  "ropey",
@@ -1928,23 +1928,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "mathstral-latex"
+name = "lvtex-latex"
 version = "0.2.0"
 dependencies = [
- "mathstral-render",
+ "lvtex-render",
  "mitex",
  "mitex-spec-gen",
 ]
 
 [[package]]
-name = "mathstral-mls"
+name = "lvtex-mls"
 version = "0.2.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
-name = "mathstral-render"
+name = "lvtex-render"
 version = "0.2.0"
 dependencies = [
  "tiny-skia 0.12.0",

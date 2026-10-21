@@ -56,7 +56,7 @@ pub fn confirm_unrendered(count: usize) -> bool {
         format!("{count} formulas haven’t rendered yet and will be exported as their prompt text.")
     };
     MessageDialog::new()
-        .set_title("Mathstral")
+        .set_title("LVTeX")
         .set_description(description)
         .set_level(MessageLevel::Warning)
         .set_buttons(MessageButtons::OkCancel)
@@ -71,7 +71,7 @@ pub fn write(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
     let path = fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
     let parent = path.parent().unwrap_or(Path::new("."));
     let temporary = parent.join(format!(
-        ".mathstral-{}-{}.tmp",
+        ".lvtex-{}-{}.tmp",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -98,7 +98,7 @@ pub fn write(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
 }
 fn state_path() -> Option<PathBuf> {
     std::env::var_os("HOME")
-        .map(|home| PathBuf::from(home).join("Library/Application Support/Mathstral/last-file"))
+        .map(|home| PathBuf::from(home).join("Library/Application Support/LVTeX/last-file"))
 }
 /// The per-user Lake project an installed app checks with, beside the other state files.
 pub fn lean_dir() -> Option<PathBuf> {
@@ -206,7 +206,7 @@ pub fn remember_window_geometry(geometry: WindowGeometry) {
 }
 pub fn error(action: &str, error: impl std::fmt::Display) {
     MessageDialog::new()
-        .set_title("Mathstral")
+        .set_title("LVTeX")
         .set_description(format!("{action}\n\n{error}"))
         .set_level(MessageLevel::Error)
         .show();
