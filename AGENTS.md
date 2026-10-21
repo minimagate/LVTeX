@@ -37,7 +37,7 @@ status dot beside it.
   Put public library tests in ordinary Cargo integration targets. Do not widen
   production visibility solely for tests.
 - `assets/fonts/`: required embedded fonts and upstream notices.
-- `assets/brand/`: the Mathstral and MLS logo marks (SVG).
+- `assets/brand/`: the Mathstral and MLS wordmarks (SVG, light and dark through `prefers-color-scheme`).
 - `scripts/`: build and packaging. Generated output belongs in ignored `target/`
   and `dist/`, never in the tracked source tree.
 - `.agents/skills/`: reusable coding guidance; start with `how-we-work` unless the

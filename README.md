@@ -1,6 +1,4 @@
-<p align="center"><img src="assets/brand/mathstral.svg" width="112" alt="Mathstral"></p>
-
-<h1 align="center">Mathstral</h1>
+<h1 align="center"><img src="assets/brand/mathstral.svg" width="360" alt="Mathstral"></h1>
 
 <p align="center">Write mathematics in prose. Let Lean check it.</p>
 
@@ -160,7 +158,7 @@ is retained as raw source; reopening without edits preserves the original source
 
 ## Lean checking (MLS)
 
-<img src="assets/brand/mls.svg" width="72" alt="MLS" align="right">
+<img src="assets/brand/mls.svg" width="88" alt="MLS" align="right">
 
 MLS, the Mathstral Language Server, reads the document a block at a time. A
 paragraph is a line; Enter closes it.
@@ -336,7 +334,7 @@ Each optional MLS test skips with a message when its key or Lean project is miss
 | `crates/mls/` | Lean checking: block state, OpenRouter, rejection rules, Lean REPL worker |
 | `lean/` | Pinned Lake project with Mathlib and the Lean REPL |
 | `app/tests/`, `crates/*/tests/` | Unit tests, integration scenarios and fixtures |
-| `assets/brand/` | Mathstral and MLS logo marks |
+| `assets/brand/` | Mathstral and MLS wordmarks |
 | `assets/fonts/` | Required fonts and license notices |
 | `scripts/` | App build and release packaging |
 | `.agents/skills/`, `AGENTS.md` | Repository guidance for coding agents |
