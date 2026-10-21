@@ -91,6 +91,71 @@ fn lean_path_sits_beside_the_document() {
 }
 
 #[test]
+fn a_panel_covers_only_its_drawn_area() {
+    let mut panel = Panel::new(1, false);
+    // Not yet drawn: it has no area, so it covers nothing.
+    assert!(!panel_covers(Some(&panel), 0.0, 0.0));
+    panel.area = (10.0, 10.0, 20.0, 20.0);
+    assert!(panel_covers(Some(&panel), 10.0, 10.0));
+    assert!(panel_covers(Some(&panel), 29.9, 29.9));
+    assert!(
+        !panel_covers(Some(&panel), 30.0, 15.0),
+        "right edge is outside"
+    );
+    assert!(!panel_covers(None, 15.0, 15.0));
+}
+
+#[test]
+fn lean_project_resolves_env_then_installed_copy_then_checkout() {
+    let env = PathBuf::from("/env/lean");
+    let user = PathBuf::from("/Users/u/Library/Application Support/Mathstral/lean");
+    let checkout = PathBuf::from("/src/mathstral/lean");
+    let cases = [
+        (
+            "the environment variable wins over both copies",
+            Some(env.clone()),
+            Some(user.clone()),
+            vec![user.clone(), checkout.clone()],
+            env.clone(),
+        ),
+        (
+            "an installed copy wins over the checkout",
+            None,
+            Some(user.clone()),
+            vec![user.clone(), checkout.clone()],
+            user.clone(),
+        ),
+        (
+            "the checkout is used when there is no installed copy",
+            None,
+            Some(user.clone()),
+            vec![checkout.clone()],
+            checkout.clone(),
+        ),
+        (
+            "with neither present, the installed path names where to put the project",
+            None,
+            Some(user.clone()),
+            vec![],
+            user.clone(),
+        ),
+        (
+            "without HOME the checkout is the fallback",
+            None,
+            None,
+            vec![],
+            checkout.clone(),
+        ),
+    ];
+    for (case, env, user, existing, expected) in cases {
+        let chosen = choose_lean_project(env, user, checkout.clone(), |path| {
+            existing.iter().any(|dir| dir.as_path() == path)
+        });
+        assert_eq!(chosen, expected, "{case}");
+    }
+}
+
+#[test]
 fn lean_path_never_names_the_document_or_a_users_own_lean_file() {
     for document in ["/docs/x.lean", "/docs/x.md", "/docs/Main.md"] {
         assert_ne!(lean_path(Path::new(document)), Path::new(document));

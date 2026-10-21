@@ -76,6 +76,9 @@ export OPENROUTER_API_KEY=…     # optional; for example in ~/.zshrc
 open -a Mathstral               # or run target/release/mathstral
 ```
 
+An installed copy checks with the Lean project in
+`~/Library/Application Support/Mathstral/lean`; see [Lean project](#lean-project).
+
 ### Privacy: what runs where
 
 | Feature | Runs | Sends |
@@ -268,9 +271,17 @@ lake exe cache get            # downloads prebuilt Mathlib
 lake build Mathlib repl
 ```
 
-A source build of Mathlib without the cache takes hours. Mathstral uses `lean/`
-of the checkout it was built from; set `MATHSTRAL_LEAN_PROJECT` to use another
-project. The model ids live in [`crates/mls/src/lib.rs`](crates/mls/src/lib.rs).
+A source build of Mathlib without the cache takes hours. Mathstral looks for the
+project in this order: `MATHSTRAL_LEAN_PROJECT` when it is set; then
+`~/Library/Application Support/Mathstral/lean` when it exists; then the `lean/` of
+the checkout it was built from.
+
+An installed copy (the release zip) has no checkout. Copy the repository's `lean/`
+files (`lakefile.toml`, `lean-toolchain` and `lake-manifest.json`) to
+`~/Library/Application Support/Mathstral/lean`, then run the same `lake exe cache get`
+and `lake build Mathlib repl` in that folder. A source build uses the checkout's
+`lean/`; `MATHSTRAL_LEAN_PROJECT` overrides both. The model ids live in
+[`crates/mls/src/lib.rs`](crates/mls/src/lib.rs).
 HTTPS requests go through the system `curl`, which reads the key from its
 standard input, never from its arguments.
 

@@ -61,10 +61,32 @@ fn row(text: String, mono: bool, scale: f32, color: u32, gap: f32) -> PanelRow {
     }
 }
 
-/// The Lake project for the REPL. `MATHSTRAL_LEAN_PROJECT` overrides the one in the repository.
+/// The Lake project for the REPL, chosen by `choose_lean_project`.
 pub(super) fn lean_project() -> PathBuf {
-    std::env::var_os("MATHSTRAL_LEAN_PROJECT")
-        .map_or_else(|| PathBuf::from(LEAN_PROJECT), PathBuf::from)
+    choose_lean_project(
+        std::env::var_os("MATHSTRAL_LEAN_PROJECT").map(PathBuf::from),
+        file::lean_dir(),
+        PathBuf::from(LEAN_PROJECT),
+        |path| path.is_dir(),
+    )
+}
+
+/// Chooses the Lake project: `MATHSTRAL_LEAN_PROJECT` when set; else the per-user copy an installed
+/// app uses, when it exists; else the checkout's `lean/`, when it exists. Otherwise the per-user path,
+/// so the REPL's "No Lean project at …" message names where to put it. `user` is None only without
+/// HOME, and then the checkout is the fallback.
+fn choose_lean_project(
+    env: Option<PathBuf>,
+    user: Option<PathBuf>,
+    checkout: PathBuf,
+    exists: impl Fn(&Path) -> bool,
+) -> PathBuf {
+    match (env, user) {
+        (Some(env), _) => env,
+        (None, Some(user)) if exists(&user) => user,
+        (None, _) if exists(&checkout) => checkout,
+        (None, user) => user.unwrap_or(checkout),
+    }
 }
 
 impl App {
@@ -79,8 +101,7 @@ impl App {
         // The old paragraph indices still match `mls_lines` and the layout, so read the anchors now.
         // A dot that has already gone keeps its anchor: its index no longer names its paragraph.
         for fade in self.fades.values_mut().filter(|fade| fade.to.is_some()) {
-            fade.anchor = document_row(&self.mls_lines, &self.layout, fade.paragraph)
-                .map(|(top, height)| top + height / 2.0);
+            fade.anchor = dot_anchor(&self.mls_lines, &self.layout, fade.paragraph);
         }
         let caret = self.doc.caret;
         let mut paragraphs = Vec::new();
@@ -154,6 +175,11 @@ impl App {
         let live: HashSet<u64> = dots.iter().map(|dot| dot.key).collect();
         for (key, fade) in &mut self.fades {
             if fade.to.is_some() && !live.contains(key) {
+                // A dot started since the last sync has no anchor yet. Between syncs the layout still
+                // matches `mls_lines`, so it can take one now; otherwise it would vanish without a fade.
+                if fade.anchor.is_none() && !self.layout_dirty {
+                    fade.anchor = dot_anchor(&self.mls_lines, &self.layout, fade.paragraph);
+                }
                 fade.from = shown(fade, now).0;
                 fade.to = None;
                 fade.start = now;
@@ -248,12 +274,6 @@ impl App {
     ) {
         let now = Instant::now();
         let view = height as f32 / scale;
-        // The open panel, once laid out, covers the dots beneath it.
-        let panel = self
-            .panel
-            .as_ref()
-            .map(|panel| panel.area)
-            .filter(|area| area.2 > 0.0);
         for fade in self.fades.values() {
             let (Some(color), alpha) = shown(fade, now) else {
                 continue;
@@ -274,10 +294,7 @@ impl App {
             if y + DOT_RADIUS < 0.0 || y - DOT_RADIUS > view {
                 continue;
             }
-            if panel.is_some_and(|area| contains(area, x, y))
-                || self.chart_covers(x, y)
-                || self.settings_covers(x, y)
-            {
+            if self.dot_covered(x, y) {
                 continue;
             }
             render::dot(
@@ -294,6 +311,7 @@ impl App {
     }
 
     /// The key of the dot whose centre is within HIT_RADIUS of (x, y), in logical window coordinates.
+    /// A dot hidden under the panel, the chart or Settings is not hit.
     fn dot_at(&self, x: f32, y: f32) -> Option<u64> {
         let left = self.dimensions().3;
         self.dots
@@ -301,10 +319,18 @@ impl App {
             .find(|dot| {
                 self.dot_center(dot.paragraph, left)
                     .is_some_and(|(cx, cy)| {
-                        !self.chart_covers(cx, cy) && (cx - x).hypot(cy - y) <= DOT_HIT_RADIUS
+                        !self.dot_covered(cx, cy) && (cx - x).hypot(cy - y) <= DOT_HIT_RADIUS
                     })
             })
             .map(|dot| dot.key)
+    }
+
+    /// True when a dot centred at (x, y) lies under the open panel, the chart or Settings. Drawing and
+    /// hit tests both use it, so a hidden dot neither shows nor takes the pointer.
+    fn dot_covered(&self, x: f32, y: f32) -> bool {
+        panel_covers(self.panel.as_ref(), x, y)
+            || self.chart_covers(x, y)
+            || self.settings_covers(x, y)
     }
 
     /// The panel's rows in order, and the index of the Lean toggle among them.
@@ -683,6 +709,11 @@ fn document_row(lines: &[Range<usize>], layout: &Layout, paragraph: usize) -> Op
     (row.start == start).then_some((row.top, row.height))
 }
 
+/// A dot's anchor: the centre height, in document coordinates, of its paragraph's first visual row.
+fn dot_anchor(lines: &[Range<usize>], layout: &Layout, paragraph: usize) -> Option<f32> {
+    document_row(lines, layout, paragraph).map(|(top, height)| top + height / 2.0)
+}
+
 /// The top and height, in document coordinates, of a paragraph's last visual row.
 fn last_document_row(
     lines: &[Range<usize>],
@@ -732,6 +763,11 @@ fn mix(from: u32, to: u32, t: f32) -> u32 {
 
 pub(super) fn contains((left, top, w, h): (f32, f32, f32, f32), x: f32, y: f32) -> bool {
     x >= left && x < left + w && y >= top && y < top + h
+}
+
+/// True when (x, y) lies in the open panel's drawn area. A panel that has not been drawn has none.
+fn panel_covers(panel: Option<&Panel>, x: f32, y: f32) -> bool {
+    panel.is_some_and(|panel| panel.area.2 > 0.0 && contains(panel.area, x, y))
 }
 
 #[cfg(test)]
