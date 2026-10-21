@@ -1,7 +1,5 @@
 <h1 align="center"><img src="assets/brand/lvtex.svg" width="360" alt="LVTeX"></h1>
 
-<p align="center">Write mathematics in prose. Let Lean check it.</p>
-
 <p align="center"><sub>Alpha 2 · native macOS app for Apple Silicon · written in Rust</sub></p>
 
 LVTeX **alpha 2** is a native macOS editor for prose with inline math, written
