@@ -209,6 +209,11 @@ pub(crate) fn uses(lean: &str, names_above: &[String]) -> Vec<String> {
     used
 }
 
+/// True when the Lean is nothing but whitespace and comments.
+pub(crate) fn is_blank(lean: &str) -> bool {
+    strip_comments(lean).trim().is_empty()
+}
+
 /// Rejects a formalization of `label` that must not be checked. `names_above`
 /// are the names declared by earlier blocks; `statement` is the paired
 /// statement's Lean for a proof.
@@ -218,10 +223,17 @@ pub(crate) fn reject(
     names_above: &[String],
     statement: Option<&str>,
 ) -> Result<(), String> {
-    let code = strip_comments(&formal.lean);
-    if code.trim().is_empty() {
-        return Err("The formalization is empty.".to_string());
+    if is_blank(&formal.lean) {
+        // A definition block that only fixes notation has nothing to declare; the pipeline gives
+        // it no dot. A statement or proof always has something to check.
+        return match label {
+            Label::Definition => Ok(()),
+            Label::Statement | Label::Proof | Label::Skip => {
+                Err("The formalization is empty.".to_string())
+            }
+        };
     }
+    let code = strip_comments(&formal.lean);
     if has_word(&code, "axiom") {
         return Err("The Lean declares an axiom.".to_string());
     }

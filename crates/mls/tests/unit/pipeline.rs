@@ -62,6 +62,10 @@ fn answer(job: &Job) -> Reply {
             if text.contains("FALSE") {
                 lean.push_str("\n-- FALSE");
             }
+            // A block that only fixes notation declares nothing, so its Lean is blank.
+            if text.contains("NOTATION") {
+                lean.clear();
+            }
             // A block whose text contains USES mentions every name above, as Lean that relies on
             // them would. `uses` then finds the ones it does not declare itself. A statement must end
             // in its `sorry` (see `rules::reject`), so its example goes above it.
@@ -322,18 +326,67 @@ fn a_proof_continues_over_lowercase_paragraphs_until_its_end_mark() {
 }
 
 #[test]
-fn an_unfinished_proof_at_the_end_gets_no_dot_and_no_formalize() {
+fn a_proof_without_an_end_mark_at_the_end_is_checked() {
     let mut mls = Mls::new();
     mls.sync(&paras(&["Lemma t.", "Proof. Never ends."]));
+    run(&mut mls, answer);
+
+    assert_eq!(
+        statuses(&mls),
+        [(0, Status::Verified), (1, Status::Verified)]
+    );
+}
+
+#[test]
+fn a_proof_ending_in_a_colon_at_the_end_waits_for_its_next_paragraph() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t.", "Proof. We compute:"]));
     let jobs = run(&mut mls, answer);
     let proof = id_of(&mls, 1);
 
-    assert_eq!(kinds(&jobs), ["classify", "classify", "formalize", "check"]);
     assert!(jobs.iter().all(|job| !matches!(
         job,
         Job::Formalize { block, .. } | Job::Check { block, .. } if *block == proof
     )));
     assert_eq!(statuses(&mls), [(0, Status::Sorry)]);
+}
+
+/// The shape of a document written without end marks: each proof ends where the next statement
+/// starts, and the last one is checked too.
+#[test]
+fn proofs_without_end_marks_each_get_a_dot() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&[
+        "Lemma a.",
+        "Proof. Argue.",
+        "Lemma b.",
+        "Proof. Argue again.",
+    ]));
+    run(&mut mls, answer);
+
+    assert_eq!(
+        statuses(&mls),
+        [
+            (0, Status::Verified),
+            (1, Status::Verified),
+            (2, Status::Verified),
+            (3, Status::Verified),
+        ]
+    );
+}
+
+#[test]
+fn a_definition_that_declares_nothing_gets_no_dot_and_the_blocks_below_go_on() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def NOTATION.", "Lemma t."]));
+    let jobs = run(&mut mls, answer);
+    let notation = id_of(&mls, 0);
+
+    assert!(jobs.iter().all(|job| !matches!(
+        job,
+        Job::Check { block, .. } if *block == notation
+    )));
+    assert_eq!(statuses(&mls), [(1, Status::Sorry)]);
 }
 
 #[test]

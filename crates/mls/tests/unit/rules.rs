@@ -109,18 +109,19 @@ fn declared_names_handles_a_large_document() {
 }
 
 #[test]
-fn rejects_empty_formalizations() {
+fn rejects_empty_statements_and_proofs_but_not_a_definition_that_declares_nothing() {
     check_cases(&[
         (Label::Proof, "", &[], None, Some(EMPTY)),
-        (Label::Definition, " \n\t", &[], None, Some(EMPTY)),
         (
-            Label::Definition,
+            Label::Statement,
             "-- only a comment\n",
             &[],
             None,
             Some(EMPTY),
         ),
-        (Label::Definition, "/- only -/", &[], None, Some(EMPTY)),
+        (Label::Definition, " \n\t", &[], None, None),
+        (Label::Definition, "-- only a comment\n", &[], None, None),
+        (Label::Definition, "/- only -/", &[], None, None),
     ]);
 }
 

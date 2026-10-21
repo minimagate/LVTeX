@@ -202,8 +202,7 @@ remove any saved key in Settings, and relaunch: one red dot explains why.
 - A block keeps its Lean when blocks above it change, unless it uses a name that no
   block above declares any more. Then it is formalized again (Phase 3).
 - A paragraph is a line, and Jev decides which paragraphs make up a block (Phase 3).
-  A proof must end with ∎, or be followed by a paragraph that does not join it, to
-  be checked.
+  A proof is checked once Enter closes it, with or without ∎ (Phase 5).
 - One job runs at a time. Jev labels every new paragraph before any
   formalization, and a long document's first pass takes a while.
 - Lean re-checks every block on open (about 10 s to import Mathlib, then the
@@ -244,8 +243,8 @@ you wrote. It now also requires everything the block uses to be verified.**
   continues and the paragraph is skip, or the block above is prose, or the labels
   match. So "Let G be a group." followed by "Then …" is one statement, whose dot sits
   on the setup line. A statement and the display formula under it are one block,
-  which Haiku formalizes whole. The last block gets no dot and no request while it is
-  an unfinished proof or ends in `:` or `,`.
+  which Haiku formalizes whole. The last block gets no dot and no request while it
+  ends in `:` or `,` (until Phase 5, also while it was a proof without ∎).
   Jev's answers are remembered by the paragraph above, its text and whether a proof
   is open. Editing a paragraph asks Jev again for it and for the paragraph below;
   until Jev answers, the old answers keep the blocks and dots in place. A block's
@@ -363,3 +362,34 @@ key. Mathstral → Settings… (⌘,) opens it.
 - ⌘, and the menu item (muda menus do not run on Linux).
 - The macOS Keychain access prompt. All Keychain calls run on the main thread, so a
   prompt blocks the window until it is answered.
+
+## Phase 5: prose written without markers
+
+A document pasted line by line, written as plain prose with no "Lemma", "Proof" or ∎,
+showed a red first line and no dots after its fourth block. A replay of the real Jev
+and Haiku answers on the Mac showed three causes:
+
+- "Throughout, $n$, $m$ and $k$ are natural numbers." was labelled a definition. Haiku
+  had nothing to declare, and the rules rejected its comment-only Lean as empty, so it
+  turned red.
+- A paragraph inserted later ("Writing $n = 2a$, …", a proof without ∎) made the
+  paragraphs below it be asked again with `proof_in_progress` true. Jev's instruction
+  said "answer proof if it continues that argument", so it labelled the next claim
+  ("It follows that $n^2 + n$ is even …") and a remark as proof too. One proof
+  swallowed the statements below it.
+- The last proof had no ∎, so it stayed open and was never checked.
+
+Fixes:
+
+- Jev's instruction is neutral about `proof_in_progress`: an open proof may already be
+  complete, a new claim is a statement even right after a proof ("It follows that",
+  "One might guess that"), and a remark is skip. The definition criterion excludes
+  conventions that only fix what letters stand for; they are skip.
+- Haiku may answer blank Lean for a definition block that declares nothing. The rules
+  accept it for a definition only, and such a block gets no dot.
+- A proof is closed by Enter like any other block. The last block waits only while it
+  ends in `:` or `,`.
+
+Verified here with the unit tests (the shape of a document without end marks, a
+definition that declares nothing, a trailing proof). Jev's new instruction is
+unverified live: re-run the same paste on the Mac.

@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{Value, json};
 
-use crate::rules::declared_names;
+use crate::rules::{declared_names, is_blank};
 use crate::{Checked, Failure, Formal, Job, Label, Outcome, Reply, Status, Tag};
 
 /// One non-blank line of the document. `open` while the caret is in it or a formula in it is unfinished.
@@ -138,8 +138,7 @@ struct Block {
     text: String,
     /// Definition, Statement or Proof; never Skip.
     label: Label,
-    /// False while a proof is unfinished, or while a statement or definition ends in ':' or ','
-    /// and may still continue. See `segment`.
+    /// False while the last block ends in ':' or ',' and may still continue. See `segment`.
     closed: bool,
     /// The text of the prose unit right above `first`, if there is one.
     prose: Option<String>,
@@ -563,8 +562,9 @@ impl Mls {
     /// while Jev answers. A paragraph with no tag at all is the frontier: the first one counts as a
     /// separator, so nothing joins it until Jev answers, and a second one stops the walk. A pending
     /// Classify job always runs first, so a provisional tag never leads to a Formalize or Check.
-    /// A block is open, so it takes no formal yet, while its proof is unfinished or while its last
-    /// paragraph ends in ':' or ','.
+    /// The last block is open, so it takes no formal yet, while its last paragraph ends in ':' or
+    /// ','. A proof without ∎ is not open: Enter closes it like any other block, and a paragraph
+    /// that joins it later formalizes it again.
     fn segment(&mut self) {
         let paras = &self.paras;
         let labels = &self.labels;
@@ -718,22 +718,10 @@ impl Mls {
             }
             previous = Some(text);
         }
-        if let Some(Unit {
-            block: Some(b),
-            kind,
-            ended,
-            ..
-        }) = &unit
-        {
+        if let Some(Unit { block: Some(b), .. }) = &unit {
             let block = &mut new[*b];
-            let open = match kind {
-                Label::Proof => !*ended,
-                Label::Definition | Label::Statement | Label::Skip => {
-                    let last = settled_text(&paras[block.last]).trim_end();
-                    last.ends_with(':') || last.ends_with(',')
-                }
-            };
-            block.closed = !open;
+            let last = settled_text(&paras[block.last]).trim_end();
+            block.closed = !(last.ends_with(':') || last.ends_with(','));
         }
 
         let ids: HashSet<u64> = paras.iter().map(|para| para.id).collect();
@@ -1206,6 +1194,10 @@ impl Mls {
                     continue;
                 }
             };
+            // A definition block that only fixes notation declares nothing: no dot, nothing to check.
+            if b.label == Label::Definition && is_blank(&formal.lean) {
+                continue;
+            }
             // A name the Lean uses that no block above declares: the block it came from was renamed
             // or removed. A rejected block above may have declared it, so then it is not asked again.
             if let Some(name) = formal

@@ -171,8 +171,10 @@ anything else, which gets no dot), and whether it belongs to the same item as th
 paragraph above. Paragraphs that belong together form one block: a setup line and
 its claim, a statement and the displayed formula under it, or a proof that runs
 over several paragraphs until one that is not part of it, or until it ends with ∎.
-A block's dot sits beside its first paragraph. The last block gets no dot and no
-request while it is an unfinished proof or ends in `:` or `,`.
+A block's dot sits beside its first paragraph. A proof does not need ∎: Enter
+closes it like any other block. The last block waits, with no dot and no request,
+only while it ends in `:` or `,`. A convention that only fixes notation ("Throughout,
+$n$ is a natural number") declares nothing and gets no dot.
 
 Claude Haiku 5.5 (`anthropic/claude-haiku-5.5`) formalizes each block into Lean as
 one item, given the Lean of the blocks above and the prose run above it; statements
