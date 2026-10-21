@@ -1,11 +1,11 @@
 //! The background thread that runs MLS jobs: model requests and Lean checks, one at a time.
 
 use crate::openrouter::{
-    self, CHAT_URL, DECISIONS_URL, classify_request, formalize_request, parse_formal, parse_split,
-    parse_tag, split_request,
+    self, CHAT_URL, DECISIONS_URL, classify_request, formalize_request, items_request,
+    parse_formal, parse_items, parse_split, parse_tag, split_request,
 };
 use crate::repl::Repl;
-use crate::{Checked, Failure, Formal, Job, Label, Reply, rules};
+use crate::{Checked, Failure, Formal, Job, Label, Reply, Tag, rules};
 use serde_json::Value;
 use std::{
     fmt,
@@ -123,9 +123,26 @@ fn run(
             text,
             proof_open,
         } => {
-            let request_body = classify_request(previous.as_deref(), text, *proof_open);
-            let result =
-                request(DECISIONS_URL, &request_body).and_then(|response| parse_tag(&response));
+            let result = request(
+                DECISIONS_URL,
+                &items_request(previous.as_deref(), text, *proof_open),
+            )
+            .and_then(|response| parse_items(&response))
+            .and_then(|several| {
+                if several {
+                    Ok(Tag {
+                        label: Label::Skip,
+                        joins: false,
+                        split: true,
+                    })
+                } else {
+                    request(
+                        DECISIONS_URL,
+                        &classify_request(previous.as_deref(), text, *proof_open),
+                    )
+                    .and_then(|response| parse_tag(&response))
+                }
+            });
             Reply::Classified {
                 paragraph: *paragraph,
                 previous: previous.clone(),
@@ -134,11 +151,16 @@ fn run(
                 result,
             }
         }
-        Job::Split { paragraph, text } => Reply::Split {
+        Job::Split {
+            paragraph,
+            text,
+            context,
+        } => Reply::Split {
             paragraph: *paragraph,
             text: text.clone(),
-            result: request(CHAT_URL, &split_request(text))
-                .and_then(|response| parse_split(&response, text)),
+            context: context.clone(),
+            result: request(CHAT_URL, &split_request(text, context))
+                .and_then(|response| parse_split(&response, text, context)),
         },
         Job::Formalize {
             block,
@@ -269,9 +291,14 @@ fn failure_reply(job: &Job, failure: Failure) -> Reply {
             proof_open: *proof_open,
             result: Err(failure),
         },
-        Job::Split { paragraph, text } => Reply::Split {
+        Job::Split {
+            paragraph,
+            text,
+            context,
+        } => Reply::Split {
             paragraph: *paragraph,
             text: text.clone(),
+            context: context.clone(),
             result: Err(failure),
         },
         Job::Formalize {

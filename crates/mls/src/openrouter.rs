@@ -1,6 +1,6 @@
 //! OpenRouter: the Jev decision, the split of a paragraph and the formalization, sent through curl.
 
-use crate::{FORMALIZER_MODEL, Failure, Formal, JEV_MODEL, Label, Tag};
+use crate::{FORMALIZER_MODEL, Failure, Formal, JEV_MODEL, Label, Segment, SplitContext, Tag};
 use serde_json::{Value, json};
 use std::{
     borrow::Cow,
@@ -19,9 +19,19 @@ const CLASSIFY: &str = "Classify one paragraph of a mathematical document, or on
 
 const JOINS: &str = "Decide whether this paragraph belongs to the same mathematical item (a definition, a statement or a proof) as block_above, so that they must be formalized together. Sharing a topic is not the same item: prose that motivates, previews or comments on a result is a separate item from that result, even when the result follows right after it. A named new lemma, theorem, corollary, definition or proof begins a new item, even directly after prose. Continue only when this paragraph completes block_above: a setup that is still incomplete (\"Let x be ...\" or hypotheses) followed by the claim it sets up, a standalone displayed formula or clause of the statement, or a further paragraph of a proof that is still going.";
 
-const ITEMS: &str = "Decide whether this paragraph holds several items that must be checked separately, for example a statement followed by its proof, a definition followed by a claim about it, or two separate claims. Setup, hypotheses, a heading such as \"Lemma.\" and remarks belong to the item they serve. A statement with its clauses is one item, and so is a proof however many steps it has.";
+const ITEMS: &str = "Decide whether paragraph contains one mathematical item or several independently checkable mathematical items. Judge only paragraph, not block_above. A statement and its supporting proof are separate items, even when they share a sentence. Intermediate claims and computations within a proof belong to that proof. Separate statements are separate items even when they have the same role. Setup, hypotheses, defining conditions and clauses of one statement belong to that item. Use block_above only to interpret what paragraph is doing, never count its contents.";
 
-const SPLIT: &str = "Cut one paragraph of a mathematical document into its items, in order: each definition, each statement and each proof. Every piece is a verbatim, contiguous part of the paragraph. Together the pieces are the whole paragraph, in order, with nothing left out, added, reordered or reworded. Setup that a definition or statement needs stays with it. Connecting words and remarks go with the item next to them. Return only a JSON object with the field \"pieces\": the array of pieces.";
+const SPLIT: &str = r#"Identify the independently checkable definitions, statements and proofs in the current paragraph. Return its labeled items in document order, with explicit targets for proofs. Do not formalize into Lean.
+
+The input contains paragraph, the current text, and block_above, either null or the preceding paragraph with its role and text. Use block_above as context only; never include its text among the returned items.
+
+A statement and the supporting proof offered to establish it are separate items, even when they share a sentence. Intermediate claims and computations within an existing proof belong to that proof. Separate statements remain separate items even when they have the same role. Setup, hypotheses, defining conditions and clauses of one statement stay with the item they serve. A definition and a separate asserted property of it are separate items. Preserve the context of earlier definitions when interpreting later statements; a statement need not repeat that context in its text. Prose that is not a mathematical item has role skip; connecting prose serving an item stays with that item. At a cut between an assertion and its supporting argument, put the connective with the argument.
+
+Each item has a unique positive integer id, role (definition, statement, proof or skip), text, proves, and proves_previous. Every text is a verbatim contiguous part of paragraph. Concatenating the item texts in order must reproduce the entire paragraph exactly, including whitespace. Leave nothing out, and add, reorder or reword nothing. Assign whitespace at a cut to one of its adjacent items. Every item must contain a non-whitespace character.
+
+For a proof, proves is the id of an earlier returned statement it establishes, with proves_previous false; alternatively proves is null and proves_previous is true if it establishes block_above and block_above has role statement. Never target the proof itself or a definition. A proof cannot use both target forms. If the text is a proof but no preceding statement target is available, keep its proof role with proves null and proves_previous false. For every non-proof item, proves is null and proves_previous is false.
+
+Return only the JSON object required by the schema."#;
 
 const SYSTEM: &str = r#"You formalize one block of a mathematical document into Lean 4 with Mathlib.
 
@@ -171,8 +181,8 @@ pub(crate) fn post(url: &str, body: &Value, key: Option<&str>) -> Result<Value, 
     response(&String::from_utf8_lossy(&output.stdout))
 }
 
-/// The Jev request that asks for the kind of one paragraph (or piece of one), whether it continues
-/// the one above and whether it holds several items. `previous` is the block above (see
+/// The Jev request that asks for the kind of one paragraph and whether it continues
+/// the one above. `previous` is the block above (see
 /// `Job::Classify`), None for the first paragraph; `proof_open` tells Jev whether the paragraph may
 /// continue an unfinished proof.
 pub(crate) fn classify_request(previous: Option<&str>, text: &str, proof_open: bool) -> Value {
@@ -201,21 +211,12 @@ pub(crate) fn classify_request(previous: Option<&str>, text: &str, proof_open: b
                     "continues": "Completes the same definition, statement or proof as block_above: the claim that an incomplete setup (\"Let G be a group.\" or hypotheses) was waiting for, a standalone displayed formula or clause of the statement, or a further paragraph of a proof that is still going.",
                     "new": "Starts a new definition, statement or proof; or is motivational, introductory or other topical prose, even when it leads straight into the next result; or is unrelated prose; or block_above is null.",
                 }
-            },
-            "items": {
-                "type": "choice",
-                "instructions": ITEMS,
-                "criteria": {
-                    "one": "A single definition, statement or proof with the setup, heading and remarks that go with it; or prose that is not an item.",
-                    "several": "Two or more items that must be checked separately, for example a statement and its proof, a definition and a claim about it, or two separate claims.",
-                }
             }
         }
     })
 }
 
-/// What Jev chose for one paragraph. A missing or unknown label, or a missing answer about joining
-/// or about several items, is a service failure, not a guess.
+/// What Jev chose for one item. A missing or unknown label or joining answer is a service failure.
 pub(crate) fn parse_tag(response: &Value) -> Result<Tag, Failure> {
     let label = response["answers"]["kind"]["choice"]
         .as_str()
@@ -230,39 +231,77 @@ pub(crate) fn parse_tag(response: &Value) -> Result<Tag, Failure> {
             ));
         }
     };
-    let split = match response["answers"]["items"]["choice"].as_str() {
-        Some("several") => true,
-        Some("one") => false,
-        _ => {
-            return Err(service_failure(
-                "Jev did not say whether the paragraph holds several items.",
-            ));
-        }
-    };
     Ok(Tag {
         label,
         joins,
-        split,
+        split: false,
     })
 }
 
+/// A standalone gate: its answer is never coupled to kind or joins decisions.
+pub(crate) fn items_request(previous: Option<&str>, text: &str, proof_open: bool) -> Value {
+    json!({
+        "model": JEV_MODEL,
+        "state": {"block_above": previous, "paragraph": text, "proof_in_progress": proof_open},
+        "questions": {"independent_items": {
+            "type": "choice", "instructions": ITEMS,
+            "criteria": {
+                "one": "One definition, one statement, one proof, or prose without mathematical items.",
+                "several": "Two or more items, such as separate statements, or a statement with its proof, or a definition followed by a separate claim."
+            }
+        }}
+    })
+}
+
+pub(crate) fn parse_items(response: &Value) -> Result<bool, Failure> {
+    match response["answers"]["independent_items"]["choice"].as_str() {
+        Some("several") => Ok(true),
+        Some("one") => Ok(false),
+        _ => Err(service_failure(
+            "Jev did not say whether the paragraph holds several items.",
+        )),
+    }
+}
+
 /// The request that cuts one paragraph into its items (see `Job::Split`).
-pub(crate) fn split_request(text: &str) -> Value {
+pub(crate) fn split_request(text: &str, context: &SplitContext) -> Value {
+    let above = context
+        .statement
+        .as_ref()
+        .map(|text| (Label::Statement, text))
+        .or_else(|| {
+            context
+                .previous
+                .as_ref()
+                .map(|(label, text)| (*label, text))
+        })
+        .map(|(label, text)| json!({"role": label.name(), "text": text}));
     json!({
         "model": FORMALIZER_MODEL,
         "temperature": 0,
         "max_tokens": 8192,
         "messages": [
             {"role": "system", "content": SPLIT},
-            {"role": "user", "content": text},
+            {"role": "user", "content": json!({"block_above": above, "paragraph": text}).to_string()},
         ],
         "response_format": {"type": "json_schema", "json_schema": {
-            "name": "split",
+            "name": "labeled_items",
             "strict": true,
             "schema": {
                 "type": "object",
-                "properties": {"pieces": {"type": "array", "items": {"type": "string"}}},
-                "required": ["pieces"],
+                "properties": {"items": {"type": "array", "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "integer", "minimum": 1},
+                        "role": {"type": "string", "enum": ["definition", "statement", "proof", "skip"]},
+                        "text": {"type": "string"},
+                        "proves": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+                        "proves_previous": {"type": "boolean"}
+                    },
+                    "required": ["id", "role", "text", "proves", "proves_previous"],
+                    "additionalProperties": false
+                }}},
+                "required": ["items"],
                 "additionalProperties": false,
             },
         }}
@@ -402,20 +441,113 @@ pub(crate) fn parse_formal(response: &Value) -> Result<Formal, Failure> {
 
 /// The pieces in the model's reply to a split of `text`, as the parts of `text` they stand for.
 /// Rejects a reply whose pieces are not the whole paragraph in order (see `parts`).
-pub(crate) fn parse_split(response: &Value, text: &str) -> Result<Vec<String>, Failure> {
+pub(crate) fn parse_split(
+    response: &Value,
+    text: &str,
+    context: &SplitContext,
+) -> Result<Vec<Segment>, Failure> {
     let json = reply_object(response, "split")?;
-    let pieces = json
-        .get("pieces")
+    segments(&json, text, context)
+}
+
+/// Shared validation for model replies, worker replies and saved memory. Relations that require
+/// rebuilding intervening Lean environments are rejected explicitly rather than rebound.
+pub(crate) fn segments(
+    json: &Value,
+    text: &str,
+    context: &SplitContext,
+) -> Result<Vec<Segment>, Failure> {
+    let invalid = || {
+        block_failure(
+            "Invalid labeled segmentation: expected unique positive IDs, roles, text and proof targets.",
+        )
+    };
+    let entries = json
+        .get("items")
         .and_then(Value::as_array)
-        .and_then(|items| {
-            items
-                .iter()
-                .map(|piece| piece.as_str().map(str::to_string))
-                .collect::<Option<Vec<_>>>()
-        })
-        .ok_or_else(|| block_failure("The formalizer's JSON has no `pieces`."))?;
-    parts(text, &pieces)
-        .ok_or_else(|| block_failure("The paragraph could not be split into its items."))
+        .ok_or_else(invalid)?;
+    if json.as_object().is_none_or(|object| object.len() != 1) || entries.is_empty() {
+        return Err(invalid());
+    }
+    let mut items: Vec<Segment> = Vec::new();
+    for entry in entries {
+        if entry.as_object().is_none_or(|object| object.len() != 5) {
+            return Err(invalid());
+        }
+        let id = entry["id"]
+            .as_u64()
+            .filter(|id| *id > 0)
+            .ok_or_else(invalid)?;
+        let label = entry["role"]
+            .as_str()
+            .and_then(Label::from_name)
+            .ok_or_else(invalid)?;
+        let text = entry["text"].as_str().ok_or_else(invalid)?.to_owned();
+        let proves = match entry.get("proves") {
+            Some(Value::Null) => None,
+            Some(value) => Some(value.as_u64().filter(|id| *id > 0).ok_or_else(invalid)?),
+            None => return Err(invalid()),
+        };
+        let proves_previous = entry["proves_previous"].as_bool().ok_or_else(invalid)?;
+        if items.iter().any(|item| item.id == id) {
+            return Err(invalid());
+        }
+        if label != Label::Proof && (proves.is_some() || proves_previous) {
+            return Err(block_failure(
+                "Invalid labeled segmentation: a non-proof has a proof target.",
+            ));
+        }
+        if label == Label::Proof {
+            if proves_previous && (proves.is_some() || context.statement.is_none())
+                || proves.is_some_and(|target| {
+                    !items
+                        .iter()
+                        .any(|item| item.id == target && item.label == Label::Statement)
+                })
+            {
+                return Err(block_failure(
+                    "Invalid labeled segmentation: a proof must target an earlier statement.",
+                ));
+            }
+            let last = items.iter().rev().find(|item| item.label != Label::Skip);
+            if proves.is_some_and(|target| last.is_none_or(|item| item.id != target))
+                || (proves_previous
+                    && (last.is_some()
+                        || context.previous.as_ref().is_some_and(|(role, text)| {
+                            *role == Label::Proof
+                                && (text.trim_end().ends_with('∎') || !items.is_empty())
+                        })))
+            {
+                return Err(block_failure(
+                    "Unsupported proof target: the statement must directly precede its proof; move intervening items after the proof.",
+                ));
+            }
+        }
+        items.push(Segment {
+            id,
+            label,
+            text,
+            proves,
+            proves_previous,
+        });
+    }
+    let texts: Vec<String> = items.iter().map(|item| item.text.clone()).collect();
+    let covered = parts(text, &texts).ok_or_else(|| {
+        block_failure(
+            "Invalid labeled segmentation: items must reproduce the whole paragraph in order.",
+        )
+    })?;
+    for (item, text) in items.iter_mut().zip(covered) {
+        item.text = text;
+    }
+    Ok(items)
+}
+
+pub(crate) fn segments_json(items: &[Segment]) -> Value {
+    json!({"items": items.iter().map(|item| json!({
+        "id": item.id, "role": item.label.name(), "text": item.text,
+        "proves": item.proves, "proves_previous": item.proves_previous,
+    })).collect::<Vec<_>>()})
 }
 
 /// The part of `text` that each of `pieces` stands for, when the pieces are `text` cut in order

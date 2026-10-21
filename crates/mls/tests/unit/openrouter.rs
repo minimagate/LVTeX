@@ -7,8 +7,10 @@ const MALFORMED: &str = "The OpenRouter key is malformed.";
 const NO_LABEL: &str = "Jev gave no label.";
 const NO_JOINS: &str = "Jev did not say whether the paragraph continues the one above.";
 const NO_ITEMS: &str = "Jev did not say whether the paragraph holds several items.";
-const NO_PIECES: &str = "The formalizer's JSON has no `pieces`.";
-const NOT_SPLIT: &str = "The paragraph could not be split into its items.";
+const NO_PIECES: &str =
+    "Invalid labeled segmentation: expected unique positive IDs, roles, text and proof targets.";
+const NOT_SPLIT: &str =
+    "Invalid labeled segmentation: items must reproduce the whole paragraph in order.";
 const NO_CONTENT: &str = "The formalizer sent no content.";
 const CUT_OFF: &str = "The formalization was cut off.";
 const INVALID_JSON: &str = "The formalizer did not return valid JSON.";
@@ -200,9 +202,17 @@ fn classify_request_asks_whether_the_paragraph_continues_the_one_above() {
 
 #[test]
 fn classify_request_asks_whether_the_paragraph_holds_several_items() {
-    let request = classify_request(None, "Lemma. $x = x$. Indeed, it is trivial.", false);
-    assert_eq!(request["questions"]["items"]["type"], "choice");
-    let criteria = request["questions"]["items"]["criteria"]
+    let request = items_request(None, "Lemma. $x = x$. Indeed, it is trivial.", false);
+    assert_eq!(request["questions"].as_object().unwrap().len(), 1);
+    assert_eq!(
+        classify_request(None, "x", false)["questions"]
+            .as_object()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(request["questions"]["independent_items"]["type"], "choice");
+    let criteria = request["questions"]["independent_items"]["criteria"]
         .as_object()
         .expect("criteria object");
     let mut keys: Vec<&str> = criteria.keys().map(String::as_str).collect();
@@ -211,23 +221,22 @@ fn classify_request_asks_whether_the_paragraph_holds_several_items() {
 }
 
 #[test]
-fn parse_tag_reads_each_label_whether_it_joins_and_whether_it_holds_several_items() {
+fn parse_tag_reads_each_label_and_whether_it_joins() {
     for label in Label::ALL {
         for (choice, joins) in [("continues", true), ("new", false)] {
-            for (items, split) in [("several", true), ("one", false)] {
+            {
                 let response = json!({"answers": {
                     "kind": {"choice": label.name()},
                     "joins": {"choice": choice},
-                    "items": {"choice": items},
                 }});
                 assert_eq!(
                     parse_tag(&response),
                     Ok(Tag {
                         label,
                         joins,
-                        split
+                        split: false
                     }),
-                    "{} {choice} {items}",
+                    "{} {choice}",
                     label.name()
                 );
             }
@@ -265,43 +274,67 @@ fn parse_tag_rejects_a_missing_or_unknown_answer_about_joining() {
 
 #[test]
 fn parse_tag_rejects_a_missing_or_unknown_answer_about_several_items() {
-    let kind = json!({"choice": "skip"});
-    let joins = json!({"choice": "new"});
     let cases = [
-        json!({"answers": {"kind": kind, "joins": joins}}),
-        json!({"answers": {"kind": kind, "joins": joins, "items": {"choice": null}}}),
-        json!({"answers": {"kind": kind, "joins": joins, "items": {"choice": "many"}}}),
+        json!({"answers": {}}),
+        json!({"answers": {"independent_items": {"choice": null}}}),
+        json!({"answers": {"independent_items": {"choice": "many"}}}),
     ];
     for response in cases {
-        assert_eq!(parse_tag(&response), Err(service(NO_ITEMS)), "{response}");
+        assert_eq!(parse_items(&response), Err(service(NO_ITEMS)), "{response}");
+    }
+    for (choice, several) in [("one", false), ("several", true)] {
+        assert_eq!(
+            parse_items(&json!({"answers": {"independent_items": {"choice": choice}}})),
+            Ok(several)
+        );
     }
 }
 
 #[test]
 fn split_request_sends_the_paragraph_to_the_formalizer_with_a_strict_schema() {
     let text = "**Lemma.** $x = x$. Indeed, it is trivial. ∎";
-    let request = split_request(text);
+    let request = split_request(text, &SplitContext::default());
     assert_eq!(request["model"], FORMALIZER_MODEL);
     assert_eq!(request["temperature"], 0);
     assert_eq!(request["messages"][0]["role"], "system");
     assert_eq!(request["messages"][0]["content"], SPLIT);
     assert_eq!(request["messages"][1]["role"], "user");
-    assert_eq!(request["messages"][1]["content"], text);
+    let input: Value =
+        serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(input["paragraph"], text);
     let format = &request["response_format"];
     assert_eq!(format["type"], "json_schema");
     assert_eq!(format["json_schema"]["strict"], true);
     let schema = &format["json_schema"]["schema"];
-    assert_eq!(schema["required"], json!(["pieces"]));
+    assert_eq!(schema["required"], json!(["items"]));
     assert_eq!(schema["additionalProperties"], false);
     assert_eq!(
-        schema["properties"]["pieces"],
-        json!({"type": "array", "items": {"type": "string"}})
+        schema["properties"]["items"]["items"]["additionalProperties"],
+        false
     );
 }
 
 /// The reply of a splitter whose pieces are `pieces`.
 fn split_reply(pieces: &[&str]) -> Value {
-    reply(json!(json!({"pieces": pieces}).to_string()))
+    reply(json!(segments_json(&split_items(pieces)).to_string()))
+}
+
+fn split_items(pieces: &[&str]) -> Vec<Segment> {
+    pieces
+        .iter()
+        .enumerate()
+        .map(|(index, text)| Segment {
+            id: index as u64 + 1,
+            label: if index == 1 && pieces.len() == 2 {
+                Label::Proof
+            } else {
+                Label::Statement
+            },
+            text: text.to_string(),
+            proves: (index == 1 && pieces.len() == 2).then_some(1),
+            proves_previous: false,
+        })
+        .collect()
 }
 
 #[test]
@@ -317,20 +350,23 @@ fn parse_split_returns_the_parts_of_the_paragraph_the_pieces_stand_for() {
     ];
     for pieces in [exact, respaced] {
         assert_eq!(
-            parse_split(&split_reply(&pieces), text),
-            Ok(exact.iter().map(|piece| piece.to_string()).collect()),
+            parse_split(&split_reply(&pieces), text, &SplitContext::default()),
+            Ok(split_items(&exact)),
             "{pieces:?}"
         );
     }
     assert_eq!(
-        parse_split(&split_reply(&[text]), text),
-        Ok(vec![text.to_string()]),
+        parse_split(&split_reply(&[text]), text, &SplitContext::default()),
+        Ok(split_items(&[text])),
         "one piece is the paragraph whole"
     );
-    let fenced = reply(json!(format!("```json\n{}\n```", json!({"pieces": exact}))));
+    let fenced = reply(json!(format!(
+        "```json\n{}\n```",
+        segments_json(&split_items(&exact))
+    )));
     assert_eq!(
-        parse_split(&fenced, text),
-        Ok(exact.iter().map(|piece| piece.to_string()).collect())
+        parse_split(&fenced, text, &SplitContext::default()),
+        Ok(split_items(&exact))
     );
 }
 
@@ -380,8 +416,12 @@ fn parse_split_rejects_pieces_that_are_not_the_paragraph_cut_in_order() {
     ];
     for (name, pieces) in cases {
         assert_eq!(
-            parse_split(&split_reply(pieces), text),
-            Err(block(NOT_SPLIT)),
+            parse_split(&split_reply(pieces), text, &SplitContext::default()),
+            Err(block(if pieces.is_empty() {
+                NO_PIECES
+            } else {
+                NOT_SPLIT
+            })),
             "{name}"
         );
     }
@@ -408,8 +448,72 @@ fn parse_split_rejects_truncated_malformed_and_empty_replies() {
         (reply(Value::Null), service(NO_CONTENT)),
     ];
     for (value, expected) in cases {
-        assert_eq!(parse_split(&value, text), Err(expected), "{value}");
+        assert_eq!(
+            parse_split(&value, text, &SplitContext::default()),
+            Err(expected),
+            "{value}"
+        );
     }
+}
+
+#[test]
+fn labeled_segmentation_validates_ids_roles_and_all_proof_target_forms() {
+    let text = "Claim. Argument.";
+    let valid = segments_json(&split_items(&["Claim.", "Argument."]));
+    let context = SplitContext::default();
+    for (field, value) in [
+        ("id", json!(0)),
+        ("id", json!(-1)),
+        ("id", json!(1.5)),
+        ("id", json!(1)),
+        ("role", json!("theorem")),
+        ("text", json!(3)),
+        ("proves", json!(0)),
+        ("proves", json!(2)),
+        ("proves", json!(3)),
+        ("proves", json!("1")),
+        ("proves_previous", json!(true)),
+        ("proves_previous", Value::Null),
+    ] {
+        let mut malformed = valid.clone();
+        malformed["items"][1][field] = value;
+        let failure = segments(&malformed, text, &context).unwrap_err();
+        assert!(!failure.service, "{malformed}");
+    }
+    let mut nonproof = valid.clone();
+    nonproof["items"][1]["role"] = json!("definition");
+    assert!(segments(&nonproof, text, &context).is_err());
+    let mut definition_target = valid.clone();
+    definition_target["items"][0]["role"] = json!("definition");
+    assert!(segments(&definition_target, text, &context).is_err());
+    let mut missing = valid.clone();
+    missing["items"][1]
+        .as_object_mut()
+        .unwrap()
+        .remove("proves");
+    assert!(segments(&missing, text, &context).is_err());
+
+    let previous = SplitContext {
+        previous: Some((Label::Statement, "Claim.".into())),
+        statement: Some("Claim.".into()),
+    };
+    let proof = json!({"items": [{"id": 7, "role": "proof", "text": "Argument.", "proves": null, "proves_previous": true}]});
+    assert!(segments(&proof, "Argument.", &previous).is_ok());
+    assert!(segments(&proof, "Argument.", &context).is_err());
+    let mut orphan = proof.clone();
+    orphan["items"][0]["proves_previous"] = json!(false);
+    assert!(
+        segments(&orphan, "Argument.", &context).is_ok(),
+        "orphan role is retained for an actionable pipeline error"
+    );
+
+    let separated = json!({"items": [
+        {"id": 1, "role": "statement", "text": "A.", "proves": null, "proves_previous": false},
+        {"id": 2, "role": "statement", "text": "B.", "proves": null, "proves_previous": false},
+        {"id": 3, "role": "proof", "text": "Proof of A.", "proves": 1, "proves_previous": false}
+    ]});
+    let failure = segments(&separated, "A. B. Proof of A.", &context).unwrap_err();
+    assert!(failure.message.starts_with("Unsupported proof target"));
 }
 
 #[test]

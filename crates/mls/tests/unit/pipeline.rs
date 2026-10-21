@@ -45,18 +45,45 @@ fn answer(job: &Job) -> Reply {
             proof_open: *proof_open,
             result: Ok(tag_for(previous.as_deref(), text, *proof_open)),
         },
-        Job::Split { paragraph, text } => Reply::Split {
+        Job::Split {
+            paragraph,
+            text,
+            context,
+        } => Reply::Split {
             paragraph: *paragraph,
             text: text.clone(),
+            context: context.clone(),
             result: if text.contains("UNSPLIT") {
                 Err(Failure {
                     message: "The paragraph could not be split into its items.".to_string(),
                     service: false,
                 })
             } else {
+                let mut statement = None;
                 Ok(text
                     .split_inclusive(" / ")
-                    .map(|piece| piece.trim().to_string())
+                    .enumerate()
+                    .map(|(index, piece)| {
+                        let label = tag_for(None, piece.trim(), false).label;
+                        let id = index as u64 + 1;
+                        let proves = if label == Label::Proof {
+                            statement
+                        } else {
+                            None
+                        };
+                        if label == Label::Statement {
+                            statement = Some(id);
+                        }
+                        Segment {
+                            id,
+                            label,
+                            text: piece.trim().to_string(),
+                            proves,
+                            proves_previous: label == Label::Proof
+                                && proves.is_none()
+                                && context.statement.is_some(),
+                        }
+                    })
                     .collect())
             },
         },
@@ -395,7 +422,7 @@ fn a_proof_ending_in_a_colon_at_the_end_waits_for_its_next_paragraph() {
     let mut mls = Mls::new();
     mls.sync(&paras(&["Lemma t.", "Proof. We compute:"]));
     let jobs = run(&mut mls, answer);
-    let proof = id_of(&mls, 1);
+    let proof = mls.blocks[1].id;
 
     assert!(jobs.iter().all(|job| !matches!(
         job,
@@ -447,7 +474,7 @@ fn a_proof_with_no_statement_above_fails_without_a_formalize() {
     let mut mls = Mls::new();
     mls.sync(&paras(&["Def d.", "Proof. Orphan. ∎"]));
     let jobs = run(&mut mls, answer);
-    let proof = id_of(&mls, 1);
+    let proof = mls.blocks[1].id;
 
     assert!(jobs.iter().all(|job| !matches!(
         job,
@@ -1266,6 +1293,14 @@ fn a_missing_or_malformed_memory_restores_nothing() {
             twin.replace("\"version\":3", "\"version\":2"),
         ),
         (
+            "unmarked version 3 memory",
+            twin.replace("\"segmentation_version\":1,", ""),
+        ),
+        (
+            "old segmentation revision",
+            twin.replace("\"segmentation_version\":1", "\"segmentation_version\":0"),
+        ),
+        (
             "no closing delimiter",
             twin.trim_end_matches("-/\n").to_string(),
         ),
@@ -1400,9 +1435,14 @@ fn the_twin_remembers_what_jev_said_about_joining() {
 /// The reply of a splitter that is down: the cut fails for a service.
 fn split_down(job: &Job) -> Reply {
     match job {
-        Job::Split { paragraph, text } => Reply::Split {
+        Job::Split {
+            paragraph,
+            text,
+            context,
+        } => Reply::Split {
             paragraph: *paragraph,
             text: text.clone(),
+            context: context.clone(),
             result: Err(Failure {
                 message: MISSING_KEY.to_string(),
                 service: true,
@@ -1422,8 +1462,6 @@ fn a_paragraph_with_a_statement_and_its_proof_is_read_as_two_blocks() {
         [
             "classify",
             "split",
-            "classify",
-            "classify",
             "formalize",
             "check",
             "formalize",
@@ -1434,26 +1472,26 @@ fn a_paragraph_with_a_statement_and_its_proof_is_read_as_two_blocks() {
     assert_ne!(statement, proof);
     assert!(matches!(
         &jobs[1],
-        Job::Split { paragraph, text } if *paragraph == id_of(&mls, 0) && text == "Lemma t. / Proof. ok ∎"
+        Job::Split { paragraph, text, .. } if *paragraph == id_of(&mls, 0) && text == "Lemma t. / Proof. ok ∎"
     ));
     assert!(matches!(
         &jobs[2],
-        Job::Classify { paragraph, previous: None, text, .. } if *paragraph == statement && text == "Lemma t. /"
+        Job::Formalize { block, label: Label::Statement, text, .. } if *block == statement && text == "Lemma t. /"
     ));
     assert!(matches!(
-        &jobs[3],
-        Job::Classify { paragraph, previous: Some(above), text, proof_open: false }
-            if *paragraph == proof && above == "Lemma t. /" && text == "Proof. ok ∎"
+        &jobs[4],
+        Job::Formalize { block, label: Label::Proof, text, .. }
+            if *block == proof && text == "Proof. ok ∎"
     ));
     assert_eq!(formalized(&jobs), [statement, proof]);
     let Job::Formalize {
         statement: above, ..
-    } = &jobs[6]
+    } = &jobs[4]
     else {
         panic!("the proof is formalized")
     };
     assert!(above.is_some(), "the proof pairs with the statement piece");
-    let Job::Check { block, base, .. } = &jobs[7] else {
+    let Job::Check { block, base, .. } = &jobs[5] else {
         panic!("the proof is checked")
     };
     assert_eq!(
@@ -1486,6 +1524,519 @@ fn a_definition_a_statement_and_a_proof_in_one_paragraph_are_three_blocks_and_on
     assert_eq!(labels, [Label::Definition, Label::Statement, Label::Proof]);
     assert_eq!(statuses(&mls), [(0, Status::Verified)]);
     assert_eq!(mls.details(mls.blocks[0].id).len(), 3);
+}
+
+fn labeled_reply(job: &Job, items: Vec<Segment>) -> Reply {
+    let Job::Split {
+        paragraph,
+        text,
+        context,
+    } = job
+    else {
+        panic!("expected segmentation")
+    };
+    Reply::Split {
+        paragraph: *paragraph,
+        text: text.clone(),
+        context: context.clone(),
+        result: Ok(items),
+    }
+}
+
+fn labeled_items(pieces: &[(Label, &str, Option<u64>)]) -> Vec<Segment> {
+    pieces
+        .iter()
+        .enumerate()
+        .map(|(index, (label, text, proves))| Segment {
+            id: index as u64 + 1,
+            label: *label,
+            text: text.to_string(),
+            proves: *proves,
+            proves_previous: false,
+        })
+        .collect()
+}
+
+#[test]
+fn mixed_mathematics_uses_authoritative_labels_and_reaches_statement_and_proof_checks() {
+    let cases = [
+        vec![
+            (
+                Label::Statement,
+                "**Lemma.** For every natural number $n$, $n^2+n$ is even.",
+                None,
+            ),
+            (
+                Label::Proof,
+                "Indeed, $n^2+n=n(n+1)$ and one of $n$ and $n+1$ is even. ∎",
+                Some(1),
+            ),
+        ],
+        vec![
+            (
+                Label::Definition,
+                "Define $q(x)=(x-1)^2$ for real $x$.",
+                None,
+            ),
+            (
+                Label::Statement,
+                r"Then $q(x)\ge 0$ for every real $x$,",
+                None,
+            ),
+            (Label::Proof, "since squares are nonnegative.", Some(2)),
+        ],
+        vec![
+            (Label::Statement, "Every real square is nonnegative.", None),
+            (
+                Label::Statement,
+                "Every natural number doubled is even.",
+                None,
+            ),
+        ],
+    ];
+    for pieces in cases {
+        let text = pieces
+            .iter()
+            .map(|(_, text, _)| *text)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let items = labeled_items(&pieces);
+        let mut mls = Mls::new();
+        mls.sync(&paras(&[&text]));
+        let jobs = run(&mut mls, |job| match job {
+            Job::Classify { .. } => {
+                let mut reply = answer(job);
+                if let Reply::Classified { result, .. } = &mut reply {
+                    *result = Ok(Tag {
+                        label: Label::Skip,
+                        joins: false,
+                        split: true,
+                    });
+                }
+                reply
+            }
+            Job::Split { .. } => labeled_reply(job, items.clone()),
+            _ => answer(job),
+        });
+        assert_eq!(
+            jobs.iter()
+                .filter(|job| matches!(job, Job::Classify { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            mls.blocks
+                .iter()
+                .map(|block| block.label)
+                .collect::<Vec<_>>(),
+            items.iter().map(|item| item.label).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            jobs.iter()
+                .filter(|job| matches!(job, Job::Check { .. }))
+                .count(),
+            items.len()
+        );
+        for block in mls
+            .blocks
+            .iter()
+            .filter(|block| block.label == Label::Proof)
+        {
+            assert_eq!(block.statement, Some(mls.blocks[mls.blocks.len() - 2].id));
+        }
+        mls.sync(&paras(&[&text]));
+        assert!(
+            mls.next_job().is_none(),
+            "unchanged labeled proof must not loop"
+        );
+    }
+}
+
+#[test]
+fn an_ordinary_unpaired_proof_gets_exactly_one_segmentation_recovery() {
+    let text = "Proof. A claim and its argument.";
+    let mut mls = Mls::new();
+    mls.sync(&paras(&[text]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(kinds(&jobs), ["classify", "split"]);
+    assert_eq!(statuses(&mls), [(0, Status::Failed)]);
+    mls.retry();
+    mls.sync(&paras(&[text]));
+    assert!(mls.next_job().is_none());
+    let mut reopened = restored(&mls.twin(), &[text]);
+    assert!(
+        reopened.next_job().is_none(),
+        "unpaired labeled proof remains a structural error after reopen"
+    );
+
+    let mut recovered = Mls::new();
+    recovered.sync(&paras(&[text]));
+    let jobs = run(&mut recovered, |job| match job {
+        Job::Split { .. } => labeled_reply(
+            job,
+            labeled_items(&[
+                (Label::Statement, "Proof. A claim", None),
+                (Label::Proof, "and its argument.", Some(1)),
+            ]),
+        ),
+        _ => answer(job),
+    });
+    assert_eq!(
+        kinds(&jobs),
+        [
+            "classify",
+            "split",
+            "formalize",
+            "check",
+            "formalize",
+            "check"
+        ]
+    );
+    assert_eq!(statuses(&recovered), [(0, Status::Verified)]);
+}
+
+#[test]
+fn recovery_after_a_definition_checks_the_extracted_statement_before_its_proof() {
+    let definition = "Define $q(x)=(x-1)^2$ for real $x$.";
+    let residual = r"Then $q(x)\ge 0$ for every real $x$, since squares are nonnegative.";
+    let pieces = labeled_items(&[
+        (
+            Label::Statement,
+            r"Then $q(x)\ge 0$ for every real $x$,",
+            None,
+        ),
+        (Label::Proof, "since squares are nonnegative.", Some(1)),
+    ]);
+    let mut mls = Mls::new();
+    mls.sync(&paras(&[definition, residual]));
+    let jobs = run(&mut mls, |job| match job {
+        Job::Classify { text, .. } if text == residual => {
+            let mut reply = answer(job);
+            if let Reply::Classified { result, .. } = &mut reply {
+                // A false-negative gate followed by a proof label must still recover generically.
+                *result = Ok(Tag {
+                    label: Label::Proof,
+                    joins: false,
+                    split: false,
+                });
+            }
+            reply
+        }
+        Job::Split { context, .. } => {
+            assert_eq!(
+                context.previous,
+                Some((Label::Definition, definition.to_string()))
+            );
+            assert_eq!(context.statement, None);
+            labeled_reply(job, pieces.clone())
+        }
+        _ => answer(job),
+    });
+    assert_eq!(
+        kinds(&jobs),
+        [
+            "classify",
+            "classify",
+            "split",
+            "formalize",
+            "check",
+            "formalize",
+            "check",
+            "formalize",
+            "check"
+        ]
+    );
+    let definition_env = 100 + mls.blocks[0].version;
+    let bases: Vec<u64> = jobs
+        .iter()
+        .filter_map(|job| match job {
+            Job::Check { base, .. } => Some(*base),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(bases, [0, definition_env, definition_env]);
+    let lean_above = jobs
+        .iter()
+        .find_map(|job| match job {
+            Job::Formalize {
+                label: Label::Statement,
+                lean_above,
+                ..
+            } => Some(lean_above),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(lean_above.len(), 1, "the definition remains in context");
+    assert_eq!(lean_above[0].0, mls.blocks[0].id);
+    assert_eq!(mls.blocks[2].statement, Some(mls.blocks[1].id));
+    assert_eq!(
+        statuses(&mls),
+        [(0, Status::Verified), (1, Status::Verified)]
+    );
+    mls.retry();
+    assert!(mls.next_job().is_none(), "recovery is not repeated");
+
+    let mut reopened = restored(&mls.twin(), &[definition, residual]);
+    assert_eq!(
+        kinds(&run(&mut reopened, answer)),
+        ["check", "check", "check"]
+    );
+}
+
+#[test]
+fn a_labeled_proof_targeting_the_previous_statement_continues_its_open_proof() {
+    let mut mls = Mls::new();
+    let before = ["Lemma t.", "Proof. first step"];
+    mls.sync(&paras(&before));
+    run(&mut mls, answer);
+    let proof_id = mls.blocks[1].id;
+    let continuation = "continuation / with its last step ∎";
+    mls.sync(&paras(&[before[0], before[1], continuation]));
+    let jobs = run(&mut mls, |job| match job {
+        Job::Split { context, .. } => {
+            assert_eq!(context.statement.as_deref(), Some(before[0]));
+            assert_eq!(
+                context.previous,
+                Some((Label::Proof, before[1].to_string()))
+            );
+            labeled_reply(
+                job,
+                vec![Segment {
+                    id: 1,
+                    label: Label::Proof,
+                    text: continuation.to_string(),
+                    proves: None,
+                    proves_previous: true,
+                }],
+            )
+        }
+        _ => answer(job),
+    });
+    assert_eq!(kinds(&jobs), ["classify", "split", "formalize", "check"]);
+    assert_eq!(mls.blocks.len(), 2, "the proof remains a single block");
+    assert_eq!(mls.blocks[1].id, proof_id);
+    assert_eq!(mls.blocks[1].statement, Some(mls.blocks[0].id));
+    assert_eq!(
+        mls.blocks[1].text,
+        format!("{}\n\n{continuation}", before[1])
+    );
+    assert_eq!(
+        statuses(&mls),
+        [(0, Status::Verified), (1, Status::Verified)]
+    );
+}
+
+#[test]
+fn labeled_items_preserve_preceding_and_internal_prose_for_formalization() {
+    let convention = "Throughout, $x$ is a real number.";
+    let statement = r"Lemma. $x^2 \ge 0$.";
+    let proof = "Proof. Squares are nonnegative. ∎";
+    let mixed = format!("{statement} {proof}");
+    let internal = format!("{convention} {mixed}");
+    for (lines, text, pieces) in [
+        (
+            vec![convention, mixed.as_str()],
+            mixed.as_str(),
+            vec![
+                (Label::Statement, statement, None),
+                (Label::Proof, proof, Some(1)),
+            ],
+        ),
+        (
+            vec![internal.as_str()],
+            internal.as_str(),
+            vec![
+                (Label::Skip, convention, None),
+                (Label::Statement, statement, None),
+                (Label::Proof, proof, Some(2)),
+            ],
+        ),
+    ] {
+        let mut mls = Mls::new();
+        mls.sync(&paras(&lines));
+        let jobs = run(&mut mls, |job| match job {
+            Job::Classify { text: current, .. } if current == text => {
+                let mut reply = answer(job);
+                if let Reply::Classified { result, .. } = &mut reply {
+                    *result = Ok(Tag {
+                        label: Label::Skip,
+                        joins: false,
+                        split: true,
+                    });
+                }
+                reply
+            }
+            Job::Split { .. } => labeled_reply(job, labeled_items(&pieces)),
+            _ => answer(job),
+        });
+        let prose = jobs.iter().find_map(|job| match job {
+            Job::Formalize {
+                label: Label::Statement,
+                prose,
+                ..
+            } => Some(prose.as_deref()),
+            _ => None,
+        });
+        assert_eq!(prose, Some(Some(convention)), "{lines:?}");
+        assert_eq!(mls.blocks.len(), 2, "the items stay separate");
+        assert_eq!(mls.blocks[1].statement, Some(mls.blocks[0].id));
+    }
+}
+
+#[test]
+fn labeled_proofs_can_target_the_preceding_statement_across_prose() {
+    let statement = "Lemma. $x=x$.";
+    let prose = "We give the elementary argument.";
+    let proof = "Proof. Reflexivity. ∎";
+    let next = "Lemma. $0=0$.";
+    let mixed = format!("{proof} {next}");
+    let mut mls = Mls::new();
+    mls.sync(&paras(&[statement, prose, &mixed]));
+    let jobs = run(&mut mls, |job| match job {
+        Job::Classify { text, .. } if text == &mixed => {
+            let mut reply = answer(job);
+            if let Reply::Classified { result, .. } = &mut reply {
+                *result = Ok(Tag {
+                    label: Label::Skip,
+                    joins: false,
+                    split: true,
+                });
+            }
+            reply
+        }
+        Job::Split { context, .. } => {
+            assert_eq!(context.previous, Some((Label::Skip, prose.to_string())));
+            assert_eq!(context.statement.as_deref(), Some(statement));
+            let mut pieces =
+                labeled_items(&[(Label::Proof, proof, None), (Label::Statement, next, None)]);
+            pieces[0].proves_previous = true;
+            labeled_reply(job, pieces)
+        }
+        _ => answer(job),
+    });
+    assert_eq!(mls.blocks.len(), 3);
+    assert_eq!(mls.blocks[1].statement, Some(mls.blocks[0].id));
+    let proof_job = jobs
+        .iter()
+        .find(|job| {
+            matches!(
+                job,
+                Job::Formalize {
+                    label: Label::Proof,
+                    ..
+                }
+            )
+        })
+        .unwrap();
+    let Job::Formalize {
+        statement: target,
+        prose: context,
+        ..
+    } = proof_job
+    else {
+        unreachable!()
+    };
+    assert_eq!(context.as_deref(), Some(prose));
+    assert_eq!(
+        target.as_ref().unwrap().1,
+        format!("theorem t{} : True := by sorry", mls.blocks[0].id)
+    );
+}
+
+#[test]
+fn labeled_context_does_not_reuse_statements_across_math_or_ended_proofs() {
+    let statement = "Lemma. $x=x$.";
+    for prefix in [
+        vec![statement, "Def d.", "Some prose."],
+        vec![statement, "Proof. done ∎", "Some prose."],
+        vec![statement, "Proof. first step", "Some prose."],
+        vec![statement, "Proof. done ∎"],
+    ] {
+        let mut mls = Mls::new();
+        mls.sync(&paras(&prefix));
+        run(&mut mls, answer);
+        let mut lines = prefix.clone();
+        lines.push("Proof. another argument. / Lemma. $0=0$.");
+        mls.sync(&paras(&lines));
+        let split = run_until(&mut mls, |job| matches!(job, Job::Split { .. }));
+        let Job::Split { context, .. } = &split else {
+            unreachable!()
+        };
+        assert_eq!(context.statement, None, "{prefix:?}");
+        let mut pieces = labeled_items(&[
+            (Label::Proof, "Proof. another argument. /", None),
+            (Label::Statement, "Lemma. $0=0$.", None),
+        ]);
+        pieces[0].proves_previous = true;
+        assert!(mls.apply(labeled_reply(&split, pieces)));
+        assert!(mls.next_job().is_none(), "invalid link must not formalize");
+        let dot = mls.dots().pop().unwrap();
+        let details = mls.details(dot.key);
+        assert_eq!(details[0].status, Status::Failed);
+        assert!(
+            details[0]
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("a proof must target an earlier statement"),
+            "{prefix:?}"
+        );
+    }
+}
+
+#[test]
+fn split_replies_with_stale_context_are_ignored_and_editing_above_resegments() {
+    let mut mls = Mls::new();
+    let mixed = "Lemma t. / Proof. ok ∎";
+    mls.sync(&paras(&["Def a.", mixed]));
+    let stale = run_until(&mut mls, |job| matches!(job, Job::Split { .. }));
+    mls.sync(&paras(&["Def b.", mixed]));
+    assert!(!mls.apply(answer(&stale)));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(
+        jobs.iter()
+            .filter(|job| matches!(job, Job::Split { .. }))
+            .count(),
+        1
+    );
+    mls.sync(&paras(&["Def c.", mixed]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(
+        jobs.iter()
+            .filter(|job| matches!(job, Job::Split { .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn malformed_coverage_or_proof_links_cannot_enter_the_pipeline_cache() {
+    for items in [
+        labeled_items(&[(Label::Statement, "Lemma t.", None)]),
+        labeled_items(&[
+            (Label::Statement, "Lemma t. /", None),
+            (Label::Proof, "Proof. ok ∎", Some(2)),
+        ]),
+    ] {
+        let mut mls = Mls::new();
+        mls.sync(&paras(&["Lemma t. / Proof. ok ∎"]));
+        let jobs = run(&mut mls, |job| match job {
+            Job::Split { .. } => labeled_reply(job, items.clone()),
+            _ => answer(job),
+        });
+        assert_eq!(kinds(&jobs), ["classify", "split"]);
+        let details = mls.details(mls.dots()[0].key);
+        assert_eq!(details[0].label, None);
+        assert!(!details[0].service);
+        assert!(
+            details[0]
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("Invalid labeled segmentation")
+        );
+        assert!(mls.splits.is_empty());
+    }
 }
 
 #[test]
@@ -1567,22 +2118,21 @@ fn a_proof_that_starts_in_a_split_paragraph_continues_in_the_next() {
 }
 
 #[test]
-fn a_split_that_does_not_reproduce_the_paragraph_reads_it_whole_and_is_not_asked_again() {
+fn an_invalid_split_reports_a_permanent_structural_failure() {
     let mut mls = Mls::new();
     mls.sync(&paras(&["Lemma UNSPLIT / t."]));
     let jobs = run(&mut mls, answer);
-    assert_eq!(kinds(&jobs), ["classify", "split", "formalize", "check"]);
-    assert_eq!(statuses(&mls), [(0, Status::Sorry)]);
-    assert_eq!(formalize_texts(&jobs), ["Lemma UNSPLIT / t."]);
+    assert_eq!(kinds(&jobs), ["classify", "split"]);
+    assert_eq!(statuses(&mls), [(0, Status::Failed)]);
+    assert!(formalize_texts(&jobs).is_empty());
+    assert!(!mls.details(id_of(&mls, 0))[0].service);
+    mls.retry();
+    assert!(mls.next_job().is_none());
 
     mls.sync(&paras(&["Lemma UNSPLIT / t.", "Hello."]));
     let jobs = run(&mut mls, answer);
-    assert_eq!(
-        kinds(&jobs),
-        ["classify"],
-        "neither cut nor formalized again"
-    );
-    assert_eq!(statuses(&mls), [(0, Status::Sorry)]);
+    assert!(jobs.is_empty(), "the structural failure remains actionable");
+    assert_eq!(statuses(&mls), [(0, Status::Failed)]);
 }
 
 #[test]
@@ -1630,10 +2180,7 @@ fn editing_only_the_proof_piece_keeps_the_statement_pieces_block() {
 
     mls.sync(&paras(&["Lemma t. / Proof. fine ∎"]));
     let jobs = run(&mut mls, answer);
-    assert_eq!(
-        kinds(&jobs),
-        ["classify", "split", "classify", "formalize", "check"]
-    );
+    assert_eq!(kinds(&jobs), ["classify", "split", "formalize", "check"]);
     assert_eq!(mls.blocks[0].id, statement);
     assert_eq!(version_of(&mls, statement), version);
     assert_ne!(mls.blocks[1].id, proof);
@@ -1643,11 +2190,7 @@ fn editing_only_the_proof_piece_keeps_the_statement_pieces_block() {
 
 #[test]
 fn a_twin_restores_the_split_so_a_reopened_document_asks_no_model() {
-    let lines = [
-        "Hello there.",
-        "Lemma t. / Proof. ok ∎",
-        "Lemma UNSPLIT / u.",
-    ];
+    let lines = ["Hello there.", "Lemma t. / Proof. ok ∎", "Lemma u."];
     let mut first = Mls::new();
     first.sync(&paras(&lines));
     run(&mut first, answer);
@@ -1668,7 +2211,10 @@ fn a_restored_split_that_drops_text_is_ignored_and_asked_again() {
     run(&mut first, answer);
 
     let twin = first.twin();
-    let edited = twin.replace("[\"Lemma t. /\",\"Proof. ok ∎\"]", "[\"Lemma t. /\"]");
+    let (lean, body) = twin.split_once(MEMORY_OPEN).unwrap();
+    let mut memory: Value = serde_json::from_str(body.split_once("\n-/").unwrap().0).unwrap();
+    memory["splits"][0]["segments"]["items"][1]["text"] = json!("Proof.");
+    let edited = format!("{lean}{MEMORY_OPEN}{memory}\n-/\n");
     assert_ne!(edited, twin, "the split entry is edited");
     let mut second = restored(&edited, &lines);
     let jobs = run(&mut second, answer);

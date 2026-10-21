@@ -3,7 +3,9 @@
 
 use super::Worker;
 use crate::openrouter::{CHAT_URL, DECISIONS_URL};
-use crate::{Failure, Formal, Job, Label, Mls, Outcome, Paragraph, Reply, Status, Tag};
+use crate::{
+    Failure, Formal, Job, Label, Mls, Outcome, Paragraph, Reply, Segment, SplitContext, Status, Tag,
+};
 use documents::{DOCUMENTS, Line, assert_outcome, drive, lean_project, lean_ready};
 use serde_json::{Value, json};
 use std::{
@@ -36,7 +38,7 @@ fn jev(label: Label, joins: bool) -> Value {
     json!({"answers": {
         "kind": {"type": "choice", "choice": label.name()},
         "joins": {"type": "choice", "choice": joins},
-        "items": {"type": "choice", "choice": "one"},
+        "independent_items": {"type": "choice", "choice": "one"},
     }})
 }
 
@@ -223,14 +225,28 @@ fn a_repair_whose_request_fails_is_a_service_failure_for_its_job() {
 
 #[test]
 fn classify_reports_the_label_jev_chose() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = calls.clone();
     let worker = Worker::with_request(
         PathBuf::new(),
         || {},
-        |url, body| {
+        move |url, body| {
             assert_eq!(url, DECISIONS_URL);
             assert_eq!(body["state"]["paragraph"], "Lemma. Every group is nice.");
             assert_eq!(body["state"]["block_above"], "Let G be a group.");
-            Ok(jev(Label::Statement, true))
+            match counted.fetch_add(1, Ordering::SeqCst) {
+                0 => {
+                    assert_eq!(body["questions"].as_object().unwrap().len(), 1);
+                    assert!(body["questions"].get("independent_items").is_some());
+                    Ok(json!({"answers": {"independent_items": {"choice": "one"}}}))
+                }
+                1 => {
+                    assert_eq!(body["questions"].as_object().unwrap().len(), 2);
+                    assert!(body["questions"].get("kind").is_some());
+                    Ok(jev(Label::Statement, true))
+                }
+                _ => panic!("only gate and kind/joins are requested"),
+            }
         },
     );
     worker.submit(Job::Classify {
@@ -262,6 +278,245 @@ fn classify_reports_the_label_jev_chose() {
         }
         other => panic!("expected a classification, got {other:?}"),
     }
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn several_bypasses_kind_and_joins_and_gate_failures_stop_downstream_calls() {
+    for response in [
+        Ok(json!({"answers": {"independent_items": {"choice": "several"}}})),
+        Ok(json!({"answers": {"independent_items": {"choice": "maybe"}}})),
+        Err(Failure {
+            message: "offline".into(),
+            service: true,
+        }),
+    ] {
+        let several = response
+            .as_ref()
+            .is_ok_and(|response| response["answers"]["independent_items"]["choice"] == "several");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counted = calls.clone();
+        let worker = Worker::with_request(
+            PathBuf::new(),
+            || {},
+            move |url, body| {
+                assert_eq!(url, DECISIONS_URL);
+                assert_eq!(
+                    counted.fetch_add(1, Ordering::SeqCst),
+                    0,
+                    "no kind/joins or chat after this gate"
+                );
+                assert_eq!(body["questions"].as_object().unwrap().len(), 1);
+                response.clone()
+            },
+        );
+        worker.submit(Job::Classify {
+            paragraph: 1,
+            previous: None,
+            text: "A paragraph.".into(),
+            proof_open: false,
+        });
+        let Reply::Classified { result, .. } = reply(&worker) else {
+            panic!("classification reply")
+        };
+        if several {
+            assert!(result.unwrap().split);
+        } else {
+            assert!(result.unwrap_err().service);
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[test]
+fn production_worker_routes_first_mixed_parity_paragraph_to_paired_lean_checks() {
+    let case = &documents::ROUTING_CASES[0];
+    let pieces = [
+        Segment {
+            id: 1,
+            label: Label::Statement,
+            text: "**Lemma.** For every natural number $n$, $n^2+n$ is even.".into(),
+            proves: None,
+            proves_previous: false,
+        },
+        Segment {
+            id: 2,
+            label: Label::Proof,
+            text: "Indeed, $n^2+n=n(n+1)$ and one of $n$ and $n+1$ is even. ∎".into(),
+            proves: Some(1),
+            proves_previous: false,
+        },
+    ];
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = calls.clone();
+    let worker = Worker::with_request(
+        PathBuf::new(),
+        || {},
+        move |url, body| match counted.fetch_add(1, Ordering::SeqCst) {
+            0 => {
+                assert_eq!(url, DECISIONS_URL);
+                assert!(body["questions"].get("independent_items").is_some());
+                Ok(json!({"answers": {"independent_items": {"choice": "several"}}}))
+            }
+            1 => {
+                assert_eq!(url, CHAT_URL);
+                Ok(
+                    json!({"choices": [{"finish_reason": "stop", "message": {"content": crate::openrouter::segments_json(&pieces).to_string()}}]}),
+                )
+            }
+            2 => Ok(formalization_reply(
+                "theorem parity (n : ℕ) : Even (n^2+n) := by sorry",
+            )),
+            3 => Ok(formalization_reply(
+                "theorem parity (n : ℕ) : Even (n^2+n) := by\n  exact Nat.even_mul_succ_self n",
+            )),
+            _ => panic!("pieces must not be classified or split again"),
+        },
+    );
+    let mut mls = Mls::new();
+    mls.sync(&[Paragraph {
+        text: case.text.into(),
+        open: false,
+    }]);
+    let mut checks = Vec::new();
+    for _ in 0..8 {
+        let Some(job) = mls.next_job() else {
+            break;
+        };
+        if let Job::Check {
+            block,
+            version,
+            base,
+            lean,
+        } = job
+        {
+            checks.push((block, base));
+            let outcome = if lean.ends_with("sorry") {
+                Outcome::Sorry
+            } else {
+                Outcome::Verified
+            };
+            assert!(mls.apply(Reply::Checked {
+                block,
+                version,
+                base,
+                result: Ok(crate::Checked {
+                    env: version + 100,
+                    outcome
+                })
+            }));
+        } else {
+            worker.submit(job);
+            assert!(mls.apply(reply(&worker)));
+        }
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 4);
+    assert_eq!(checks.len(), 2);
+    assert_eq!(
+        checks[0].1, checks[1].1,
+        "proof checks on the statement's base"
+    );
+    assert!(mls.next_job().is_none());
+    assert_eq!(mls.dots()[0].status, Status::Verified);
+    assert_eq!(
+        mls.details(mls.dots()[0].key)
+            .iter()
+            .filter_map(|detail| detail.label)
+            .collect::<Vec<_>>(),
+        case.labels
+    );
+}
+
+/// Real production worker requests, without requiring Lean. Requests and raw replies contain no
+/// headers or key; each case stops as soon as the production plan asks to formalize/check.
+#[test]
+#[ignore = "calls OpenRouter: needs OPENROUTER_API_KEY; writes target/mls-live-routing artifacts"]
+fn live_labeled_routing() {
+    use std::{env, fs};
+    let key = env::var("OPENROUTER_API_KEY")
+        .ok()
+        .filter(|key| !key.trim().is_empty())
+        .expect("OPENROUTER_API_KEY is required");
+    let dir = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../target/mls-live-routing"
+    ))
+    .join(format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    ));
+    fs::create_dir_all(&dir).expect("create raw artifact directory");
+    for case in &documents::ROUTING_CASES {
+        let raw = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = raw.clone();
+        let key = key.clone();
+        let worker = Worker::with_request(
+            PathBuf::new(),
+            || {},
+            move |url, body| {
+                let result = crate::openrouter::post(url, body, Some(&key));
+                captured.lock().unwrap().push(json!({"url": url, "request": body, "response": match &result {
+                Ok(value) => value.clone(), Err(failure) => json!({"failure": failure.message, "service": failure.service}),
+            }}));
+                result
+            },
+        );
+        let mut mls = Mls::new();
+        let mut lines: Vec<Paragraph> = case
+            .previous
+            .into_iter()
+            .map(|text| Paragraph {
+                text: text.into(),
+                open: false,
+            })
+            .collect();
+        lines.push(Paragraph {
+            text: case.text.into(),
+            open: false,
+        });
+        mls.sync(&lines);
+        let mut events = Vec::new();
+        for _ in 0..16 {
+            let Some(job) = mls.next_job() else {
+                break;
+            };
+            events.push(format!("{job:?}"));
+            if !matches!(job, Job::Classify { .. } | Job::Split { .. }) {
+                break;
+            }
+            worker.submit(job);
+            let reply = worker
+                .rx
+                .recv_timeout(Duration::from_secs(300))
+                .expect("routing reply within five minutes");
+            events.push(format!("{reply:?}"));
+            assert!(mls.apply(reply));
+        }
+        let labels: Vec<Label> = mls
+            .dots()
+            .iter()
+            .filter(|dot| dot.paragraph == lines.len() - 1)
+            .flat_map(|dot| mls.details(dot.key))
+            .filter_map(|detail| detail.label)
+            .collect();
+        let record = json!({"case": case.name, "events": events, "raw": *raw.lock().unwrap(), "twin": mls.twin()});
+        fs::write(
+            dir.join(format!("{}.json", case.name.replace(' ', "-"))),
+            serde_json::to_string_pretty(&record).unwrap(),
+        )
+        .expect("save safe routing artifacts");
+        assert_eq!(
+            labels,
+            case.labels,
+            "{}; artifacts: {}",
+            case.name,
+            dir.display()
+        );
+    }
 }
 
 #[test]
@@ -272,8 +527,13 @@ fn split_reports_the_pieces_of_the_paragraph_as_parts_of_its_text() {
         || {},
         |url, body| {
             assert_eq!(url, CHAT_URL);
-            assert_eq!(body["messages"][1]["content"], "Lemma. A. Proof. B.");
-            let content = json!({"pieces": ["Lemma. A.", "Proof.  B."]});
+            let input: Value =
+                serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
+            assert_eq!(input["paragraph"], "Lemma. A. Proof. B.");
+            let content = json!({"items": [
+                {"id": 1, "role": "statement", "text": "Lemma. A.", "proves": null, "proves_previous": false},
+                {"id": 2, "role": "proof", "text": "Proof.  B.", "proves": 1, "proves_previous": false}
+            ]});
             Ok(json!({"choices": [{"finish_reason": "stop",
                 "message": {"content": content.to_string()}}]}))
         },
@@ -281,17 +541,35 @@ fn split_reports_the_pieces_of_the_paragraph_as_parts_of_its_text() {
     worker.submit(Job::Split {
         paragraph: 4,
         text: text.to_string(),
+        context: SplitContext::default(),
     });
     match reply(&worker) {
         Reply::Split {
             paragraph,
             text: echoed,
             result,
+            context,
         } => {
             assert_eq!((paragraph, echoed.as_str()), (4, text));
+            assert_eq!(context, SplitContext::default());
             assert_eq!(
                 result,
-                Ok(vec!["Lemma. A.".to_string(), "Proof. B.".to_string()])
+                Ok(vec![
+                    Segment {
+                        id: 1,
+                        label: Label::Statement,
+                        text: "Lemma. A.".into(),
+                        proves: None,
+                        proves_previous: false
+                    },
+                    Segment {
+                        id: 2,
+                        label: Label::Proof,
+                        text: "Proof. B.".into(),
+                        proves: Some(1),
+                        proves_previous: false
+                    },
+                ])
             );
         }
         other => panic!("expected a split, got {other:?}"),

@@ -163,10 +163,12 @@ is retained as raw source; reopening without edits preserves the original source
 
 MLS, the Math Language Server, reads the document a block at a time. A
 paragraph is a line; Enter closes it.
-For each paragraph, Jev (`typesafe/jev-1.13`) answers three questions: what it is (a
-definition, a statement (lemma, theorem, corollary, proposition), a proof, or
-anything else, which gets no dot), whether it belongs to the same item as the
-block above, and whether it holds several items. Jev sees that whole block, every
+For each paragraph, Jev (`typesafe/jev-1.13`) first answers a standalone question:
+does this paragraph contain one independently checkable item or several? A
+statement and its supporting proof are separate items; steps within one proof
+stay together. For one item, a second request asks what it is (a definition,
+statement, proof or prose) and whether it continues the block above.
+Jev sees that whole block, every
 paragraph grouped into it so far, not only its last line. Paragraphs that belong
 together form one block: a setup line and its claim, a statement and the displayed
 formula under it, or a proof that runs over several paragraphs until one that is not
@@ -180,11 +182,17 @@ $n$ is a natural number") declares nothing and gets no dot.
 
 A paragraph that holds several items, such as a statement followed by its proof, or a
 definition followed by a claim about it, needs no paragraph break. Claude Sonnet 5.5
-cuts it into verbatim pieces, and each piece is read as its own definition, statement
-or proof, exactly like a paragraph: a proof piece pairs with the statement piece
-directly above it, even in the same paragraph, and a piece can join the paragraph
-below. A piece is never cut again. A cut that does not reproduce the paragraph
-exactly is rejected, and the paragraph is read whole.
+returns labeled segments and explicit proof targets in one call. These labels are
+authoritative: segments are neither classified nor split again, and separate
+statements remain separate blocks. MLS validates coverage and order (ignoring
+whitespace differences), unique IDs and proof links. A proof targets an earlier
+statement segment or the provided preceding statement. Targets separated by other
+mathematical items are currently reported as unsupported; place the proof directly
+after its statement. An open proof can still continue into the next paragraph.
+A whole-paragraph proof with no paired statement gets one segmentation recovery
+attempt, even if Jev said it was one item. An invalid segmentation or a proof still
+without a target shows a structural error; it never silently checks the whole
+paragraph or retries indefinitely. Service failures remain retryable.
 
 Claude Sonnet 5.5 (`anthropic/claude-sonnet-5.5`) formalizes each block into Lean as
 one item, given the Lean of the blocks above and the prose run above it; statements
@@ -247,12 +255,14 @@ A missing key, an unreachable OpenRouter or a Lean project that is not built sho
 as one red dot whose panel explains what to do; the next edit retries. Saving
 also writes the document's Lean twin, `<name>.mls.lean`, beside it: the Lean that
 checked, with a `-- lvtex:block <id>` comment per block, and a final
-`lvtex:memory` comment (`version` 3). It remembers each paragraph's and piece's
-label, the block above it and whether it joins that one, whether a paragraph holds
-several items and its pieces, and each block's Lean, assumptions and names it uses,
+`lvtex:memory` comment (`version` 3). It remembers each paragraph's label and joining
+decision, validated labeled segments with their interpretation context and proof
+targets, and each block's Lean, assumptions and names it uses,
 or its rejection reason. Opening the document re-uses them, so unchanged text needs no
-model calls; Lean re-checks every block. A version 1 or 2 twin is ignored, so its
-paragraphs are asked again once. MLS needs no Ollama.
+model calls; Lean re-checks every block. The outer format remains version 3; an
+internal `segmentation_version` invalidates older analysis caches. Older twins,
+including unmarked version 3 memories, receive a one-time full reanalysis.
+MLS needs no Ollama.
 
 ### Settings
 
@@ -347,12 +357,18 @@ Ollama, OpenRouter, Lean or a TeX installation. The optional checks are:
 cargo test --release --locked -p lvtex manual_preview_latency -- --ignored --nocapture
 # The four sample documents with scripted model answers, checked by Lean (needs lean/ built).
 cargo test --release --locked -p lvtex-mls scripted_documents -- --ignored --nocapture
-# Eight documents through OpenRouter and Lean, three fresh runs each (needs OPENROUTER_API_KEY and lean/ built).
+# Nine documents through OpenRouter and Lean, three fresh runs each (needs OPENROUTER_API_KEY and lean/ built).
 cargo test --release --locked -p lvtex-mls --test documents -- --ignored --nocapture
+# Four routing controls through the production worker, stopping before Lean (needs OPENROUTER_API_KEY).
+cargo test --release --locked -p lvtex-mls --lib live_labeled_routing -- --ignored --nocapture
 ```
 
 The live documents are the four scripted ones plus the supplied note, prime notation, a long
-paragraph and plane energy and orthogonality. Each run writes raw results to `target/mls-live/<phase>/`: a JSON record per document and
+paragraph, plane energy and orthogonality, and several items in one paragraph.
+The routing-only test covers mixed parity, a definition with its property and proof,
+two separate statements, and a multi-step proof. It saves raw request bodies and
+responses, job/reply records and memory under `target/mls-live-routing/` without
+credentials. Each full document run writes results to `target/mls-live/<phase>/`: a JSON record per document and
 run (every job and reply, the final dots, the chart and the pinned model ids) and the Mls twin. Narrow
 a live run with environment variables:
 

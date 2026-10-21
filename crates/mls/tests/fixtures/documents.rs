@@ -28,6 +28,43 @@ pub struct Line {
 
 const REPLY_TIMEOUT: Duration = Duration::from_secs(600);
 
+/// Frozen mixed-item and single-proof controls shared by routing and live verification.
+#[allow(dead_code)] // Routing tests use these independently of the full Lean document harness.
+pub struct RoutingCase {
+    pub name: &'static str,
+    pub text: &'static str,
+    pub previous: Option<&'static str>,
+    pub labels: &'static [Label],
+}
+
+#[allow(dead_code)]
+pub const ROUTING_CASES: [RoutingCase; 4] = [
+    RoutingCase {
+        name: "mixed parity",
+        text: "**Lemma.** For every natural number $n$, $n^2+n$ is even. Indeed, $n^2+n=n(n+1)$ and one of $n$ and $n+1$ is even. ∎",
+        previous: None,
+        labels: &[Label::Statement, Label::Proof],
+    },
+    RoutingCase {
+        name: "mixed q",
+        text: r"Define $q(x)=(x-1)^2$ for real $x$. Then $q(x)\ge 0$ for every real $x$, since squares are nonnegative.",
+        previous: None,
+        labels: &[Label::Definition, Label::Statement, Label::Proof],
+    },
+    RoutingCase {
+        name: "two statements",
+        text: "**Lemma.** For every real number $x$, $x^2$ is nonnegative. **Lemma.** For every natural number $n$, $n+n$ is even.",
+        previous: None,
+        labels: &[Label::Statement, Label::Statement],
+    },
+    RoutingCase {
+        name: "multi-step proof",
+        text: "*Proof.* Expanding gives $(x+1)^2=x^2+2x+1$. Subtracting $x^2$ yields $(x+1)^2-x^2=2x+1$. ∎",
+        previous: Some("**Lemma.** For every real number $x$, $(x+1)^2-x^2=2x+1$."),
+        labels: &[Label::Proof],
+    },
+];
+
 pub const DOCUMENTS: [Document; 4] = [
     Document {
         name: "group theory",
@@ -462,12 +499,20 @@ pub const LIVE_DOCUMENTS: [LiveDocument; 5] = [
         name: "several items in a paragraph",
         lines: &[
             LiveLine {
+                text: ROUTING_CASES[0].text,
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
                 text: r"**Lemma.** Let $T : V \to W$ be a linear map between real normed spaces with $c\|x\| \le \|Tx\|$ for some $c > 0$ and all $x$. Then $T$ is injective. Indeed, if $Tx = 0$ then $c\|x\| \le 0$, hence $x = 0$. ∎",
                 expect: Some(Status::Verified),
             },
             LiveLine {
                 text: r"Define $q(x) = (x - 1)^2$ for real $x$. Then $q(x) \ge 0$ for every real $x$, since squares are nonnegative.",
                 expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: ROUTING_CASES[2].text,
+                expect: Some(Status::Sorry),
             },
         ],
     },

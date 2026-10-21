@@ -153,8 +153,13 @@ fn event_json(event: Observed<'_>) -> Value {
                     paragraph, result, ..
                 } => {
                     value["classification"] = match result {
+                        Ok(tag) if tag.split => json!({
+                            "paragraph": paragraph,
+                            "independent_items": "several",
+                        }),
                         Ok(tag) => json!({
                             "paragraph": paragraph,
+                            "independent_items": "one",
                             "label": tag.label.name(),
                             "joins": tag.joins,
                         }),
@@ -186,7 +191,25 @@ fn event_json(event: Observed<'_>) -> Value {
                         }),
                     };
                 }
-                Reply::Checked { .. } | Reply::Split { .. } => {}
+                Reply::Split {
+                    paragraph,
+                    context,
+                    result,
+                    ..
+                } => {
+                    value["segmentation"] = match result {
+                        Ok(items) => {
+                            json!({"paragraph": paragraph, "context": format!("{context:?}"), "items": items.iter().map(|item| json!({
+                            "id": item.id, "role": item.label.name(), "text": item.text,
+                            "proves": item.proves, "proves_previous": item.proves_previous,
+                        })).collect::<Vec<_>>()})
+                        }
+                        Err(failure) => {
+                            json!({"paragraph": paragraph, "failure": failure_json(failure)})
+                        }
+                    };
+                }
+                Reply::Checked { .. } => {}
                 Reply::Repaired { job, result } => {
                     if let Job::Repair {
                         block,
