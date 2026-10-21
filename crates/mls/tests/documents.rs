@@ -218,16 +218,22 @@ fn event_json(event: Observed<'_>) -> Value {
 }
 
 fn dot_json(mls: &Mls, dot: &Dot) -> Value {
-    let details = mls.details(dot.key).map(|details| {
-        json!({
-            "assumptions": details.assumptions,
-            "lean": details.lean,
-            "error": details.error,
-            "service": details.service,
-            "uses": details.uses,
-            "note": details.note,
+    let details: Vec<Value> = mls
+        .details(dot.key)
+        .into_iter()
+        .map(|details| {
+            json!({
+                "label": details.label.map(Label::name),
+                "status": format!("{:?}", details.status),
+                "assumptions": details.assumptions,
+                "lean": details.lean,
+                "error": details.error,
+                "service": details.service,
+                "uses": details.uses,
+                "note": details.note,
+            })
         })
-    });
+        .collect();
     json!({
         "paragraph": dot.paragraph,
         "last": dot.last,

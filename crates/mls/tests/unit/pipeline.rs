@@ -231,6 +231,13 @@ fn statuses(mls: &Mls) -> Vec<(usize, Status)> {
         .collect()
 }
 
+/// The details of the dot with `key`, which must hold one item.
+fn item(mls: &Mls, key: u64) -> Details {
+    let mut items = mls.details(key);
+    assert_eq!(items.len(), 1, "the dot holds one item");
+    items.remove(0)
+}
+
 fn id_of(mls: &Mls, index: usize) -> u64 {
     mls.paras[index].id
 }
@@ -344,7 +351,7 @@ fn a_false_proof_fails_with_the_lean_error_and_the_statement_stays_sorry() {
     let proof = id_of(&mls, 1);
 
     assert_eq!(statuses(&mls), [(0, Status::Sorry), (1, Status::Failed)]);
-    let details = mls.details(proof).expect("the proof has a dot");
+    let details = item(&mls, proof);
     assert_eq!(details.error.as_deref(), Some("1:0: error"));
     assert!(!details.service);
 }
@@ -447,7 +454,7 @@ fn a_proof_with_no_statement_above_fails_without_a_formalize() {
         Job::Formalize { block, .. } | Job::Check { block, .. } if *block == proof
     )));
     assert_eq!(statuses(&mls), [(0, Status::Verified), (1, Status::Failed)]);
-    let details = mls.details(proof).expect("the proof has a dot");
+    let details = item(&mls, proof);
     assert_eq!(
         details.error.as_deref(),
         Some("There is no statement directly above this proof.")
@@ -649,11 +656,16 @@ fn a_classification_service_failure_stops_at_its_paragraph_until_a_change() {
     assert_eq!(dots[0].status, Status::Failed);
     assert_eq!(
         mls.details(id_of(&mls, 0)),
-        Some(Details {
+        [Details {
+            label: None,
+            status: Status::Failed,
+            assumptions: Vec::new(),
+            lean: None,
             error: Some(MISSING_KEY.to_string()),
             service: true,
-            ..Details::default()
-        })
+            uses: Vec::new(),
+            note: None,
+        }]
     );
 
     mls.sync(&paras(&["Hello there.", "World."]));
@@ -932,10 +944,7 @@ fn a_timed_out_check_clears_the_other_checks_so_they_run_again() {
         "the definition is checked on the new REPL: {jobs:?}"
     );
     assert_eq!(statuses(&mls), [(0, Status::Verified), (1, Status::Failed)]);
-    assert_eq!(
-        mls.details(a).and_then(|details| details.error),
-        Some(TIMED_OUT.to_string())
-    );
+    assert_eq!(item(&mls, a).error, Some(TIMED_OUT.to_string()));
 }
 
 #[test]
@@ -1133,7 +1142,7 @@ fn lean_with_comment_delimiters_and_quotes_round_trips_through_the_twin() {
     let jobs = run(&mut second, answer);
     assert_eq!(kinds(&jobs), ["check"]);
     assert_eq!(
-        second.details(id_of(&second, 0)).and_then(|d| d.lean),
+        item(&second, id_of(&second, 0)).lean,
         Some(LEAN.to_string())
     );
 }
@@ -1166,7 +1175,7 @@ fn a_rejected_formal_is_restored_as_a_failed_dot_without_a_request() {
     assert!(jobs.is_empty(), "{:?}", kinds(&jobs));
     assert_eq!(statuses(&second), [(0, Status::Failed)]);
     assert_eq!(
-        second.details(id_of(&second, 0)).and_then(|d| d.error),
+        item(&second, id_of(&second, 0)).error,
         Some(REJECTED.to_string())
     );
 }
@@ -1219,11 +1228,11 @@ fn a_restored_formal_that_the_rules_reject_is_a_failed_dot_and_is_never_checked(
         [(0, Status::Failed), (1, Status::Failed)]
     );
     assert_eq!(
-        second.details(id_of(&second, 0)).and_then(|d| d.error),
+        item(&second, id_of(&second, 0)).error,
         Some("The Lean declares an axiom.".to_string())
     );
     assert_eq!(
-        second.details(id_of(&second, 1)).and_then(|d| d.error),
+        item(&second, id_of(&second, 1)).error,
         Some("The Lean uses `#eval`, which is not allowed.".to_string())
     );
 }
@@ -1453,29 +1462,97 @@ fn a_paragraph_with_a_statement_and_its_proof_is_read_as_two_blocks() {
         "a proof is checked on its statement's base"
     );
 
-    assert_eq!(
-        statuses(&mls),
-        [(0, Status::Verified), (0, Status::Verified)]
+    assert_eq!(statuses(&mls), [(0, Status::Verified)]);
+    let dots = mls.dots();
+    assert_eq!((dots[0].paragraph, dots[0].last), (0, 0));
+    assert_eq!(dots[0].key, statement, "the dot has its first item's key");
+    let items = mls.details(statement);
+    let labels: Vec<Option<Label>> = items.iter().map(|item| item.label).collect();
+    assert_eq!(labels, [Some(Label::Statement), Some(Label::Proof)]);
+    assert!(items.iter().all(|item| item.status == Status::Verified));
+    assert!(items.iter().all(|item| item.lean.is_some()));
+    assert!(
+        mls.details(proof).is_empty(),
+        "only a group's first key names it"
     );
-    let keys: Vec<u64> = mls.dots().iter().map(|dot| dot.key).collect();
-    assert_eq!(keys, [statement, proof]);
 }
 
 #[test]
-fn a_definition_a_statement_and_a_proof_in_one_paragraph_are_three_blocks() {
+fn a_definition_a_statement_and_a_proof_in_one_paragraph_are_three_blocks_and_one_dot() {
     let mut mls = Mls::new();
     mls.sync(&paras(&["Def d. / Lemma t. / Proof. ok ∎"]));
     run(&mut mls, answer);
     let labels: Vec<Label> = mls.blocks.iter().map(|block| block.label).collect();
     assert_eq!(labels, [Label::Definition, Label::Statement, Label::Proof]);
+    assert_eq!(statuses(&mls), [(0, Status::Verified)]);
+    assert_eq!(mls.details(mls.blocks[0].id).len(), 3);
+}
+
+#[test]
+fn a_false_proof_in_a_split_paragraph_makes_the_dot_red_and_lists_each_items_status() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def d. / Lemma t. / Proof. FALSE ∎"]));
+    run(&mut mls, answer);
+    assert_eq!(statuses(&mls), [(0, Status::Failed)]);
+    let items = mls.details(mls.blocks[0].id);
+    let seen: Vec<(Option<Label>, Status)> =
+        items.iter().map(|item| (item.label, item.status)).collect();
     assert_eq!(
-        statuses(&mls),
+        seen,
         [
-            (0, Status::Verified),
-            (0, Status::Verified),
-            (0, Status::Verified)
+            (Some(Label::Definition), Status::Verified),
+            (Some(Label::Statement), Status::Sorry),
+            (Some(Label::Proof), Status::Failed)
         ]
     );
+    assert_eq!(items[2].error.as_deref(), Some("1:0: error"));
+    assert_eq!(items[0].error, None);
+}
+
+#[test]
+fn a_dot_takes_the_worst_status_of_its_items() {
+    // The statement piece has no proof, so it is amber beside the verified definition.
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def d. / Lemma t."]));
+    run(&mut mls, answer);
+    assert_eq!(statuses(&mls), [(0, Status::Sorry)]);
+
+    let items = |status: &[Status]| -> Vec<Dot> {
+        status
+            .iter()
+            .enumerate()
+            .map(|(i, &status)| dot(0, 0, i as u64, status))
+            .collect()
+    };
+    let worst = |status: &[Status]| merge_dots(&group_dots(&items(status))[0]).status;
+    assert_eq!(
+        worst(&[Status::Verified, Status::Sorry, Status::Checking]),
+        Status::Checking
+    );
+    assert_eq!(
+        worst(&[Status::Sorry, Status::Failed, Status::Checking]),
+        Status::Failed
+    );
+    assert_eq!(
+        worst(&[Status::Verified, Status::Verified]),
+        Status::Verified
+    );
+}
+
+#[test]
+fn dots_group_while_their_ranges_overlap_and_not_when_they_only_touch() {
+    let dots = [
+        dot(2, 2, 5, Status::Sorry),
+        dot(0, 0, 1, Status::Verified),
+        dot(0, 1, 2, Status::Verified),
+        dot(1, 1, 3, Status::Verified),
+        dot(3, 3, 6, Status::Verified),
+    ];
+    let keys: Vec<Vec<u64>> = group_dots(&dots)
+        .iter()
+        .map(|group| group.iter().map(|d| d.key).collect())
+        .collect();
+    assert_eq!(keys, [vec![1, 2, 3], vec![5], vec![6]]);
 }
 
 #[test]
@@ -1484,11 +1561,9 @@ fn a_proof_that_starts_in_a_split_paragraph_continues_in_the_next() {
     mls.sync(&paras(&["Lemma t. / Proof. begin", "then more ∎"]));
     run(&mut mls, answer);
     let ranges: Vec<(usize, usize)> = mls.dots().iter().map(|d| (d.paragraph, d.last)).collect();
-    assert_eq!(ranges, [(0, 0), (0, 1)]);
-    assert_eq!(
-        statuses(&mls),
-        [(0, Status::Verified), (0, Status::Verified)]
-    );
+    assert_eq!(ranges, [(0, 1)]);
+    assert_eq!(statuses(&mls), [(0, Status::Verified)]);
+    assert_eq!(mls.details(mls.blocks[0].id).len(), 2);
 }
 
 #[test]
@@ -1525,11 +1600,16 @@ fn a_split_service_failure_is_a_red_dot_until_a_retry() {
     assert_eq!(dots[0].status, Status::Failed);
     assert_eq!(
         mls.details(id_of(&mls, 0)),
-        Some(Details {
+        [Details {
+            label: None,
+            status: Status::Failed,
+            assumptions: Vec::new(),
+            lean: None,
             error: Some(MISSING_KEY.to_string()),
             service: true,
-            ..Details::default()
-        })
+            uses: Vec::new(),
+            note: None,
+        }]
     );
 
     mls.retry();
@@ -1558,10 +1638,7 @@ fn editing_only_the_proof_piece_keeps_the_statement_pieces_block() {
     assert_eq!(version_of(&mls, statement), version);
     assert_ne!(mls.blocks[1].id, proof);
     assert_eq!(formalized(&jobs), [mls.blocks[1].id]);
-    assert_eq!(
-        statuses(&mls),
-        [(0, Status::Verified), (0, Status::Verified)]
-    );
+    assert_eq!(statuses(&mls), [(0, Status::Verified)]);
 }
 
 #[test]
@@ -1627,10 +1704,7 @@ fn chart_links_a_statement_to_the_definition_it_uses() {
     assert_eq!(chart[1].level, 1);
     assert_eq!(chart[1].uses, [def]);
     assert_eq!(chart[1].status, Status::Sorry);
-    assert_eq!(
-        mls.details(lemma).map(|details| details.uses),
-        Some(vec![format!("d{def}")])
-    );
+    assert_eq!(item(&mls, lemma).uses, [format!("d{def}")]);
 }
 
 #[test]
@@ -1644,10 +1718,7 @@ fn a_proofs_uses_go_to_its_statements_node() {
     assert_eq!(chart.len(), 2, "{chart:?}");
     assert_eq!(node(&mls, lemma).uses, [def]);
     assert_eq!(node(&mls, lemma).status, Status::Verified);
-    assert_eq!(
-        mls.details(id_of(&mls, 2)).map(|details| details.uses),
-        Some(vec![format!("d{def}")])
-    );
+    assert_eq!(item(&mls, id_of(&mls, 2)).uses, [format!("d{def}")]);
 }
 
 #[test]
@@ -1680,7 +1751,7 @@ fn a_statement_that_uses_a_failed_definition_fails_without_a_check() {
     );
     assert_eq!(statuses(&mls), [(0, Status::Failed), (1, Status::Failed)]);
     assert_eq!(
-        mls.details(lemma).and_then(|details| details.note),
+        item(&mls, lemma).note,
         Some(format!("Uses `d{def}`, which does not check."))
     );
 }
@@ -1696,7 +1767,7 @@ fn a_proof_that_relies_on_an_unproved_statement_is_amber() {
         statuses(&mls),
         [(0, Status::Sorry), (1, Status::Sorry), (2, Status::Sorry)]
     );
-    let details = mls.details(proof).expect("the proof has a dot");
+    let details = item(&mls, proof);
     assert_eq!(
         details.note,
         Some(format!("Relies on `t{a}`, which is not proved yet."))
@@ -1807,7 +1878,7 @@ fn a_proof_that_still_fails_after_its_repair_is_red_and_is_not_repaired_again() 
     assert_eq!(kinds(&jobs).last(), Some(&"check"));
     let proof = id_of(&mls, 1);
     assert_eq!(statuses(&mls), [(0, Status::Sorry), (1, Status::Failed)]);
-    let details = mls.details(proof).expect("the proof has a dot");
+    let details = item(&mls, proof);
     assert_eq!(details.error.as_deref(), Some("1:0: error"));
     assert!(mls.next_job().is_none());
 }
@@ -1838,7 +1909,7 @@ fn a_proof_whose_check_times_out_is_not_repaired() {
     let proof = id_of(&mls, 1);
     let jobs = run(&mut mls, times_out(proof));
     assert_eq!(repairs(&jobs), 0);
-    let details = mls.details(proof).expect("the proof has a dot");
+    let details = item(&mls, proof);
     assert_eq!(details.error.as_deref(), Some(TIMED_OUT));
 }
 
@@ -1908,10 +1979,7 @@ fn a_repaired_proof_that_relies_on_an_unproved_statement_is_amber() {
         [(0, Status::Sorry), (1, Status::Sorry), (2, Status::Sorry)]
     );
     let note = format!("Relies on `t{}`, which is not proved yet.", id_of(&mls, 0));
-    assert_eq!(
-        mls.details(proof).and_then(|details| details.note),
-        Some(note)
-    );
+    assert_eq!(item(&mls, proof).note, Some(note));
 }
 
 #[test]
@@ -1953,10 +2021,7 @@ fn a_timeout_that_clears_a_failed_proof_does_not_repeat_its_repair() {
     let jobs = run(&mut mls, times_out(slow));
     assert_eq!(repairs(&jobs), 1);
     let proof = id_of(&mls, 1);
-    assert_eq!(
-        mls.details(proof).and_then(|details| details.error),
-        Some("1:0: error".to_string())
-    );
+    assert_eq!(item(&mls, proof).error, Some("1:0: error".to_string()));
 }
 
 /// The mock worker, except that every repair is rejected with `failure`.
@@ -1986,7 +2051,7 @@ fn a_rejected_repair_is_the_last_diagnostic_and_is_not_asked_again() {
     assert_eq!(kinds(&jobs).last(), Some(&"repair"));
     assert!(mls.next_job().is_none());
     assert_eq!(statuses(&mls), [(0, Status::Sorry), (1, Status::Failed)]);
-    let details = mls.details(id_of(&mls, 1)).expect("the proof has a dot");
+    let details = item(&mls, id_of(&mls, 1));
     assert_eq!(details.error.as_deref(), Some(rejection));
     assert!(!details.service);
 }
@@ -2005,7 +2070,7 @@ fn a_service_failure_during_repair_halts_with_its_own_message_until_a_retry() {
     );
     assert_eq!(repairs(&jobs), 1);
     assert!(mls.next_job().is_none(), "a service failure halts the walk");
-    let details = mls.details(id_of(&mls, 1)).expect("the proof has a dot");
+    let details = item(&mls, id_of(&mls, 1));
     assert_eq!(details.error.as_deref(), Some(outage));
     assert!(details.service);
 
@@ -2013,6 +2078,6 @@ fn a_service_failure_during_repair_halts_with_its_own_message_until_a_retry() {
     let jobs = run(&mut mls, answer);
     assert_eq!(repairs(&jobs), 1, "a retry asks for the repair again");
     assert_eq!(statuses(&mls), [(0, Status::Sorry), (1, Status::Failed)]);
-    let details = mls.details(id_of(&mls, 1)).expect("the proof has a dot");
+    let details = item(&mls, id_of(&mls, 1));
     assert_eq!(details.error.as_deref(), Some("1:0: error"));
 }

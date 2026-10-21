@@ -1,7 +1,7 @@
 //! Lean checking: syncing lines to MLS, applying its replies, and the dots and panel.
 use super::*;
 use crate::view::layout::Line;
-use mathstral_mls::{Mls, Paragraph, Status};
+use mathstral_mls::{Details, Mls, Paragraph, Status};
 use std::path::{Path, PathBuf};
 use winit::window::CursorIcon;
 
@@ -58,6 +58,24 @@ fn row(text: String, mono: bool, scale: f32, color: u32, gap: f32) -> PanelRow {
         scale,
         color,
         gap,
+    }
+}
+
+/// The heading of an item in a dot over several: its capitalised label and its status in words. An
+/// item with no label, such as a failed classification, shows the status alone.
+fn item_heading(item: &Details) -> String {
+    let status = match item.status {
+        Status::Checking => "checking",
+        Status::Sorry => "not proved yet",
+        Status::Verified => "verified",
+        Status::Failed => "does not check",
+    };
+    match item.label {
+        Some(label) => {
+            let name = label.name();
+            format!("{}{} · {status}", name[..1].to_uppercase(), &name[1..])
+        }
+        None => status.to_owned(),
     }
 }
 
@@ -333,54 +351,80 @@ impl App {
             || self.settings_covers(x, y)
     }
 
-    /// The panel's rows in order, and the index of the Lean toggle among them.
+    /// The panel's rows in order, and the index of the Lean toggle among them. A dot over several
+    /// items lists each with a heading (its label and status); one item has none.
     fn panel_rows(&self, key: u64, show_lean: bool) -> Option<(Vec<PanelRow>, Option<usize>)> {
-        let details = self.mls.details(key)?;
-        let status = self.dots.iter().find(|dot| dot.key == key)?.status;
-        if details.service
-            && let Some(error) = &details.error
+        let items = self.mls.details(key);
+        if items.is_empty() {
+            return None;
+        }
+        if let Some(error) = items
+            .iter()
+            .find(|item| item.service)
+            .and_then(|item| item.error.as_ref())
         {
             let text = row(error.clone(), false, PANEL_TEXT_SCALE, TEXT_COLOR, 0.0);
             return Some((vec![text], None));
         }
+        let several = items.len() > 1;
         let mut rows = Vec::new();
-        if let Some(note) = &details.note {
-            rows.push(row(note.clone(), false, PANEL_TEXT_SCALE, TEXT_COLOR, 0.0));
-        } else if details.assumptions.is_empty() {
-            let text = if status == Status::Checking {
-                "Checking…"
-            } else {
-                "No assumptions."
-            };
-            rows.push(row(
-                text.to_owned(),
-                false,
-                PANEL_TEXT_SCALE,
-                MARKER_COLOR,
-                0.0,
-            ));
-        }
-        for assumption in &details.assumptions {
-            rows.push(row(
-                assumption.clone(),
-                false,
-                PANEL_TEXT_SCALE,
-                QUOTE_COLOR,
-                PANEL_GAP,
-            ));
-        }
-        if !details.uses.is_empty() {
-            rows.push(row(
-                format!("Uses {}.", details.uses.join(", ")),
-                false,
-                PANEL_TEXT_SCALE,
-                MARKER_COLOR,
-                PANEL_SECTION_GAP,
-            ));
+        for (index, item) in items.iter().enumerate() {
+            // Under a heading the first row sits a line gap below it.
+            let mut gap = 0.0;
+            if several {
+                let section = if index > 0 { PANEL_SECTION_GAP } else { 0.0 };
+                rows.push(row(
+                    item_heading(item),
+                    false,
+                    PANEL_TEXT_SCALE,
+                    MARKER_COLOR,
+                    section,
+                ));
+                gap = PANEL_GAP;
+            }
+            if let Some(note) = &item.note {
+                rows.push(row(note.clone(), false, PANEL_TEXT_SCALE, TEXT_COLOR, gap));
+            } else if item.assumptions.is_empty() {
+                let text = if item.status == Status::Checking {
+                    "Checking…"
+                } else {
+                    "No assumptions."
+                };
+                rows.push(row(
+                    text.to_owned(),
+                    false,
+                    PANEL_TEXT_SCALE,
+                    MARKER_COLOR,
+                    gap,
+                ));
+            }
+            for assumption in &item.assumptions {
+                rows.push(row(
+                    assumption.clone(),
+                    false,
+                    PANEL_TEXT_SCALE,
+                    QUOTE_COLOR,
+                    PANEL_GAP,
+                ));
+            }
+            if !item.uses.is_empty() {
+                rows.push(row(
+                    format!("Uses {}.", item.uses.join(", ")),
+                    false,
+                    PANEL_TEXT_SCALE,
+                    MARKER_COLOR,
+                    PANEL_SECTION_GAP,
+                ));
+            }
         }
         let mut toggle = None;
-        if details.lean.is_some() || details.error.is_some() {
-            let failed = status == Status::Failed && details.error.is_some();
+        if items
+            .iter()
+            .any(|item| item.lean.is_some() || item.error.is_some())
+        {
+            let failed = items
+                .iter()
+                .any(|item| item.status == Status::Failed && item.error.is_some());
             let label = match (show_lean, failed) {
                 (false, false) => "Show Lean",
                 (true, false) => "Hide Lean",
@@ -397,19 +441,21 @@ impl App {
             ));
         }
         if show_lean {
-            let mut gap = PANEL_SECTION_GAP;
-            if let Some(lean) = &details.lean {
-                rows.push(row(lean.clone(), true, PANEL_CODE_SCALE, CODE_COLOR, gap));
-                gap = PANEL_GAP;
-            }
-            if let Some(error) = &details.error {
-                rows.push(row(
-                    error.clone(),
-                    true,
-                    PANEL_CODE_SCALE,
-                    PANEL_ERROR_COLOR,
-                    gap,
-                ));
+            for item in &items {
+                let mut gap = PANEL_SECTION_GAP;
+                if let Some(lean) = &item.lean {
+                    rows.push(row(lean.clone(), true, PANEL_CODE_SCALE, CODE_COLOR, gap));
+                    gap = PANEL_GAP;
+                }
+                if let Some(error) = &item.error {
+                    rows.push(row(
+                        error.clone(),
+                        true,
+                        PANEL_CODE_SCALE,
+                        PANEL_ERROR_COLOR,
+                        gap,
+                    ));
+                }
             }
         }
         Some((rows, toggle))

@@ -17,10 +17,10 @@ beside the block.
   MiTeX and Typst render it in the background, with no TeX install.
 - **AI formulas that stay on your Mac.** ⇧⌘1 turns a description into LaTeX with
   Gemma, run locally by Ollama. Nothing leaves the machine.
-- **Lean checking with MLS.** Each definition, statement and proof gets a dot: grey
-  while it is checked, amber when a statement compiles with `sorry`, green when it
-  is verified down to everything it uses, and red on an error. Paragraphs that
-  belong together are checked as one block.
+- **Lean checking with MLS.** Each definition, statement and proof is checked, and
+  each block gets one dot: grey while it is checked, amber when a statement compiles
+  with `sorry`, green when it is verified down to everything it uses, and red on an
+  error. Paragraphs that belong together are checked as one block.
 - **The Structure chart (⌘L).** A quiet chart at the top right lists each definition
   and statement, with lines to the blocks it uses. Click a row to scroll to its block.
 - **Plain Markdown files.** Documents stay Markdown-compatible text. Saving also
@@ -173,8 +173,10 @@ paragraph grouped into it so far, not only its last line. Paragraphs that belong
 together form one block: a setup line and its claim, a statement and the displayed
 formula under it, or a proof that runs over several paragraphs until one that is not
 part of it, or until it ends with ∎.
-A block's dot sits beside its first paragraph. A proof does not need ∎: Enter
-closes it like any other block. The last block waits, with no dot and no request,
+A block's dot sits beside its first paragraph. A paragraph cut into several items
+(below) still has one dot, coloured by the worst of its items: red, then grey, then
+amber, then green. A proof does not need ∎: Enter closes it like any other block.
+The last block waits, with no dot and no request,
 only while it ends in `:` or `,`. A convention that only fixes notation ("Throughout,
 $n$ is a natural number") declares nothing and gets no dot.
 
@@ -220,8 +222,10 @@ proved yet." If a block above has no valid Lean at all, a missing name is red, w
 Prose, examples and remarks get no dot. Hover or click a dot to see the block's
 panel: a note first, when a link explains the colour; then the assumptions in
 plain language, written from the Lean; then `Uses a, b.` for the names it uses from
-above. **Show Lean** reveals the Lean and any error. The panel opens below the
-block's last paragraph. Escape or a click elsewhere closes a pinned panel.
+above. A dot over several items lists each with its label and status, then its
+assumptions and uses. **Show Lean** reveals the Lean and any error of every item.
+The panel opens below the block's last paragraph. Escape or a click elsewhere
+closes a pinned panel.
 Checking runs in the background and never blocks typing. Editing a block
 re-formalizes that block, and any block below it that used a name the edit removed
 or renamed; the blocks below are re-checked with Lean. Editing a paragraph also asks

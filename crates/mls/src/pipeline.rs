@@ -17,7 +17,8 @@ pub struct Paragraph {
     pub open: bool,
 }
 
-/// A status dot beside a paragraph (index into the last `sync` input).
+/// A status dot beside a text block (index into the last `sync` input). A block holds one item, or
+/// the several that one paragraph was cut into (see `Mls::dots`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Dot {
     /// The block's first paragraph.
@@ -33,9 +34,13 @@ pub struct Dot {
     service: bool,
 }
 
-/// What the panel shows for a dot.
-#[derive(Clone, Debug, PartialEq, Default)]
+/// What the panel shows for one item of a dot.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Details {
+    /// The item's label; None when no block has the item's key, such as a failed classification.
+    pub label: Option<Label>,
+    /// The item's own status, whatever the dot's.
+    pub status: Status,
     pub assumptions: Vec<String>,
     pub lean: Option<String>,
     pub error: Option<String>,
@@ -497,6 +502,51 @@ fn noted(paragraph: usize, last: usize, key: u64, status: Status, note: String) 
         note: Some(note),
         service: false,
     }
+}
+
+/// How bad a status is for the dot of a text block: red, then grey, then amber, then green.
+fn severity(status: Status) -> u8 {
+    match status {
+        Status::Failed => 3,
+        Status::Checking => 2,
+        Status::Sorry => 1,
+        Status::Verified => 0,
+    }
+}
+
+/// The item dots grouped by text block: sorted by first paragraph, in plan order within a
+/// paragraph, and a dot joins the group above while its paragraphs overlap the group's range.
+/// The one owner of the rule for `Mls::dots` and `Mls::details`.
+fn group_dots(dots: &[Dot]) -> Vec<Vec<&Dot>> {
+    let mut sorted: Vec<&Dot> = dots.iter().collect();
+    sorted.sort_by_key(|d| d.paragraph);
+    let mut groups: Vec<Vec<&Dot>> = Vec::new();
+    let mut end = 0;
+    for dot in sorted {
+        match groups.last_mut() {
+            Some(group) if dot.paragraph <= end => {
+                end = end.max(dot.last);
+                group.push(dot);
+            }
+            _ => {
+                end = dot.last;
+                groups.push(vec![dot]);
+            }
+        }
+    }
+    groups
+}
+
+/// The dot of a group: the first item's key, the union range and the worst status. Its error, note
+/// and service flag stay empty, as `Mls::details` has them per item.
+fn merge_dots(group: &[&Dot]) -> Dot {
+    let last = group.iter().map(|d| d.last).max().unwrap_or_default();
+    let status = group
+        .iter()
+        .map(|d| d.status)
+        .max_by_key(|&status| severity(status))
+        .unwrap_or(Status::Verified);
+    dot(group[0].paragraph, last, group[0].key, status)
 }
 
 /// The status of the most recent dot with `key`.
@@ -1244,29 +1294,51 @@ impl Mls {
         }
     }
 
+    /// The dots of the text blocks: one for a paragraph, or for the paragraphs that one item spans,
+    /// however many items it holds. Its colour is the worst of its items' (red, then grey, then
+    /// amber, then green). The plan's own dots stay per item, for the chart and the checks.
     pub fn dots(&self) -> Vec<Dot> {
-        self.plan().dots
+        let plan = self.plan();
+        group_dots(&plan.dots)
+            .iter()
+            .map(|group| merge_dots(group))
+            .collect()
     }
 
-    /// The panel's details for the dot with `key`, or None when no dot has that key.
-    pub fn details(&self, key: u64) -> Option<Details> {
-        let found = self.plan().dots.into_iter().find(|d| d.key == key)?;
-        let mut details = Details {
-            error: found.error,
-            note: found.note,
-            service: found.service,
-            ..Details::default()
+    /// The panel's details for the items of the dot with `key`, in document order. Empty when no
+    /// dot has that key.
+    pub fn details(&self, key: u64) -> Vec<Details> {
+        let plan = self.plan();
+        let groups = group_dots(&plan.dots);
+        let Some(group) = groups.iter().find(|group| group[0].key == key) else {
+            return Vec::new();
         };
-        if let Some(Block {
-            formal: Some(Ok(formal)),
-            ..
-        }) = self.blocks.iter().find(|b| b.id == key)
-        {
-            details.assumptions = formal.assumptions.clone();
-            details.lean = Some(formal.lean.clone());
-            details.uses = formal.uses.clone();
-        }
-        Some(details)
+        group
+            .iter()
+            .map(|found| {
+                let block = self.blocks.iter().find(|b| b.id == found.key);
+                let mut details = Details {
+                    label: block.map(|b| b.label),
+                    status: found.status,
+                    assumptions: Vec::new(),
+                    lean: None,
+                    error: found.error.clone(),
+                    service: found.service,
+                    uses: Vec::new(),
+                    note: found.note.clone(),
+                };
+                if let Some(Block {
+                    formal: Some(Ok(formal)),
+                    ..
+                }) = block
+                {
+                    details.assumptions = formal.assumptions.clone();
+                    details.lean = Some(formal.lean.clone());
+                    details.uses = formal.uses.clone();
+                }
+                details
+            })
+            .collect()
     }
 
     /// The dependency chart: each definition and statement, with the nodes above it that it uses
