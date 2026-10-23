@@ -296,6 +296,8 @@ fn split_request_sends_the_paragraph_to_the_formalizer_with_a_strict_schema() {
     let request = split_request(text, &SplitContext::default());
     assert_eq!(request["model"], FORMALIZER_MODEL);
     assert_eq!(request["temperature"], 0);
+    assert_eq!(request["max_tokens"], 32_000);
+    assert_eq!(request["reasoning"]["max_tokens"], 16_000);
     assert_eq!(request["messages"][0]["role"], "system");
     assert_eq!(request["messages"][0]["content"], SPLIT);
     assert_eq!(request["messages"][1]["role"], "user");
@@ -666,6 +668,8 @@ fn formalize_request_uses_the_model_deterministically_with_a_strict_schema() {
     assert_eq!(request["model"], FORMALIZER_MODEL);
     assert_eq!(request["model"], "anthropic/claude-sonnet-5.5");
     assert_eq!(request["temperature"], 0);
+    assert_eq!(request["max_tokens"], 32_000);
+    assert_eq!(request["reasoning"]["max_tokens"], 16_000);
     let format = &request["response_format"];
     assert_eq!(format["type"], "json_schema");
     assert_eq!(format["json_schema"]["name"], "formalization");

@@ -10,8 +10,14 @@ use std::{
 
 pub(crate) const DECISIONS_URL: &str = "https://openrouter.ai/api/alpha/decisions";
 pub(crate) const CHAT_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
-/// Bounds each request, so a stalled call cannot hold the worker indefinitely.
-const TIMEOUT_SECONDS: u32 = 120;
+/// Bounds each request, so a stalled call cannot hold the worker indefinitely. It covers a reply
+/// that may run to `MAX_TOKENS` tokens.
+const TIMEOUT_SECONDS: u32 = 300;
+/// The most tokens one chat request may produce, reasoning included.
+const MAX_TOKENS: u32 = 32_000;
+/// The most of those tokens the model may spend reasoning, so at least the rest is left for the
+/// answer: a reasoning model that spends the whole budget thinking returns nothing.
+const REASONING_TOKENS: u32 = 16_000;
 
 /// Neutral about `proof_in_progress` on purpose: a proof often ends without ∎, and an instruction
 /// that favours proof while one is open makes every later claim a proof.
@@ -281,7 +287,8 @@ pub(crate) fn split_request(text: &str, context: &SplitContext) -> Value {
     json!({
         "model": FORMALIZER_MODEL,
         "temperature": 0,
-        "max_tokens": 8192,
+        "max_tokens": MAX_TOKENS,
+        "reasoning": {"max_tokens": REASONING_TOKENS},
         "messages": [
             {"role": "system", "content": SPLIT},
             {"role": "user", "content": json!({"block_above": above, "paragraph": text}).to_string()},
@@ -388,7 +395,8 @@ pub(crate) fn formalize_request(
     json!({
         "model": FORMALIZER_MODEL,
         "temperature": 0,
-        "max_tokens": 8192,
+        "max_tokens": MAX_TOKENS,
+        "reasoning": {"max_tokens": REASONING_TOKENS},
         "messages": [system, {"role": "user", "content": parts}],
         "response_format": {"type": "json_schema", "json_schema": {
             "name": "formalization",
