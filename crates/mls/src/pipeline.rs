@@ -119,7 +119,7 @@ struct SplitKey {
 
 /// Invalidate analysis made with older gates, labels or proof-target rules without changing the
 /// twin's outer format. Bump this when those semantics change.
-const SEGMENTATION_VERSION: u64 = 1;
+const SEGMENTATION_VERSION: u64 = 2;
 
 /// Opens the memory comment at the end of a twin. Its JSON is written on the lines after it.
 const MEMORY_OPEN: &str = "/- lvtex:memory\n";
@@ -691,8 +691,60 @@ fn joins_unit(unit: &Unit, tag: Tag) -> bool {
                     || tag.label == unit.kind)))
 }
 
-/// A block of `label` from paragraph `first` to `last`. A proof pairs with the statement directly
-/// above it, when that is a statement block.
+/// The kinds a statement or a proof can name, as in "Theorem 2.1" or "Proof of Lemma A".
+const STATEMENT_KINDS: [&str; 6] = [
+    "theorem",
+    "lemma",
+    "proposition",
+    "corollary",
+    "claim",
+    "conjecture",
+];
+
+/// The label a paragraph starts with, after optional emphasis, as in "**Theorem 2.1.**" or
+/// "*Proof of the Lemma A.*": whether "proof of" came first, then the kind and the label, both
+/// lowercased. None when there is no kind, or no label after it.
+fn reference(text: &str) -> Option<(bool, String, String)> {
+    let text = text.trim_start_matches(|c: char| c.is_whitespace() || matches!(c, '*' | '_'));
+    let (proof, rest) = match strip_word(text, "proof").and_then(|rest| strip_word(rest, "of")) {
+        Some(rest) => (true, strip_word(rest, "the").unwrap_or(rest)),
+        None => (false, text),
+    };
+    let (kind, rest) = STATEMENT_KINDS
+        .iter()
+        .find_map(|kind| Some((*kind, strip_word(rest, kind)?)))?;
+    let end = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '.' || c == '-'))
+        .unwrap_or(rest.len());
+    let label = rest[..end].trim_end_matches(['.', '-']);
+    (!label.is_empty()).then(|| (proof, kind.to_string(), label.to_ascii_lowercase()))
+}
+
+/// `text` without its leading `word` and the whitespace after it, when `word` is followed by
+/// whitespace. The comparison ignores ASCII case.
+fn strip_word<'a>(text: &'a str, word: &str) -> Option<&'a str> {
+    let head = text.get(..word.len())?;
+    let rest = &text[word.len()..];
+    (head.eq_ignore_ascii_case(word) && rest.starts_with(char::is_whitespace))
+        .then(|| rest.trim_start())
+}
+
+/// The statement a proof of `text` pairs with. A proof that names its statement, as in "Proof of
+/// Lemma 1", pairs with the nearest statement above with that label, wherever it is. Any other
+/// proof pairs with the block directly above, when that is a statement. None when there is none.
+fn target(new: &[Block], text: &str) -> Option<u64> {
+    match reference(text) {
+        Some((true, kind, label)) => new.iter().rev().find(|block| {
+            block.label == Label::Statement
+                && reference(&block.text)
+                    .is_some_and(|(proof, k, l)| !proof && k == kind && l == label)
+        }),
+        _ => new.last().filter(|block| block.label == Label::Statement),
+    }
+    .map(|block| block.id)
+}
+
+/// A block of `label` from paragraph `first` to `last`. A proof pairs with its `target`.
 fn new_block(
     new: &[Block],
     first: usize,
@@ -703,10 +755,7 @@ fn new_block(
     above: usize,
 ) -> Block {
     let statement = match label {
-        Label::Proof => new
-            .last()
-            .filter(|b| b.label == Label::Statement)
-            .map(|b| b.id),
+        Label::Proof => target(new, &text),
         Label::Definition | Label::Statement | Label::Skip => None,
     };
     Block {
@@ -1088,10 +1137,7 @@ impl Mls {
                     .unit
                     .as_ref()
                     .is_some_and(|unit| unit.kind == Label::Proof && !unit.ended)
-                && !walk
-                    .new
-                    .last()
-                    .is_some_and(|block| block.label == Label::Statement);
+                && target(&walk.new, text).is_none();
             if !tag.split && !orphan && current_split.is_none() {
                 walk.add(i, para.id, text, tag);
                 continue;

@@ -180,6 +180,10 @@ The last block waits, with no dot and no request,
 only while it ends in `:` or `,`. A convention that only fixes notation ("Throughout,
 $n$ is a natural number") declares nothing and gets no dot. A Markdown heading is never sent to Jev: it gets no dot and never joins the block above or below it.
 
+A proof that starts with "Proof of Theorem 2.1" (or Lemma, Proposition, Corollary,
+Claim or Conjecture, with a number or a letter) proves the statement above labelled
+"Theorem 2.1", wherever it is. Any other proof proves the statement directly above it.
+
 A paragraph that holds several items, such as a statement followed by its proof, or a
 definition followed by a claim about it, needs no paragraph break. Claude Sonnet 5.5
 returns labeled segments and explicit proof targets in one call. These labels are

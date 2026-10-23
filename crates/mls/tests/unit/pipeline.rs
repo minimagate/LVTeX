@@ -524,6 +524,81 @@ fn a_proof_with_no_statement_above_fails_without_a_formalize() {
 }
 
 #[test]
+fn a_reference_reads_the_kind_and_label_a_paragraph_starts_with() {
+    let cases = [
+        ("**Theorem 2.1.** Let", Some((false, "theorem", "2.1"))),
+        (
+            "*Proof of Theorem 2.1.* Let",
+            Some((true, "theorem", "2.1")),
+        ),
+        ("Proof of the Lemma A.", Some((true, "lemma", "a"))),
+        ("**Lemma 3 (monotonicity).**", Some((false, "lemma", "3"))),
+        ("**Theorem (Banach).**", None),
+        ("Proof. Let", None),
+        ("*Proof.* By Theorem 2.1", None),
+        ("Corollary 4.", Some((false, "corollary", "4"))),
+        ("**Claim.**", None),
+    ];
+    for (text, expected) in cases {
+        let got = reference(text);
+        let got = got
+            .as_ref()
+            .map(|(proof, kind, label)| (*proof, kind.as_str(), label.as_str()));
+        assert_eq!(got, expected, "{text}");
+    }
+}
+
+/// A proof that names its statement pairs with that statement wherever it is above, not only with
+/// the block directly above it.
+#[test]
+fn a_proof_of_a_named_lemma_proves_it_from_further_down() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&[
+        "Lemma 1. one",
+        "Lemma 2. two",
+        "Proof of Lemma 1. done ∎",
+    ]));
+    let jobs = run(&mut mls, answer);
+
+    assert!(jobs.iter().all(|job| !matches!(job, Job::Split { .. })));
+    assert_eq!(mls.blocks[2].statement, Some(id_of(&mls, 0)));
+    assert_eq!(
+        statuses(&mls),
+        [
+            (0, Status::Verified),
+            (1, Status::Sorry),
+            (2, Status::Verified)
+        ]
+    );
+}
+
+#[test]
+fn a_proof_naming_a_missing_statement_gets_the_recovery() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&[
+        "Lemma 1. one",
+        "Def d.",
+        "Proof of Lemma 7. done ∎",
+    ]));
+    let jobs = run(&mut mls, answer);
+    let proof = id_of(&mls, 2);
+
+    assert!(jobs.iter().any(|job| matches!(
+        job,
+        Job::Split { paragraph, .. } if *paragraph == proof
+    )));
+}
+
+#[test]
+fn an_unnamed_proof_still_proves_the_statement_directly_above() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma 1. one", "Lemma 2. two", "Proof. done ∎"]));
+    run(&mut mls, answer);
+
+    assert_eq!(mls.blocks[2].statement, Some(id_of(&mls, 1)));
+}
+
+#[test]
 fn a_block_gets_the_whole_document_above_it() {
     let mut mls = Mls::new();
     mls.sync(&paras(&["Just words.", "Def d.", "Lemma t."]));
@@ -1353,11 +1428,11 @@ fn a_missing_or_malformed_memory_restores_nothing() {
         ),
         (
             "unmarked version 3 memory",
-            twin.replace("\"segmentation_version\":1,", ""),
+            twin.replace("\"segmentation_version\":2,", ""),
         ),
         (
             "old segmentation revision",
-            twin.replace("\"segmentation_version\":1", "\"segmentation_version\":0"),
+            twin.replace("\"segmentation_version\":2", "\"segmentation_version\":1"),
         ),
         (
             "no closing delimiter",
