@@ -29,7 +29,7 @@ const ITEMS: &str = "Decide whether paragraph contains one mathematical item or 
 
 const SPLIT: &str = r#"Identify the independently checkable definitions, statements and proofs in the current paragraph. Return its labeled items in document order, with explicit targets for proofs. Do not formalize into Lean.
 
-The input contains paragraph, the current text, and block_above, either null or the preceding paragraph with its role and text. Use block_above as context only; never include its text among the returned items.
+The input contains paragraph, the current text, and block_above, either null or the preceding paragraph with its role and text. Use block_above as context only; never include its text among the returned items. If rejected_answer_reason is present, your previous answer for this paragraph was rejected for that reason: answer again and fix it.
 
 A statement and the supporting proof offered to establish it are separate items, even when they share a sentence. Intermediate claims and computations within an existing proof belong to that proof. Separate statements remain separate items even when they have the same role. Setup, hypotheses, defining conditions and clauses of one statement stay with the item they serve. A definition and a separate asserted property of it are separate items. Preserve the context of earlier definitions when interpreting later statements; a statement need not repeat that context in its text. Prose that is not a mathematical item has role skip; connecting prose serving an item stays with that item. At a cut between an assertion and its supporting argument, put the connective with the argument.
 
@@ -271,8 +271,9 @@ pub(crate) fn parse_items(response: &Value) -> Result<bool, Failure> {
     }
 }
 
-/// The request that cuts one paragraph into its items (see `Job::Split`).
-pub(crate) fn split_request(text: &str, context: &SplitContext) -> Value {
+/// The request that cuts one paragraph into its items (see `Job::Split`). `retry` is the reason the
+/// previous answer for this paragraph was rejected, if this is a second attempt.
+pub(crate) fn split_request(text: &str, context: &SplitContext, retry: Option<&str>) -> Value {
     let above = context
         .statement
         .as_ref()
@@ -284,6 +285,10 @@ pub(crate) fn split_request(text: &str, context: &SplitContext) -> Value {
                 .map(|(label, text)| (*label, text))
         })
         .map(|(label, text)| json!({"role": label.name(), "text": text}));
+    let mut input = json!({"block_above": above, "paragraph": text});
+    if let Some(reason) = retry {
+        input["rejected_answer_reason"] = json!(reason);
+    }
     json!({
         "model": FORMALIZER_MODEL,
         "temperature": 0,
@@ -291,7 +296,7 @@ pub(crate) fn split_request(text: &str, context: &SplitContext) -> Value {
         "reasoning": {"max_tokens": REASONING_TOKENS},
         "messages": [
             {"role": "system", "content": SPLIT},
-            {"role": "user", "content": json!({"block_above": above, "paragraph": text}).to_string()},
+            {"role": "user", "content": input.to_string()},
         ],
         "response_format": {"type": "json_schema", "json_schema": {
             "name": "labeled_items",

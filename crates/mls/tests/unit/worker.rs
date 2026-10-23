@@ -24,6 +24,8 @@ use std::{
 mod documents;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
+const NOT_SPLIT: &str =
+    "Invalid labeled segmentation: items must reproduce the whole paragraph in order.";
 
 fn reply(worker: &Worker) -> Reply {
     worker
@@ -783,6 +785,103 @@ fn split_reports_the_pieces_of_the_paragraph_as_parts_of_its_text() {
         }
         other => panic!("expected a split, got {other:?}"),
     }
+}
+
+/// One item of a split reply, as the model writes it.
+fn split_item(id: u64, role: &str, text: &str, proves: Option<u64>) -> Value {
+    json!({"id": id, "role": role, "text": text, "proves": proves, "proves_previous": false})
+}
+
+/// A split chat completion whose content lists `items`.
+fn split_answer(items: Vec<Value>) -> Result<Value, Failure> {
+    let content = json!({"items": items});
+    Ok(json!({"choices": [{"finish_reason": "stop",
+        "message": {"content": content.to_string()}}]}))
+}
+
+fn split_job(text: &str) -> Job {
+    Job::Split {
+        paragraph: 4,
+        text: text.to_string(),
+        context: SplitContext::default(),
+    }
+}
+
+/// The result of the next split reply.
+fn split_result(worker: &Worker) -> Result<Vec<Segment>, Failure> {
+    match reply(worker) {
+        Reply::Split { result, .. } => result,
+        other => panic!("expected a split, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_invalid_segmentation_is_asked_again_with_its_reason() {
+    let (worker, bodies) = worker_replying(vec![
+        split_answer(vec![
+            split_item(1, "statement", "Lemma. A.", None),
+            split_item(2, "proof", "Proof. C.", Some(1)),
+        ]),
+        split_answer(vec![
+            split_item(1, "statement", "Lemma. A.", None),
+            split_item(2, "proof", "Proof. B.", Some(1)),
+        ]),
+    ]);
+    worker.submit(split_job("Lemma. A. Proof. B."));
+    assert_eq!(
+        split_result(&worker),
+        Ok(vec![
+            Segment {
+                id: 1,
+                label: Label::Statement,
+                text: "Lemma. A.".into(),
+                proves: None,
+                proves_previous: false,
+            },
+            Segment {
+                id: 2,
+                label: Label::Proof,
+                text: "Proof. B.".into(),
+                proves: Some(1),
+                proves_previous: false,
+            },
+        ])
+    );
+    let requests: Vec<Value> = bodies.try_iter().collect();
+    assert_eq!(requests.len(), 2);
+    let first = requests[0]["messages"][1]["content"].as_str().unwrap();
+    assert!(!first.contains("rejected_answer_reason"), "{first}");
+    let second = requests[1]["messages"][1]["content"].as_str().unwrap();
+    assert!(second.contains("rejected_answer_reason"), "{second}");
+    assert!(second.contains(NOT_SPLIT), "{second}");
+}
+
+#[test]
+fn a_segmentation_invalid_twice_is_a_structural_failure() {
+    let invalid = || {
+        split_answer(vec![
+            split_item(1, "statement", "Lemma. A.", None),
+            split_item(2, "proof", "Proof. C.", Some(1)),
+        ])
+    };
+    let (worker, bodies) = worker_replying(vec![invalid(), invalid()]);
+    worker.submit(split_job("Lemma. A. Proof. B."));
+    assert_eq!(
+        split_result(&worker),
+        Err(Failure {
+            message: NOT_SPLIT.to_string(),
+            service: false,
+        })
+    );
+    assert_eq!(bodies.try_iter().count(), 2);
+}
+
+#[test]
+fn a_service_failure_on_a_split_is_not_asked_again() {
+    let (worker, bodies) = worker_replying(vec![Err(unreachable())]);
+    worker.submit(split_job("Lemma. A. Proof. B."));
+    assert_eq!(split_result(&worker), Err(unreachable()));
+    assert_eq!(bodies.try_iter().count(), 1);
 }
 
 #[test]

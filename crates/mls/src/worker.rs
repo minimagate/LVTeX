@@ -5,7 +5,9 @@ use crate::openrouter::{
     parse_formal, parse_items, parse_split, parse_tag, split_request,
 };
 use crate::repl::Repl;
-use crate::{Checked, Failure, Formal, Job, Label, Outcome, Reply, Tag, rules};
+use crate::{
+    Checked, Failure, Formal, Job, Label, Outcome, Reply, Segment, SplitContext, Tag, rules,
+};
 use serde_json::Value;
 use std::{
     fmt,
@@ -170,8 +172,7 @@ fn run(
             paragraph: *paragraph,
             text: text.clone(),
             context: context.clone(),
-            result: request(CHAT_URL, &split_request(text, context))
-                .and_then(|response| parse_split(&response, text, context)),
+            result: split(request, text, context),
         },
         Job::Formalize {
             block,
@@ -286,6 +287,24 @@ fn formalize(
     }
     // `ATTEMPTS` is at least one, so the loop ran and set `last`.
     last.expect("the formalization loop makes at least one attempt")
+}
+
+/// Cuts one paragraph into its items. A reply whose pieces are not the paragraph in order, or that
+/// is otherwise invalid, is asked again once with its reason. A second invalid reply is the result.
+/// A service failure is returned at once, without a second request.
+fn split(
+    request: &mut impl FnMut(&str, &Value) -> Result<Value, Failure>,
+    text: &str,
+    context: &SplitContext,
+) -> Result<Vec<Segment>, Failure> {
+    let mut attempt = |retry: Option<&str>| {
+        request(CHAT_URL, &split_request(text, context, retry))
+            .and_then(|response| parse_split(&response, text, context))
+    };
+    match attempt(None) {
+        Err(failure) if !failure.service => attempt(Some(failure.message.as_str())),
+        result => result,
+    }
 }
 
 /// Why Lean's outcome does not accept a formalization of `label`, or None when it does. A

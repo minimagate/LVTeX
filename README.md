@@ -194,9 +194,10 @@ statement segment or the provided preceding statement. Targets separated by othe
 mathematical items are currently reported as unsupported; place the proof directly
 after its statement. An open proof can still continue into the next paragraph.
 A whole-paragraph proof with no paired statement gets one segmentation recovery
-attempt, even if Jev said it was one item. An invalid segmentation or a proof still
-without a target shows a structural error; it never silently checks the whole
-paragraph or retries indefinitely. Service failures remain retryable.
+attempt, even if Jev said it was one item. An invalid segmentation is first asked for
+once more with its reason; only a second invalid answer, or a proof still without a
+target, shows a structural error. It never silently checks the whole paragraph or
+retries indefinitely. Service failures remain retryable.
 
 Claude Sonnet 5.5 (`anthropic/claude-sonnet-5.5`) formalizes each block into Lean as
 one item, given the Lean of the blocks above and the document text above it;

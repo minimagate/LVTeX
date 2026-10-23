@@ -293,7 +293,7 @@ fn parse_tag_rejects_a_missing_or_unknown_answer_about_several_items() {
 #[test]
 fn split_request_sends_the_paragraph_to_the_formalizer_with_a_strict_schema() {
     let text = "**Lemma.** $x = x$. Indeed, it is trivial. ∎";
-    let request = split_request(text, &SplitContext::default());
+    let request = split_request(text, &SplitContext::default(), None);
     assert_eq!(request["model"], FORMALIZER_MODEL);
     assert_eq!(request["temperature"], 0);
     assert_eq!(request["max_tokens"], 32_000);
@@ -313,6 +313,23 @@ fn split_request_sends_the_paragraph_to_the_formalizer_with_a_strict_schema() {
     assert_eq!(
         schema["properties"]["items"]["items"]["additionalProperties"],
         false
+    );
+}
+
+#[test]
+fn split_request_names_the_rejected_answer_only_on_a_second_attempt() {
+    let text = "Lemma. A.";
+    let user_input = |retry: Option<&str>| -> Value {
+        let request = split_request(text, &SplitContext::default(), retry);
+        serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap()
+    };
+    assert_eq!(
+        user_input(Some("why")),
+        json!({"block_above": null, "paragraph": text, "rejected_answer_reason": "why"})
+    );
+    assert_eq!(
+        user_input(None),
+        json!({"block_above": null, "paragraph": text})
     );
 }
 
