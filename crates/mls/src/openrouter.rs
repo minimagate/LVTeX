@@ -1,6 +1,8 @@
 //! OpenRouter: the Jev decision, the split of a paragraph and the formalization, sent through curl.
 
-use crate::{FORMALIZER_MODEL, Failure, Formal, JEV_MODEL, Label, Segment, SplitContext, Tag};
+use crate::{
+    FORMALIZER_MODEL, Failure, Formal, JEV_MODEL, Label, Segment, SplitContext, Tag, rules,
+};
 use serde_json::{Value, json};
 use std::{
     borrow::Cow,
@@ -347,9 +349,7 @@ fn bounded_above(above: &str) -> Cow<'_, str> {
     Cow::Owned(format!("{}\n\n[…]\n\n{}", &above[..head], &above[tail..]))
 }
 
-/// The request that formalizes one block. The system prompt and the last Lean
-/// segment carry cache_control, so an edit in the middle of the document invalidates
-/// only the cached suffix after it. `above` is the document text above the block (see
+/// The request that formalizes one block. `above` is the document text above the block (see
 /// `Job::Formalize`). `retry` is the failed Lean and the reason it was not accepted, for a block
 /// that is asked again (see `worker`).
 pub(crate) fn formalize_request(
@@ -360,19 +360,6 @@ pub(crate) fn formalize_request(
     statement: Option<&str>,
     retry: Option<(&str, &str)>,
 ) -> Value {
-    let system = json!({"role": "system", "content": [
-        {"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}
-    ]});
-    let mut parts: Vec<Value> = lean_above
-        .iter()
-        .map(|(id, lean)| json!({"type": "text", "text": format!("-- lvtex:block {id}\n{lean}\n")}))
-        .collect();
-    if let Some(last) = parts.last_mut() {
-        last["cache_control"] = json!({"type": "ephemeral"});
-    }
-    let statement = statement
-        .map(|statement| format!("Most recent statement:\n{statement}\n\n"))
-        .unwrap_or_default();
     let retry = retry
         .map(|(failed, reason)| {
             let reason: String = reason.chars().take(RETRY_REASON_CHARS).collect();
@@ -391,8 +378,65 @@ pub(crate) fn formalize_request(
             )
         })
         .unwrap_or_default();
+    block_request(label, text, above, lean_above, statement, &retry)
+}
+
+/// The request that asks, once, whether the statement of a proof that was not accepted is false as
+/// formalized, and for a refutation of it (see `worker`). It is the request for the proof with its
+/// statement, ending with the proof's last attempt `failed` and its `reason`, cut as for a retry.
+pub(crate) fn refute_request(
+    text: &str,
+    above: Option<&str>,
+    lean_above: &[(u64, String)],
+    statement: &str,
+    failed: &str,
+    reason: &str,
+) -> Value {
+    let name = rules::declared_names(statement)
+        .into_iter()
+        .next()
+        .unwrap_or_default();
+    let header = rules::refutation_header(&name);
+    let reason: String = reason.chars().take(RETRY_REASON_CHARS).collect();
+    let ending = format!(
+        "\n\nThe proof of the most recent statement was not accepted after several attempts. The last attempt was:\n{failed}\n\nThe reason:\n{reason}\n\nThe statement may be false as formalized. Do not prove it this time. If it is false, return in \"lean\" a refutation of exactly this form, with a complete proof and no sorry:\n-- Counterexample: <one sentence naming the values that make it false, and why>\n{header} by\n  <proof>\n`type_of% @{name}` is the type of the declared statement exactly as declared, with its implicit and instance binders, so the refutation proves its negation. After `intro h`, apply `h` with `@h` and give every argument explicitly, including instance arguments, which are usually not instances for the counterexample: for example `have := @h 3 ⟨by norm_num⟩ ⟨1, rfl⟩` for `∀ (p : ℕ) [Fact p.Prime], Odd p → …`. Then reduce to a closed goal and finish with `decide` or `norm_num`; `revert` the hypotheses a goal still depends on before `decide`. Declare nothing else, and cite only results proved above, never a statement that is still `sorry`. Set \"lean_name\" to null and list in \"assumptions\" what the counterexample uses. If you cannot show that it is false, return an empty \"lean\"."
+    );
+    block_request(
+        Label::Proof,
+        text,
+        above,
+        lean_above,
+        Some(statement),
+        &ending,
+    )
+}
+
+/// The request for one block: the system prompt, the Lean above it, and the block followed by
+/// `ending`. The system prompt and the last Lean segment carry cache_control, so an edit in the
+/// middle of the document invalidates only the cached suffix after it.
+fn block_request(
+    label: Label,
+    text: &str,
+    above: Option<&str>,
+    lean_above: &[(u64, String)],
+    statement: Option<&str>,
+    ending: &str,
+) -> Value {
+    let system = json!({"role": "system", "content": [
+        {"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}
+    ]});
+    let mut parts: Vec<Value> = lean_above
+        .iter()
+        .map(|(id, lean)| json!({"type": "text", "text": format!("-- lvtex:block {id}\n{lean}\n")}))
+        .collect();
+    if let Some(last) = parts.last_mut() {
+        last["cache_control"] = json!({"type": "ephemeral"});
+    }
+    let statement = statement
+        .map(|statement| format!("Most recent statement:\n{statement}\n\n"))
+        .unwrap_or_default();
     let prompt = format!(
-        "Document above:\n{}\n\nLabel: {}\n\n{statement}Block:\n{text}{retry}",
+        "Document above:\n{}\n\nLabel: {}\n\n{statement}Block:\n{text}{ending}",
         above.map_or(Cow::Borrowed("(none)"), bounded_above),
         label.name(),
     );

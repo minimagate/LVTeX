@@ -271,8 +271,8 @@ pub(crate) fn checked_lean(label: Label, lean: &str, statement: Option<&str>) ->
 }
 
 /// The start of a refutation of the statement `name`: an `example` of the negation of the
-/// statement's type, with every binder explicit (`type_of%`). It checks beside the statement that
-/// is declared with `sorry`, and proves that the statement is false as formalized.
+/// statement's type, exactly as declared (`type_of%`). It checks beside the statement that is
+/// declared with `sorry`, and proves that the statement is false as formalized.
 pub(crate) fn refutation_header(name: &str) -> String {
     format!("example : ¬ type_of% @{name} :=")
 }
@@ -290,6 +290,39 @@ pub(crate) fn counterexample(lean: &str, name: &str) -> Option<String> {
     let code = normalize(&strip_comments(lean));
     code.starts_with(&normalize(&refutation_header(name)))
         .then(|| sentence.to_string())
+}
+
+/// The rules on the code of a block of `label` (comments removed): the words that no block may use,
+/// and where `sorry` may stand.
+fn reject_code(label: Label, code: &str) -> Result<(), String> {
+    if has_word(code, "axiom") {
+        return Err("The Lean declares an axiom.".to_string());
+    }
+    if has_word(code, "admit") {
+        return Err("The Lean uses admit.".to_string());
+    }
+    let sorries = count_word(code, "sorry");
+    match label {
+        Label::Statement if sorries != 1 || strip_last_word(code.trim_end(), "sorry").is_none() => {
+            return Err("A statement must have `sorry` as its whole proof.".to_string());
+        }
+        Label::Statement => {}
+        Label::Definition if sorries > 0 => {
+            return Err("The definition uses sorry.".to_string());
+        }
+        Label::Proof | Label::Skip if sorries > 0 => {
+            return Err("The proof uses sorry.".to_string());
+        }
+        Label::Definition | Label::Proof | Label::Skip => {}
+    }
+    // After the sorry rules, so a statement that breaks them keeps its own message.
+    if let Some(command) = hash_command(code) {
+        return Err(format!("The Lean uses `{command}`, which is not allowed."));
+    }
+    if let Some(word) = FORBIDDEN_WORDS.iter().find(|word| has_word(code, word)) {
+        return Err(format!("The Lean uses `{word}`, which is not allowed."));
+    }
+    Ok(())
 }
 
 /// Rejects a formalization of `label` that must not be checked. `names_above`
@@ -312,33 +345,7 @@ pub(crate) fn reject(
         };
     }
     let code = strip_comments(&formal.lean);
-    if has_word(&code, "axiom") {
-        return Err("The Lean declares an axiom.".to_string());
-    }
-    if has_word(&code, "admit") {
-        return Err("The Lean uses admit.".to_string());
-    }
-    let sorries = count_word(&code, "sorry");
-    match label {
-        Label::Statement if sorries != 1 || strip_last_word(code.trim_end(), "sorry").is_none() => {
-            return Err("A statement must have `sorry` as its whole proof.".to_string());
-        }
-        Label::Statement => {}
-        Label::Definition if sorries > 0 => {
-            return Err("The definition uses sorry.".to_string());
-        }
-        Label::Proof | Label::Skip if sorries > 0 => {
-            return Err("The proof uses sorry.".to_string());
-        }
-        Label::Definition | Label::Proof | Label::Skip => {}
-    }
-    // After the sorry rules, so a statement that breaks them keeps its own message.
-    if let Some(command) = hash_command(&code) {
-        return Err(format!("The Lean uses `{command}`, which is not allowed."));
-    }
-    if let Some(word) = FORBIDDEN_WORDS.iter().find(|word| has_word(&code, word)) {
-        return Err(format!("The Lean uses `{word}`, which is not allowed."));
-    }
+    reject_code(label, &code)?;
     let statement_names = statement.map(declared_names).unwrap_or_default();
     for name in declared_names(&formal.lean) {
         let restated = label == Label::Proof && statement_names.contains(&name);
@@ -357,6 +364,25 @@ pub(crate) fn reject(
         if own_name.is_some_and(|name| count_word(&code, &name) > 1) {
             return Err("The proof cites the statement it proves.".to_string());
         }
+    }
+    Ok(())
+}
+
+/// Rejects a refutation of `statement` that must not be checked or kept. It obeys the rules of a
+/// proof's code, then must be the refutation of the statement's first name (see
+/// `counterexample`) and declare no name of its own.
+pub(crate) fn reject_refutation(lean: &str, statement: &str) -> Result<(), String> {
+    const FORM: &str = "The refutation does not have the required form.";
+    reject_code(Label::Proof, &strip_comments(lean))?;
+    let name = declared_names(statement)
+        .into_iter()
+        .next()
+        .ok_or_else(|| FORM.to_string())?;
+    if counterexample(lean, &name).is_none() {
+        return Err(FORM.to_string());
+    }
+    if !declared_names(lean).is_empty() {
+        return Err("The refutation declares a name.".to_string());
     }
     Ok(())
 }

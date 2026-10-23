@@ -823,3 +823,87 @@ fn parse_formal_accepts_blank_lean_for_a_block_that_declares_nothing() {
         Ok(formal("", None, &[])),
     )]);
 }
+
+#[test]
+fn refute_request_asks_for_a_refutation_with_the_formalizer_model_schema_and_limits() {
+    let statement = "theorem refuted_name : True := by sorry";
+    let above = [(1, "def a := 1".to_string())];
+    let request = refute_request(
+        "by trivial",
+        None,
+        &above,
+        statement,
+        "axiom a : ℕ",
+        "The Lean declares an axiom.",
+    );
+    let formalize = formalize_request(
+        Label::Proof,
+        "by trivial",
+        None,
+        &above,
+        Some(statement),
+        None,
+    );
+    for key in [
+        "model",
+        "temperature",
+        "max_tokens",
+        "reasoning",
+        "response_format",
+    ] {
+        assert_eq!(request[key], formalize[key], "{key}");
+    }
+    assert_eq!(request["messages"][0], formalize["messages"][0]);
+    assert_eq!(
+        request["messages"][1]["content"][0],
+        formalize["messages"][1]["content"][0]
+    );
+
+    let parts = request["messages"][1]["content"]
+        .as_array()
+        .expect("user content parts");
+    assert_eq!(parts.len(), 2);
+    let text = parts.last().expect("final part")["text"]
+        .as_str()
+        .expect("text part");
+    assert!(
+        text.starts_with(
+            "Document above:\n(none)\n\nLabel: proof\n\nMost recent statement:\ntheorem refuted_name : True := by sorry\n\nBlock:\nby trivial\n\nThe proof of the most recent statement was not accepted"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "The last attempt was:\naxiom a : ℕ\n\nThe reason:\nThe Lean declares an axiom.\n\nThe statement may be false as formalized."
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "\n-- Counterexample: <one sentence naming the values that make it false, and why>\nexample : ¬ type_of% @refuted_name := by\n  <proof>\n`type_of% @refuted_name` is the type of the declared statement exactly as declared"
+        ),
+        "{text}"
+    );
+    assert!(text.ends_with("If you cannot show that it is false, return an empty \"lean\"."));
+}
+
+#[test]
+fn refute_request_cuts_a_long_reason_like_a_retry() {
+    let reason = "r".repeat(5_000);
+    let request = refute_request(
+        "by trivial",
+        None,
+        &[],
+        "theorem t : True := by sorry",
+        "by trivial",
+        &reason,
+    );
+    let parts = request["messages"][1]["content"]
+        .as_array()
+        .expect("user content parts");
+    let text = parts.last().expect("final part")["text"]
+        .as_str()
+        .expect("text part");
+    assert!(text.contains(&"r".repeat(4_000)));
+    assert!(!text.contains(&"r".repeat(4_001)), "the reason is cut");
+}

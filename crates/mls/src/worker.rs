@@ -2,7 +2,7 @@
 
 use crate::openrouter::{
     self, CHAT_URL, DECISIONS_URL, classify_request, formalize_request, items_request,
-    parse_formal, parse_items, parse_split, parse_tag, split_request,
+    parse_formal, parse_items, parse_split, parse_tag, refute_request, split_request,
 };
 use crate::repl::Repl;
 use crate::{
@@ -113,7 +113,8 @@ impl Worker {
 
 /// The most formalization requests one block gets in one job. A formalization that the rules reject,
 /// that Lean does not accept, or whose reply is malformed is asked again with the reason, up to this
-/// many in all.
+/// many in all. A proof whose last attempt is still not accepted gets one more request, for a
+/// refutation of its statement (see `refutation`).
 const ATTEMPTS: usize = 3;
 
 /// The formal of a formalization job and the check of that formal (see `Reply::Formalized`).
@@ -121,6 +122,13 @@ type Formalized = (
     Result<Formal, Failure>,
     Option<(u64, Result<Checked, Failure>)>,
 );
+
+/// What `formalize` asks the formalizer for: the block, with the failed Lean and its reason when the
+/// block is asked again, or a refutation of a proof's statement.
+enum Ask<'a> {
+    Formalize(Option<(&'a str, &'a str)>),
+    Refute { failed: &'a str, reason: &'a str },
+}
 
 /// Computes the reply to one job. A failed request or Lean check becomes a failed reply.
 fn run(
@@ -189,15 +197,23 @@ fn run(
             let (result, check) = formalize(
                 request,
                 &mut |lean, on| check(repl, project, lean, on),
-                |retry| {
-                    formalize_request(
+                |ask| match ask {
+                    Ask::Formalize(retry) => formalize_request(
                         *label,
                         text,
                         above.as_deref(),
                         lean_above,
                         statement_lean,
                         retry,
-                    )
+                    ),
+                    Ask::Refute { failed, reason } => refute_request(
+                        text,
+                        above.as_deref(),
+                        lean_above,
+                        statement_lean.expect("a refutation is asked only for a proof's statement"),
+                        failed,
+                        reason,
+                    ),
                 },
                 *label,
                 names_above,
@@ -229,12 +245,13 @@ fn run(
 /// Formalizes one block. Each attempt sends a request, applies the rules and checks the Lean on
 /// `base`. A rejected or unaccepted formalization is asked again with its Lean and the reason, and
 /// so is a reply that was cut off or is not valid JSON, with its reason and no Lean. Up to
-/// `ATTEMPTS` requests in all; the last attempt is the result. A service failure, or a timed-out
-/// check, stops at once. `body` builds the request from the retry, if any.
+/// `ATTEMPTS` requests in all; the last attempt is the result, unless a proof's refutation is
+/// accepted (see `refutation`). A service failure, or a timed-out check, stops at once. `body`
+/// builds the request for each `Ask`.
 fn formalize(
     request: &mut impl FnMut(&str, &Value) -> Result<Value, Failure>,
     check: &mut impl FnMut(&str, u64) -> Result<Checked, Failure>,
-    body: impl Fn(Option<(&str, &str)>) -> Value,
+    body: impl Fn(Ask<'_>) -> Value,
     label: Label,
     names_above: &[String],
     statement: Option<&str>,
@@ -243,11 +260,11 @@ fn formalize(
     let mut retry: Option<(String, String)> = None;
     let mut last = None;
     for _ in 0..ATTEMPTS {
-        let request_body = body(
+        let request_body = body(Ask::Formalize(
             retry
                 .as_ref()
                 .map(|(lean, reason)| (lean.as_str(), reason.as_str())),
-        );
+        ));
         let mut formal = match request(CHAT_URL, &request_body).and_then(|r| parse_formal(&r)) {
             Ok(formal) => formal,
             Err(failure) if failure.service => return (Err(failure), None),
@@ -285,8 +302,53 @@ fn formalize(
             }
         }
     }
-    // `ATTEMPTS` is at least one, so the loop ran and set `last`.
-    last.expect("the formalization loop makes at least one attempt")
+    // `ATTEMPTS` is at least one, so the loop ran and set `last` and `retry`, which holds the last
+    // attempt's Lean and reason.
+    let last = last.expect("the formalization loop makes at least one attempt");
+    match (label, statement, &retry) {
+        (Label::Proof, Some(statement), Some((failed, reason))) => refutation(
+            request,
+            check,
+            body,
+            names_above,
+            statement,
+            base,
+            (failed.as_str(), reason.as_str()),
+        )
+        .map_or(last, |(formal, checked)| {
+            (Ok(formal), Some((base, Ok(checked))))
+        }),
+        _ => last,
+    }
+}
+
+/// Asks the formalizer once whether `statement`, the statement of a proof that was not accepted, is
+/// false as formalized, given the proof's last attempt `failed` and its `reason`. The refutation is
+/// the proof's result only when the rules accept it and Lean verifies it on `base`; it then uses the
+/// names above that its Lean relies on, but not the statement's own name. Any other reply, and a
+/// service failure, gives None, and the proof's last attempt stays the result.
+fn refutation(
+    request: &mut impl FnMut(&str, &Value) -> Result<Value, Failure>,
+    check: &mut impl FnMut(&str, u64) -> Result<Checked, Failure>,
+    body: impl Fn(Ask<'_>) -> Value,
+    names_above: &[String],
+    statement: &str,
+    base: u64,
+    (failed, reason): (&str, &str),
+) -> Option<(Formal, Checked)> {
+    let mut formal = request(CHAT_URL, &body(Ask::Refute { failed, reason }))
+        .and_then(|response| parse_formal(&response))
+        .ok()?;
+    rules::reject_refutation(&formal.lean, statement).ok()?;
+    let own_name = rules::declared_names(statement).into_iter().next();
+    formal.uses = rules::uses(&formal.lean, names_above);
+    formal
+        .uses
+        .retain(|name| Some(name.as_str()) != own_name.as_deref());
+    match check(&formal.lean, base) {
+        Ok(checked) if checked.outcome == Outcome::Verified => Some((formal, checked)),
+        _ => None,
+    }
 }
 
 /// Cuts one paragraph into its items. A reply whose pieces are not the paragraph in order, or that

@@ -217,10 +217,11 @@ rules reject the Lean, or Lean reports an error (or a definition or proof still 
 definitions, statements and proofs alike. The block stays grey meanwhile. If the
 third attempt also fails, the block turns red with the last reason.
 
-When a proof's Lean is instead a refutation of its statement (an `example` of the
-negation of the declared statement, opened by a `-- Counterexample:` line) and Lean
-verifies it without relying on unproved results, the statement turns red with
-"False as formalized: …" and the counterexample, the proof turns red with "The
+When a proof's third attempt also fails, the formalizer is asked once more whether the
+statement is false as formalized, and for a refutation of it: an `example` of the
+negation of the declared statement, opened by a `-- Counterexample:` line. If Lean
+verifies that refutation without relying on unproved results, the statement turns red
+with "False as formalized: …" and the counterexample, the proof turns red with "The
 statement is false: …", and blocks that use the statement turn red. "As formalized"
 matters: the counterexample can also expose a formalization that does not match the
 prose.

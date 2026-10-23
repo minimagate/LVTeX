@@ -2636,3 +2636,29 @@ fn version_of(mls: &Mls, id: u64) -> u64 {
         .expect("the block is in the document")
         .version
 }
+
+#[test]
+fn a_refuted_proof_reopens_from_its_twin_red_with_the_same_errors_and_is_not_formalized_again() {
+    let lines = ["Lemma x.", "Proof REFUTE ∎"];
+    let mut first = Mls::new();
+    first.sync(&paras(&lines));
+    run(&mut first, answer);
+    assert_eq!(statuses(&first), [(0, Status::Failed), (1, Status::Failed)]);
+
+    let twin = first.twin();
+    let mut second = restored(&twin, &lines);
+    let jobs = run(&mut second, answer);
+    assert!(
+        formalized(&jobs).is_empty(),
+        "the refutation is restored, not formalized again: {:?}",
+        kinds(&jobs)
+    );
+    assert_eq!(statuses(&second), statuses(&first), "{twin}");
+    for index in 0..2 {
+        assert_eq!(
+            item(&second, id_of(&second, index)).error,
+            item(&first, id_of(&first, index)).error,
+            "{twin}"
+        );
+    }
+}

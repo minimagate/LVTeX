@@ -979,8 +979,16 @@ fn formal_entry(entry: &Value) -> Option<(FormalKey, Result<Formal, String>)> {
             };
             // A restored Lean is not trusted: it passes the rules a model's reply passes. The names
             // above are not known here, so the redefinition rule is skipped; Lean rejects a duplicate
-            // declaration itself.
-            match crate::rules::reject(key.label, &formal, &[], key.statement.as_deref()) {
+            // declaration itself. A refutation of its statement is a proof's other possible Lean.
+            let accepted = match (key.label, key.statement.as_deref()) {
+                (Label::Proof, Some(statement))
+                    if crate::rules::reject_refutation(&formal.lean, statement).is_ok() =>
+                {
+                    Ok(())
+                }
+                _ => crate::rules::reject(key.label, &formal, &[], key.statement.as_deref()),
+            };
+            match accepted {
                 Ok(()) => Ok(formal),
                 Err(message) => Err(message),
             }

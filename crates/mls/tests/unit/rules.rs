@@ -573,3 +573,35 @@ fn counterexample_reads_a_refutation_of_the_named_statement() {
         );
     }
 }
+
+#[test]
+fn reject_refutation_accepts_a_refutation_of_its_statement_and_nothing_else() {
+    let statement = "theorem X (p : ℕ) : p = 0 := by sorry";
+    let refutation = "-- Counterexample: p = 3, where p - 1 = 2 divides 2, so S_2 = -1.\n\
+                      example : ¬ type_of% @X := by\n  intro h\n  have := @h 3 ⟨by norm_num⟩ ⟨1, rfl⟩\n  revert this\n  decide";
+    assert_eq!(reject_refutation(refutation, statement), Ok(()));
+
+    let cases = [
+        (refutation.replace("decide", "sorry"), PROOF_SORRY),
+        (refutation.replace("decide", "exact foo axiom"), AXIOM),
+        (
+            refutation.replacen(
+                "-- Counterexample: p = 3, where p - 1 = 2 divides 2, so S_2 = -1.\n",
+                "",
+                1,
+            ),
+            "The refutation does not have the required form.",
+        ),
+        (
+            format!("{refutation}\n\ntheorem extra : True := trivial"),
+            "The refutation declares a name.",
+        ),
+    ];
+    for (lean, message) in cases {
+        assert_eq!(
+            reject_refutation(&lean, statement),
+            Err(message.to_string()),
+            "{lean}"
+        );
+    }
+}

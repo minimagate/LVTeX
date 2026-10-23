@@ -1,11 +1,11 @@
 //! Worker tests. The scripted document test needs the Lean project built; run it with
 //! `cargo test --release -p lvtex-mls scripted_documents -- --ignored --nocapture`.
 
-use super::Worker;
-use crate::openrouter::{CHAT_URL, DECISIONS_URL, formalize_request};
+use super::{Ask, Worker};
+use crate::openrouter::{CHAT_URL, DECISIONS_URL, formalize_request, refute_request};
 use crate::{
     Checked, Failure, Formal, Job, Label, Mls, Outcome, Paragraph, Reply, Segment, SplitContext,
-    Status, Tag,
+    Status, Tag, rules,
 };
 use documents::{DOCUMENTS, Line, assert_outcome, drive, lean_project, lean_ready};
 use serde_json::{Value, json};
@@ -95,6 +95,16 @@ fn prompt(body: &Value) -> &str {
         .and_then(|parts| parts.last())
         .and_then(|part| part["text"].as_str())
         .unwrap_or_default()
+}
+
+/// The request for each ask about the definition "Let d be 1.", as `run` builds it.
+fn definition_ask(ask: Ask<'_>) -> Value {
+    match ask {
+        Ask::Formalize(retry) => {
+            formalize_request(Label::Definition, "Let d be 1.", None, &[], None, retry)
+        }
+        Ask::Refute { .. } => panic!("a definition is never refuted"),
+    }
 }
 
 /// A request that fails the way an unreachable service does.
@@ -359,7 +369,7 @@ fn a_lean_error_is_asked_again_and_the_accepted_attempt_is_checked_on_the_base()
     let (result, checked) = super::formalize(
         &mut request,
         &mut check,
-        |retry| formalize_request(Label::Definition, "Let d be 1.", None, &[], None, retry),
+        definition_ask,
         Label::Definition,
         &[],
         None,
@@ -404,7 +414,7 @@ fn a_timed_out_check_is_returned_at_once_without_asking_again() {
     let (result, checked) = super::formalize(
         &mut request,
         &mut check,
-        |retry| formalize_request(Label::Definition, "Let d be 1.", None, &[], None, retry),
+        definition_ask,
         Label::Definition,
         &[],
         None,
@@ -1171,4 +1181,288 @@ fn the_regression_fails_at_the_redundant_simp_and_the_corrected_proof_checks_on_
     let corrected =
         super::check(&mut repl, &project, CORRECTED, base.env).expect("the corrected proof checks");
     assert_eq!(corrected.outcome, Outcome::Verified);
+}
+
+/// The statement of the refutation tests, and its name.
+const POWER_NAME: &str = "powerSum_two_eq_zero";
+const POWER_STATEMENT: &str = "theorem powerSum_two_eq_zero (p : ℕ) [Fact p.Prime] (hodd : Odd p) : powerSum p 2 = 0 := by sorry";
+const POWER_PROSE: &str = "The squares of the residues mod p sum to zero for every odd prime p.";
+/// The refutation of `POWER_STATEMENT` at p = 3, with the counterexample the formalizer gives.
+const REFUTATION: &str = "-- Counterexample: p = 3, where p - 1 = 2 divides 2, so S_2 = -1.\nexample : ¬ type_of% @powerSum_two_eq_zero := by\n  intro h\n  have := @h 3 ⟨by norm_num⟩ ⟨1, rfl⟩\n  revert this\n  decide";
+const FIRST_ERROR: &str = "1:2: `simp` made no progress";
+const SECOND_ERROR: &str = "1:2: unsolved goals";
+const THIRD_ERROR: &str = "1:2: `decide` failed to reduce";
+const REFUTATION_ERROR: &str = "2:2: `decide` failed to reduce";
+
+/// The proof of `POWER_STATEMENT` with the tactic `tactic`.
+fn power_proof(tactic: &str) -> String {
+    format!(
+        "theorem powerSum_two_eq_zero (p : ℕ) [Fact p.Prime] (hodd : Odd p) : powerSum p 2 = 0 := by\n  {tactic}"
+    )
+}
+
+/// A formalization whose content is `lean`, as a reply to one request.
+fn lean_reply(lean: &str) -> Result<Value, Failure> {
+    Ok(formalization_reply(lean))
+}
+
+/// The request for each ask about the proof of `POWER_STATEMENT`, as `run` builds it.
+fn power_ask(ask: Ask<'_>) -> Value {
+    match ask {
+        Ask::Formalize(retry) => formalize_request(
+            Label::Proof,
+            POWER_PROSE,
+            None,
+            &[],
+            Some(POWER_STATEMENT),
+            retry,
+        ),
+        Ask::Refute { failed, reason } => {
+            refute_request(POWER_PROSE, None, &[], POWER_STATEMENT, failed, reason)
+        }
+    }
+}
+
+/// What one formalization of the proof of `POWER_STATEMENT` sent, checked and returned.
+struct PowerRun {
+    requests: Vec<Value>,
+    checks: Vec<(String, u64)>,
+    result: Result<Formal, Failure>,
+    check: Option<(u64, Result<Checked, Failure>)>,
+}
+
+/// Formalizes the proof of `POWER_STATEMENT` on base 7. Each request gets the next of `replies`, and
+/// each check the next of `outcomes`; a request past the replies fails as an unreachable service
+/// would.
+fn power_run(replies: Vec<Result<Value, Failure>>, outcomes: Vec<Outcome>) -> PowerRun {
+    let mut requests = Vec::new();
+    let mut replies = replies.into_iter();
+    let mut request = |_: &str, body: &Value| -> Result<Value, Failure> {
+        requests.push(body.clone());
+        replies.next().unwrap_or_else(|| Err(unreachable()))
+    };
+    let mut checks = Vec::new();
+    let mut outcomes = outcomes.into_iter();
+    let mut lean_check = |lean: &str, base: u64| -> Result<Checked, Failure> {
+        checks.push((lean.to_string(), base));
+        Ok(Checked {
+            env: 5,
+            outcome: outcomes.next().expect("an outcome for each check"),
+        })
+    };
+    let names_above = vec![POWER_NAME.to_string()];
+    let (result, check) = super::formalize(
+        &mut request,
+        &mut lean_check,
+        power_ask,
+        Label::Proof,
+        &names_above,
+        Some(POWER_STATEMENT),
+        7,
+    );
+    PowerRun {
+        requests,
+        checks,
+        result,
+        check,
+    }
+}
+
+/// Three proofs that Lean rejects, each with its error, as the first three attempts.
+fn three_rejected_proofs() -> (Vec<Result<Value, Failure>>, Vec<Outcome>) {
+    (
+        vec![
+            lean_reply(&power_proof("simp [powerSum]")),
+            lean_reply(&power_proof("simp [powerSum, Finset.sum_comm]")),
+            lean_reply(&power_proof("decide")),
+        ],
+        vec![
+            Outcome::Failed(FIRST_ERROR.to_string()),
+            Outcome::Failed(SECOND_ERROR.to_string()),
+            Outcome::Failed(THIRD_ERROR.to_string()),
+        ],
+    )
+}
+
+#[test]
+fn a_refutation_is_asked_once_after_the_last_proof_attempt_and_its_verified_check_is_the_result() {
+    let (mut replies, mut outcomes) = three_rejected_proofs();
+    replies.push(lean_reply(REFUTATION));
+    outcomes.push(Outcome::Verified);
+    let run = power_run(replies, outcomes);
+
+    assert_eq!(run.requests.len(), 4);
+    let asked = prompt(&run.requests[3]);
+    assert!(
+        asked.contains("example : ¬ type_of% @powerSum_two_eq_zero :="),
+        "{asked}"
+    );
+    assert!(asked.contains(&power_proof("decide")), "{asked}");
+    assert!(asked.contains(THIRD_ERROR), "{asked}");
+    assert_eq!(run.checks.len(), 4);
+    assert_eq!(run.checks[3], (REFUTATION.to_string(), 7));
+    let formal = run.result.expect("the refutation is the result");
+    assert_eq!(formal.lean, REFUTATION);
+    assert_eq!(
+        formal.uses,
+        Vec::<String>::new(),
+        "the statement's own name is not a use"
+    );
+    assert_eq!(
+        run.check,
+        Some((
+            7,
+            Ok(Checked {
+                env: 5,
+                outcome: Outcome::Verified,
+            })
+        ))
+    );
+}
+
+#[test]
+fn an_empty_or_unanswered_refutation_leaves_the_last_proof_attempt_as_the_result() {
+    for refusal in [lean_reply(""), Err(unreachable())] {
+        let (mut replies, outcomes) = three_rejected_proofs();
+        replies.push(refusal);
+        let run = power_run(replies, outcomes);
+
+        assert_eq!(run.requests.len(), 4);
+        assert_eq!(run.checks.len(), 3);
+        assert_eq!(
+            run.result.map(|formal| formal.lean),
+            Ok(power_proof("decide"))
+        );
+        assert_eq!(
+            run.check,
+            Some((
+                7,
+                Ok(Checked {
+                    env: 5,
+                    outcome: Outcome::Failed(THIRD_ERROR.to_string()),
+                })
+            ))
+        );
+    }
+}
+
+#[test]
+fn a_refutation_the_rules_reject_leaves_the_last_proof_attempt_as_the_result() {
+    let without_comment = REFUTATION.replacen(
+        "-- Counterexample: p = 3, where p - 1 = 2 divides 2, so S_2 = -1.\n",
+        "",
+        1,
+    );
+    for refutation in [REFUTATION.replace("decide", "sorry"), without_comment] {
+        let (mut replies, outcomes) = three_rejected_proofs();
+        replies.push(lean_reply(&refutation));
+        let run = power_run(replies, outcomes);
+
+        assert_eq!(run.requests.len(), 4, "{refutation}");
+        assert_eq!(run.checks.len(), 3, "{refutation}");
+        assert_eq!(
+            run.result.map(|formal| formal.lean),
+            Ok(power_proof("decide")),
+            "{refutation}"
+        );
+    }
+}
+
+#[test]
+fn a_refutation_that_lean_does_not_verify_leaves_the_last_proof_attempt_as_the_result() {
+    let (mut replies, mut outcomes) = three_rejected_proofs();
+    replies.push(lean_reply(REFUTATION));
+    outcomes.push(Outcome::Failed(REFUTATION_ERROR.to_string()));
+    let run = power_run(replies, outcomes);
+
+    assert_eq!(run.checks.len(), 4);
+    assert_eq!(run.checks[3], (REFUTATION.to_string(), 7));
+    assert_eq!(
+        run.result.map(|formal| formal.lean),
+        Ok(power_proof("decide"))
+    );
+    assert_eq!(
+        run.check,
+        Some((
+            7,
+            Ok(Checked {
+                env: 5,
+                outcome: Outcome::Failed(THIRD_ERROR.to_string()),
+            })
+        ))
+    );
+}
+
+#[test]
+fn a_proof_gets_no_refutation_request_when_it_is_accepted_or_its_service_fails_or_a_statement_fails()
+ {
+    let accepted = power_run(
+        vec![lean_reply(&power_proof("simp [powerSum]"))],
+        vec![Outcome::Verified],
+    );
+    assert_eq!(accepted.requests.len(), 1);
+
+    let unanswered = power_run(vec![Err(unreachable())], vec![]);
+    assert_eq!(unanswered.requests.len(), 1);
+    assert_eq!(unanswered.result, Err(unreachable()));
+
+    let mut statement_requests = 0;
+    let mut request = |_: &str, _: &Value| -> Result<Value, Failure> {
+        statement_requests += 1;
+        Ok(formalization_reply("axiom t : True"))
+    };
+    let mut check = |_: &str, _: u64| -> Result<Checked, Failure> {
+        panic!("a rejected statement is not checked")
+    };
+    let (result, _) = super::formalize(
+        &mut request,
+        &mut check,
+        |ask| match ask {
+            Ask::Formalize(retry) => {
+                formalize_request(Label::Statement, "Then t holds.", None, &[], None, retry)
+            }
+            Ask::Refute { .. } => panic!("a statement is never refuted"),
+        },
+        Label::Statement,
+        &[],
+        None,
+        7,
+    );
+    assert_eq!(statement_requests, super::ATTEMPTS);
+    assert_eq!(
+        result,
+        Err(Failure {
+            message: "The Lean declares an axiom.".to_string(),
+            service: false,
+        })
+    );
+}
+
+#[test]
+#[ignore = "needs the Lean project in lean/ built (lake build Mathlib repl)"]
+fn the_refutation_of_a_statement_checks_after_it_and_passes_the_rules() {
+    let project = lean_project();
+    if !lean_ready(&project) {
+        eprintln!(
+            "skipping: the Lean REPL is not built in {}",
+            project.display()
+        );
+        return;
+    }
+    let definition = "def powerSum (p : ℕ) [Fact p.Prime] (k : ℕ) : ZMod p := ∑ x : ZMod p, x ^ k";
+    let mut repl = None;
+    let base = super::check(&mut repl, &project, definition, 0).expect("the definition checks");
+    assert_eq!(base.outcome, Outcome::Verified, "{definition}");
+
+    let statement =
+        super::check(&mut repl, &project, POWER_STATEMENT, base.env).expect("the statement checks");
+    assert_eq!(statement.outcome, Outcome::Sorry, "{POWER_STATEMENT}");
+
+    let refutation = super::check(&mut repl, &project, REFUTATION, statement.env)
+        .expect("the refutation checks");
+    assert_eq!(refutation.outcome, Outcome::Verified, "{REFUTATION}");
+    assert_eq!(
+        rules::reject_refutation(REFUTATION, POWER_STATEMENT),
+        Ok(())
+    );
 }
