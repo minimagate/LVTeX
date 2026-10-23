@@ -145,7 +145,9 @@ pub enum Job {
         version: u64,
         label: Label,
         text: String,
-        prose: Option<String>,
+        /// The document's settled text above the block's first unit: every unit walked before it,
+        /// joined by a blank line. None when nothing is above.
+        above: Option<String>,
         lean_above: Vec<(u64, String)>,
         names_above: Vec<String>,
         /// For proofs: the paired statement's version and Lean.
@@ -165,7 +167,8 @@ pub enum Job {
         block: u64,
         version: u64,
         text: String,
-        prose: Option<String>,
+        /// The document's settled text above the block, as in `Job::Formalize`.
+        above: Option<String>,
         lean_above: Vec<(u64, String)>,
         names_above: Vec<String>,
         /// The paired statement's version and Lean.

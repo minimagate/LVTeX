@@ -562,7 +562,7 @@ fn formalize_request_sends_one_part_when_nothing_is_above() {
 }
 
 #[test]
-fn formalize_request_states_the_prose_label_statement_and_block() {
+fn formalize_request_states_the_document_label_statement_and_block() {
     let statement = "theorem t : True := by sorry";
     let request = formalize_request(
         Label::Proof,
@@ -577,7 +577,7 @@ fn formalize_request_states_the_prose_label_statement_and_block() {
         .expect("user content parts");
     assert_eq!(
         parts.last().expect("final part")["text"],
-        "Prose just above:\nLet $G$ be a group.\n\nLabel: proof\n\nMost recent statement:\ntheorem t : True := by sorry\n\nBlock:\nby trivial"
+        "Document above:\nLet $G$ be a group.\n\nLabel: proof\n\nMost recent statement:\ntheorem t : True := by sorry\n\nBlock:\nby trivial"
     );
 
     let request = formalize_request(Label::Skip, "Thanks.", None, &[], None, None);
@@ -586,8 +586,33 @@ fn formalize_request_states_the_prose_label_statement_and_block() {
         .expect("user content parts");
     assert_eq!(
         parts.last().expect("final part")["text"],
-        "Prose just above:\n(none)\n\nLabel: skip\n\nBlock:\nThanks."
+        "Document above:\n(none)\n\nLabel: skip\n\nBlock:\nThanks."
     );
+}
+
+#[test]
+fn formalize_request_cuts_a_long_document_above_to_its_start_and_end() {
+    // Each letter marks one part of the document: the start, the middle that is cut, and the end.
+    let above = format!(
+        "{}{}{}",
+        "H".repeat(8_000),
+        "M".repeat(34_000),
+        "T".repeat(32_000)
+    );
+    let request = formalize_request(Label::Skip, "Thanks.", Some(&above), &[], None, None);
+    let parts = request["messages"][1]["content"]
+        .as_array()
+        .expect("user content parts");
+    let text = parts.last().expect("final part")["text"]
+        .as_str()
+        .expect("text part");
+    let expected = format!(
+        "Document above:\n{}\n\n[…]\n\n{}\n\nLabel: skip\n\nBlock:\nThanks.",
+        "H".repeat(8_000),
+        "T".repeat(32_000),
+    );
+    assert_eq!(text, expected);
+    assert!(!text.contains('M'), "the cut middle must not be sent");
 }
 
 #[test]

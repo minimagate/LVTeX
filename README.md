@@ -83,7 +83,7 @@ An installed copy checks with the Lean project in
 | --- | --- | --- |
 | Writing, manual math, PDF export | this Mac | nothing |
 | AI formulas (⇧⌘1) | Ollama on this Mac (`gemma4:e4b`) | nothing leaves the Mac |
-| Lean checking: labels and formalization | OpenRouter (Jev, Claude Sonnet 5.5) | the paragraphs being checked, with the prose and Lean above them |
+| Lean checking: labels and formalization | OpenRouter (Jev, Claude Sonnet 5.5) | the paragraphs being checked, with the document text and Lean above them |
 | Lean checking: running the Lean | Lean REPL on this Mac | nothing |
 
 Turning Lean checking off in Settings stops new OpenRouter requests.
@@ -195,8 +195,9 @@ without a target shows a structural error; it never silently checks the whole
 paragraph or retries indefinitely. Service failures remain retryable.
 
 Claude Sonnet 5.5 (`anthropic/claude-sonnet-5.5`) formalizes each block into Lean as
-one item, given the Lean of the blocks above and the prose run above it; statements
-are formalized with `sorry`, and a proof restates its statement with the real proof.
+one item, given the Lean of the blocks above and the document text above it;
+statements are formalized with `sorry`, and a proof restates its statement with the
+real proof.
 Output that uses `axiom`, `admit`, `sorry` in a definition or proof, commands such
 as `#eval` or `set_option`, redefines a name from above, or changes the statement
 its proof belongs to, is rejected before Lean sees it. The Lean REPL then checks the

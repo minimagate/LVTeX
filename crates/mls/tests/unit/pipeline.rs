@@ -489,15 +489,36 @@ fn a_proof_with_no_statement_above_fails_without_a_formalize() {
 }
 
 #[test]
-fn the_last_skip_paragraph_above_a_block_is_its_prose() {
+fn a_block_gets_the_whole_document_above_it() {
     let mut mls = Mls::new();
-    mls.sync(&paras(&["Just words.", "Def d."]));
+    mls.sync(&paras(&["Just words.", "Def d.", "Lemma t."]));
     let jobs = run(&mut mls, answer);
-    let prose = jobs.iter().find_map(|job| match job {
-        Job::Formalize { prose, .. } => Some(prose.clone()),
+    let above: Vec<Option<String>> = jobs
+        .iter()
+        .filter_map(|job| match job {
+            Job::Formalize { above, .. } => Some(above.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        above,
+        [
+            Some("Just words.".to_string()),
+            Some("Just words.\n\nDef d.".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn a_heading_is_part_of_the_document_above() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["# Title", "Lemma t."]));
+    let jobs = run(&mut mls, answer);
+    let above = jobs.iter().find_map(|job| match job {
+        Job::Formalize { above, .. } => Some(above.clone()),
         _ => None,
     });
-    assert_eq!(prose, Some(Some("Just words.".to_string())));
+    assert_eq!(above, Some(Some("# Title".to_string())));
 }
 
 #[test]
@@ -1439,18 +1460,18 @@ fn a_plus_line_after_a_proof_that_has_ended_is_not_part_of_it() {
 }
 
 #[test]
-fn a_block_takes_the_whole_prose_unit_above_it_as_its_prose() {
+fn a_block_takes_the_whole_prose_unit_above_it() {
     let mut mls = Mls::new();
     mls.sync(&paras(&["Hello there.", "+ And more.", "Lemma t."]));
     let jobs = run(&mut mls, answer);
-    let prose: Vec<Option<String>> = jobs
+    let above: Vec<Option<String>> = jobs
         .iter()
         .filter_map(|job| match job {
-            Job::Formalize { prose, .. } => Some(prose.clone()),
+            Job::Formalize { above, .. } => Some(above.clone()),
             _ => None,
         })
         .collect();
-    assert_eq!(prose, [Some("Hello there.\n\n+ And more.".to_string())]);
+    assert_eq!(above, [Some("Hello there.\n\n+ And more.".to_string())]);
 }
 
 #[test]
@@ -1908,15 +1929,15 @@ fn labeled_items_preserve_preceding_and_internal_prose_for_formalization() {
             Job::Split { .. } => labeled_reply(job, labeled_items(&pieces)),
             _ => answer(job),
         });
-        let prose = jobs.iter().find_map(|job| match job {
+        let above = jobs.iter().find_map(|job| match job {
             Job::Formalize {
                 label: Label::Statement,
-                prose,
+                above,
                 ..
-            } => Some(prose.as_deref()),
+            } => Some(above.as_deref()),
             _ => None,
         });
-        assert_eq!(prose, Some(Some(convention)), "{lines:?}");
+        assert_eq!(above, Some(Some(convention)), "{lines:?}");
         assert_eq!(mls.blocks.len(), 2, "the items stay separate");
         assert_eq!(mls.blocks[1].statement, Some(mls.blocks[0].id));
     }
@@ -1969,13 +1990,14 @@ fn labeled_proofs_can_target_the_preceding_statement_across_prose() {
         .unwrap();
     let Job::Formalize {
         statement: target,
-        prose: context,
+        above: context,
         ..
     } = proof_job
     else {
         unreachable!()
     };
-    assert_eq!(context.as_deref(), Some(prose));
+    let above = format!("{statement}\n\n{prose}");
+    assert_eq!(context.as_deref(), Some(above.as_str()));
     assert_eq!(
         target.as_ref().unwrap().1,
         format!("theorem t{} : True := by sorry", mls.blocks[0].id)

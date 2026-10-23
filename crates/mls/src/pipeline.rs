@@ -76,6 +76,9 @@ pub struct Node {
 pub struct Mls {
     paras: Vec<Para>,
     blocks: Vec<Block>,
+    /// The settled text the last walk passed, joined by blank lines. Each block's `above` is a byte
+    /// length into it, so the text is stored once rather than copied for every block.
+    document: String,
     /// Records of blocks that are not in `blocks`, by id. An edit above them then reuses their
     /// formalization and check instead of redoing them. `plan` and `apply` never read them.
     parked: HashMap<u64, Block>,
@@ -198,8 +201,9 @@ struct Block {
     label: Label,
     /// False while the last block ends in ':' or ',' and may still continue. See `segment`.
     closed: bool,
-    /// The text of the prose unit right above `first`, if there is one.
-    prose: Option<String>,
+    /// The byte length of `Mls::document` above `first`: the text above is `document[..above]`, and
+    /// zero when nothing is above.
+    above: usize,
     /// Proofs: the id of the statement block paired with it.
     statement: Option<u64>,
     formal: Option<Result<Formal, Failure>>,
@@ -254,8 +258,8 @@ struct Unit {
     block: Option<usize>,
     /// True once a paragraph ending in ∎ has closed it.
     ended: bool,
-    /// The text of the prose unit right above it, when that unit is prose.
-    prose: Option<String>,
+    /// The byte length of the walk's document above its first unit, as in `Block::above`.
+    above: usize,
 }
 
 /// How the walk reads the tag of one unit.
@@ -275,6 +279,8 @@ struct Walk<'a> {
     unit: Option<Unit>,
     /// The text of the last unit, for the one after a separator.
     previous: Option<&'a str>,
+    /// The texts of every unit the walk has passed, joined by a blank line.
+    document: String,
     frontier: Frontier,
     /// Tags remembered for units with no current one. They are stored once the walk ends.
     remembered: Vec<(Spot, Labelled)>,
@@ -320,6 +326,15 @@ impl<'a> Walk<'a> {
     fn separate(&mut self, text: &'a str) {
         self.unit = None;
         self.previous = Some(text);
+        self.push_document(text);
+    }
+
+    /// Appends the settled `text` to the document the walk has passed.
+    fn push_document(&mut self, text: &str) {
+        if !self.document.is_empty() {
+            self.document.push_str("\n\n");
+        }
+        self.document.push_str(text);
     }
 
     /// The tag of the unit `id` with `text` at `spot`, whose own record is `label`. Jev sees the
@@ -420,7 +435,7 @@ impl<'a> Walk<'a> {
                         u.id,
                         u.text.clone(),
                         tag.label,
-                        u.prose.clone(),
+                        u.above,
                     );
                     self.new.push(block);
                     u.kind = tag.label;
@@ -429,11 +444,6 @@ impl<'a> Walk<'a> {
                 None => {}
             }
         } else {
-            let prose = self
-                .unit
-                .as_ref()
-                .filter(|u| u.kind == Label::Skip)
-                .map(|u| u.text.clone());
             let mut next = Unit {
                 id,
                 first: index,
@@ -441,7 +451,7 @@ impl<'a> Walk<'a> {
                 kind: tag.label,
                 block: None,
                 ended: false,
-                prose,
+                above: self.document.len(),
             };
             if tag.label != Label::Skip {
                 let block = new_block(
@@ -451,7 +461,7 @@ impl<'a> Walk<'a> {
                     id,
                     text.to_string(),
                     tag.label,
-                    next.prose.clone(),
+                    next.above,
                 );
                 self.new.push(block);
                 next.block = Some(self.new.len() - 1);
@@ -466,6 +476,7 @@ impl<'a> Walk<'a> {
             u.ended = true;
         }
         self.previous = Some(text);
+        self.push_document(text);
     }
 }
 
@@ -616,10 +627,17 @@ fn node_name(block: &Block) -> String {
     }
 }
 
-/// The job that formalizes block `b`, against the statement it pairs with, the Lean above it and
-/// the names declared above it.
+/// The document text above a block whose `above` is a byte length into `document`, None when
+/// nothing is above.
+fn document_above(document: &str, above: usize) -> Option<String> {
+    (above > 0).then(|| document[..above].to_string())
+}
+
+/// The job that formalizes block `b`, against the statement it pairs with, the document above it,
+/// the Lean above it and the names declared above it.
 fn formalize_job(
     b: &Block,
+    document: &str,
     statement: Option<&Stated>,
     lean: &[(u64, Label, String)],
     names: &[String],
@@ -629,7 +647,7 @@ fn formalize_job(
         version: b.version,
         label: b.label,
         text: b.text.clone(),
-        prose: b.prose.clone(),
+        above: document_above(document, b.above),
         lean_above: lean
             .iter()
             .map(|(id, _, lean)| (*id, lean.clone()))
@@ -667,7 +685,7 @@ fn new_block(
     id: u64,
     text: String,
     label: Label,
-    prose: Option<String>,
+    above: usize,
 ) -> Block {
     let statement = match label {
         Label::Proof => new
@@ -684,7 +702,7 @@ fn new_block(
         text,
         label,
         closed: true,
-        prose,
+        above,
         statement,
         formal: None,
         statement_version: None,
@@ -1021,6 +1039,7 @@ impl Mls {
             new: Vec::new(),
             unit: None,
             previous: None,
+            document: String::new(),
             frontier: Frontier::Done,
             remembered: Vec::new(),
         };
@@ -1147,6 +1166,7 @@ impl Mls {
             unit,
             frontier,
             remembered,
+            document,
             ..
         } = walk;
         if let Some(Unit { block: Some(b), .. }) = &unit {
@@ -1218,6 +1238,7 @@ impl Mls {
         }
         self.parked = kept;
         self.blocks = new;
+        self.document = document;
         self.frontier = frontier;
     }
 
@@ -1731,7 +1752,9 @@ impl Mls {
                     continue;
                 }
                 _ => {
-                    job.get_or_insert_with(|| formalize_job(b, stmt.as_ref(), &lean, &names));
+                    job.get_or_insert_with(|| {
+                        formalize_job(b, &self.document, stmt.as_ref(), &lean, &names)
+                    });
                     pending = true;
                     dots.push(dot(b.first, b.last, b.id, Status::Checking));
                     continue;
@@ -1752,7 +1775,9 @@ impl Mls {
                     let note = format!("Uses `{name}`, which is not defined above.");
                     dots.push(noted(b.first, b.last, b.id, Status::Failed, note));
                 } else {
-                    job.get_or_insert_with(|| formalize_job(b, stmt.as_ref(), &lean, &names));
+                    job.get_or_insert_with(|| {
+                        formalize_job(b, &self.document, stmt.as_ref(), &lean, &names)
+                    });
                     pending = true;
                     dots.push(dot(b.first, b.last, b.id, Status::Checking));
                 }
@@ -1799,7 +1824,7 @@ impl Mls {
                                     block: b.id,
                                     version: b.version,
                                     text: b.text.clone(),
-                                    prose: b.prose.clone(),
+                                    above: document_above(&self.document, b.above),
                                     lean_above: lean
                                         .iter()
                                         .map(|(id, _, lean)| (*id, lean.clone()))

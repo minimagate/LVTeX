@@ -54,7 +54,7 @@ fn formalize(label: Label, text: &str) -> Job {
         version: 9,
         label,
         text: text.to_string(),
-        prose: None,
+        above: None,
         lean_above: Vec::new(),
         names_above: Vec::new(),
         statement: None,
@@ -85,7 +85,7 @@ fn repair_job(failed: &str, error: &str) -> Job {
         block: 4,
         version: 12,
         text: format!("*Proof.* {PROSE}"),
-        prose: Some("We keep the notation of the definitions above.".to_string()),
+        above: Some("We keep the notation of the definitions above.".to_string()),
         lean_above: vec![
             (
                 1,
@@ -638,7 +638,7 @@ fn formalize_records_the_names_above_that_the_lean_uses() {
         version: 9,
         label: Label::Definition,
         text: "Let f be d1.".to_string(),
-        prose: None,
+        above: None,
         lean_above: Vec::new(),
         names_above: vec!["d1".into(), "t2".into()],
         statement: None,

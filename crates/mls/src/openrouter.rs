@@ -35,7 +35,7 @@ Return only the JSON object required by the schema."#;
 
 const SYSTEM: &str = r#"You formalize one block of a mathematical document into Lean 4 with Mathlib.
 
-You receive the Lean already accepted for the blocks above, in document order, each under a `-- lvtex:block <id>` comment; the prose paragraph just above the block, if any; the block's label; and the block itself, written in Markdown with LaTeX between dollar signs. A block may span several paragraphs, separated by blank lines: its setup, displayed formulas and clauses belong to it, so formalize them together as one item.
+You receive the Lean already accepted for the blocks above, in document order, each under a `-- lvtex:block <id>` comment; the document text above the block, if any, which fixes its notation, conventions and standing hypotheses; the block's label; and the block itself, written in Markdown with LaTeX between dollar signs. A block may span several paragraphs, separated by blank lines: its setup, displayed formulas and clauses belong to it, so formalize them together as one item.
 
 Return only a JSON object with three fields:
 - "lean": Lean 4 source for this block alone. It is checked in an environment that already contains `import Mathlib` and the Lean above, so never write `import`, and never repeat a declaration from above. The one exception is a proof block restating its statement, described under proof.
@@ -53,6 +53,7 @@ Rules:
 - Reuse definitions and results from the Lean above by their exact name and signature instead of redefining or reproving them: a corollary cites the theorem it follows from. Never cite a name you have not seen above or do not know to exist in Mathlib. Prefer Mathlib's existing notions (Group, Filter.Tendsto, Real, Finset) over new ones.
 - Use standard Mathlib names and notation (ℕ, ℤ, ℝ, ∀, ∃, →). Prefer robust tactics such as simp, ring, linarith, nlinarith, omega, positivity, field_simp and gcongr, together with explicit Mathlib lemmas.
 - Keep the formalization faithful to the block: the same objects, hypotheses and conclusion.
+- Carry the standing hypotheses and conventions fixed in the document above (for example "Let $G$ be a finite group" or "Throughout, $A$ is a symmetric matrix") into every block they govern, as explicit binders and hypotheses, unless the block overrides them. The document above is context only: formalize nothing from it except what this block needs.
 - Formalize the claim the block asserts or conjectures, even if it is false. Words such as "hope" or "guess" do not weaken the conclusion. Finite examples or computations never replace a universal claim, and never add a bound or hypothesis that the block does not state. A statement keeps its exact form with `by sorry` as its proof, whether or not it is true; a later proof may then fail in Lean."#;
 
 fn service_failure(message: impl Into<String>) -> Failure {
@@ -308,14 +309,38 @@ pub(crate) fn split_request(text: &str, context: &SplitContext) -> Value {
     })
 }
 
+/// Document text above a block longer than this many characters is cut to its start and its end.
+const ABOVE_LIMIT: usize = 40_000;
+/// The characters kept from the start of a cut document: the notation it fixes is set up there.
+const ABOVE_HEAD: usize = 8_000;
+/// The characters kept from the end of a cut document: the conventions nearest the block.
+const ABOVE_TAIL: usize = 32_000;
+
+/// The document text above a block, cut to its first and last characters when it is too long.
+fn bounded_above(above: &str) -> Cow<'_, str> {
+    if above.chars().count() <= ABOVE_LIMIT {
+        return Cow::Borrowed(above);
+    }
+    let head = above
+        .char_indices()
+        .nth(ABOVE_HEAD)
+        .map_or(above.len(), |(at, _)| at);
+    let tail = above
+        .char_indices()
+        .nth_back(ABOVE_TAIL - 1)
+        .map_or(0, |(at, _)| at);
+    Cow::Owned(format!("{}\n\n[…]\n\n{}", &above[..head], &above[tail..]))
+}
+
 /// The request that formalizes one block. The system prompt and the last Lean
 /// segment carry cache_control, so an edit in the middle of the document invalidates
-/// only the cached suffix after it. `repair` is the failed Lean and Lean's error for a proof that
+/// only the cached suffix after it. `above` is the document text above the block (see
+/// `Job::Formalize`). `repair` is the failed Lean and Lean's error for a proof that
 /// is asked again (see `Job::Repair`).
 pub(crate) fn formalize_request(
     label: Label,
     text: &str,
-    prose: Option<&str>,
+    above: Option<&str>,
     lean_above: &[(u64, String)],
     statement: Option<&str>,
     repair: Option<(&str, &str)>,
@@ -341,8 +366,8 @@ pub(crate) fn formalize_request(
         })
         .unwrap_or_default();
     let prompt = format!(
-        "Prose just above:\n{}\n\nLabel: {}\n\n{statement}Block:\n{text}{repair}",
-        prose.unwrap_or("(none)"),
+        "Document above:\n{}\n\nLabel: {}\n\n{statement}Block:\n{text}{repair}",
+        above.map_or(Cow::Borrowed("(none)"), bounded_above),
         label.name(),
     );
     parts.push(json!({"type": "text", "text": prompt}));

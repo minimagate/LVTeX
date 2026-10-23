@@ -167,7 +167,7 @@ fn run(
             version,
             label,
             text,
-            prose,
+            above,
             lean_above,
             names_above,
             statement,
@@ -176,7 +176,7 @@ fn run(
             let body = formalize_request(
                 *label,
                 text,
-                prose.as_deref(),
+                above.as_deref(),
                 lean_above,
                 statement_lean,
                 None,
@@ -191,7 +191,7 @@ fn run(
         }
         Job::Repair {
             text,
-            prose,
+            above,
             lean_above,
             names_above,
             statement,
@@ -202,7 +202,7 @@ fn run(
             let body = formalize_request(
                 Label::Proof,
                 text,
-                prose.as_deref(),
+                above.as_deref(),
                 lean_above,
                 Some(&statement.1),
                 Some((failed, error)),
