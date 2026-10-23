@@ -266,7 +266,7 @@ pub struct LiveLine {
 /// The documents for the live test. Expected dots are the intended behaviour, written from the
 /// text; they are never derived from a run.
 #[allow(dead_code)] // Read only by the live test, which the scripted test does not compile.
-pub const LIVE_DOCUMENTS: [LiveDocument; 8] = [
+pub const LIVE_DOCUMENTS: [LiveDocument; 9] = [
     LiveDocument {
         name: "supplied note",
         lines: &[
@@ -668,6 +668,35 @@ pub const LIVE_DOCUMENTS: [LiveDocument; 8] = [
             LiveLine {
                 text: r"*Proof.* Apply Theorem 3.1 with $a = -1$. ∎",
                 expect: Some(Status::Verified),
+            },
+        ],
+    },
+    LiveDocument {
+        name: "false proposition",
+        lines: &[
+            LiveLine {
+                text: r"# Power sums modulo an odd prime",
+                expect: None,
+            },
+            LiveLine {
+                text: r"In this section $p$ is an odd prime and $F = \mathbb{Z}/p\mathbb{Z}$. For a natural number $k$ we write $S_k = \sum_{x \in F} x^k$.",
+                expect: Some(Status::Verified),
+            },
+            LiveLine {
+                text: r"**Proposition 1.** The sum of the squares of all elements of $F$ vanishes: $S_2 = 0$.",
+                expect: Some(Status::Failed),
+            },
+            LiveLine {
+                text: r"*Proof.* Since $p$ is odd, $p - 1$ is even and does not divide $2$, so the substitution $x \mapsto a x$ for an $a$ with $a^2 \neq 1$ gives $S_2 = a^2 S_2$, hence $S_2 = 0$. ∎",
+                expect: Some(Status::Failed),
+            },
+            LiveLine {
+                text: r"**Corollary 2.** For every $c \in F$ we have $\sum_{x \in F} (x + c)^2 = 0$.",
+                expect: Some(Status::Sorry),
+            },
+            LiveLine {
+                text: r"*Proof.* The map $x \mapsto x + c$ is a bijection of $F$, so the sum equals $S_2$, which vanishes by Proposition 1. ∎",
+                expect: Some(Status::Failed),
             },
         ],
     },

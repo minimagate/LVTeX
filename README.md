@@ -375,7 +375,7 @@ Ollama, OpenRouter, Lean or a TeX installation. The optional checks are:
 cargo test --release --locked -p lvtex manual_preview_latency -- --ignored --nocapture
 # The four sample documents with scripted model answers, checked by Lean (needs lean/ built).
 cargo test --release --locked -p lvtex-mls scripted_documents -- --ignored --nocapture
-# Twelve documents through OpenRouter and Lean, three fresh runs each (needs OPENROUTER_API_KEY and lean/ built).
+# Thirteen documents through OpenRouter and Lean, three fresh runs each (needs OPENROUTER_API_KEY and lean/ built).
 cargo test --release --locked -p lvtex-mls --test documents -- --ignored --nocapture
 # Four routing controls through the production worker, stopping before Lean (needs OPENROUTER_API_KEY).
 cargo test --release --locked -p lvtex-mls --lib live_labeled_routing -- --ignored --nocapture
@@ -383,8 +383,8 @@ cargo test --release --locked -p lvtex-mls --lib live_labeled_routing -- --ignor
 
 The live documents are the four scripted ones plus the supplied note, prime notation, a long
 paragraph, plane energy and orthogonality, several items in one paragraph, deferred proofs,
-standing hypotheses under headings, and a thesis chapter whose main theorem is stated first
-and proved last.
+standing hypotheses under headings, a thesis chapter whose main theorem is stated first
+and proved last, and a false proposition.
 The routing-only test covers mixed parity, a definition with its property and proof,
 two separate statements, and a multi-step proof. It saves raw request bodies and
 responses, job/reply records and memory under `target/mls-live-routing/` without
