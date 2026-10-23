@@ -197,11 +197,14 @@ paragraph or retries indefinitely. Service failures remain retryable.
 Claude Sonnet 5.5 (`anthropic/claude-sonnet-5.5`) formalizes each block into Lean as
 one item, given the Lean of the blocks above and the document text above it;
 statements are formalized with `sorry`, and a proof restates its statement with the
-real proof.
+real proof. A proof is checked after every block above it, where its statement is
+already declared with `sorry`. Its restated declaration is checked as an `example`,
+so the proof may use lemmas stated between its statement and itself, but a proof that
+cites its own statement is rejected.
 Output that uses `axiom`, `admit`, `sorry` in a definition or proof, commands such
-as `#eval` or `set_option`, redefines a name from above, or changes the statement
-its proof belongs to, is rejected before Lean sees it. The Lean REPL then checks the
-block on top of the blocks above.
+as `#eval` or `set_option`, redefines a name from above, changes the statement
+its proof belongs to, or cites that statement inside its proof, is rejected before
+Lean sees it. The Lean REPL then checks the block on top of the blocks above.
 
 If Lean reports an ordinary error in a proof, MLS makes exactly one repair attempt.
 The block stays grey while it repairs. The failed Lean and its error go, with the

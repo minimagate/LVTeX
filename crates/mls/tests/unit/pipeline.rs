@@ -278,6 +278,33 @@ fn prose_gets_only_classify_jobs_and_no_dots() {
     assert!(mls.dots().is_empty());
 }
 
+/// A proof pairs only with the statement directly above it, so this covers the adjacent case: the
+/// proof is checked on the environment that its statement left, and the twin keeps the proof in
+/// theorem form, with no example, because it replaces the statement's Lean.
+#[test]
+fn a_proof_after_another_block_is_checked_after_it() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t.", "Proof. Trivially. ∎"]));
+    let jobs = run(&mut mls, answer);
+    let (statement, proof) = (id_of(&mls, 0), id_of(&mls, 1));
+    let Job::Check { base, .. } = &jobs[5] else {
+        panic!("the proof is checked")
+    };
+    assert_eq!(*base, 100 + version_of(&mls, statement));
+    assert_eq!(
+        statuses(&mls),
+        [(0, Status::Verified), (1, Status::Verified)]
+    );
+    let file = mls.twin();
+    assert!(
+        file.contains(&format!(
+            "\n-- lvtex:block {proof} proof\ntheorem t{statement} : True := by trivial\n"
+        )),
+        "{file}"
+    );
+    assert!(!file.contains("example"), "{file}");
+}
+
 #[test]
 fn a_statement_then_its_proof_is_formalized_and_checked_in_order() {
     let mut mls = Mls::new();
@@ -326,11 +353,19 @@ fn a_statement_then_its_proof_is_formalized_and_checked_in_order() {
     );
     assert_eq!(names_above, &vec![format!("t{statement}")]);
 
-    let Job::Check { block, base, .. } = &jobs[5] else {
+    let Job::Check {
+        block, base, lean, ..
+    } = &jobs[5]
+    else {
         panic!("the proof is checked")
     };
     assert_eq!(*block, proof);
-    assert_eq!(*base, 0, "a proof is checked on its statement's base");
+    assert_eq!(
+        *base,
+        100 + version_of(&mls, statement),
+        "a proof is checked after its statement, on the environment that statement left"
+    );
+    assert!(lean.starts_with("example"), "{lean}");
 
     assert_eq!(
         statuses(&mls),
@@ -770,7 +805,7 @@ fn a_lost_repl_rechecks_every_block_from_its_base_without_formalizing_again() {
 }
 
 #[test]
-fn editing_a_statement_reformalizes_its_proof_against_the_statement_base() {
+fn editing_a_statement_reformalizes_its_proof_and_checks_it_after_the_statement() {
     let mut mls = Mls::new();
     mls.sync(&paras(&["Def d.", "Lemma a.", "Proof. ok ∎"]));
     run(&mut mls, answer);
@@ -794,7 +829,6 @@ fn editing_a_statement_reformalizes_its_proof_against_the_statement_base() {
     let Job::Check {
         block: checked_a,
         version: a_version,
-        base: a_base,
         ..
     } = &jobs[3]
     else {
@@ -817,7 +851,11 @@ fn editing_a_statement_reformalizes_its_proof_against_the_statement_base() {
         panic!("the proof is checked")
     };
     assert_eq!(*block, proof);
-    assert_eq!(base, a_base, "the proof is checked on the statement's base");
+    assert_eq!(
+        *base,
+        100 + *a_version,
+        "the proof is checked after the edited statement"
+    );
 }
 
 #[test]
@@ -1556,8 +1594,8 @@ fn a_paragraph_with_a_statement_and_its_proof_is_read_as_two_blocks() {
     };
     assert_eq!(
         (*block, *base),
-        (proof, 0),
-        "a proof is checked on its statement's base"
+        (proof, 100 + version_of(&mls, statement)),
+        "a proof is checked after its statement, on the environment that statement left"
     );
 
     assert_eq!(statuses(&mls), [(0, Status::Verified)]);
@@ -1807,6 +1845,7 @@ fn recovery_after_a_definition_checks_the_extracted_statement_before_its_proof()
         ]
     );
     let definition_env = 100 + mls.blocks[0].version;
+    let statement_env = 100 + mls.blocks[1].version;
     let bases: Vec<u64> = jobs
         .iter()
         .filter_map(|job| match job {
@@ -1814,7 +1853,7 @@ fn recovery_after_a_definition_checks_the_extracted_statement_before_its_proof()
             _ => None,
         })
         .collect();
-    assert_eq!(bases, [0, definition_env, definition_env]);
+    assert_eq!(bases, [0, definition_env, statement_env]);
     let lean_above = jobs
         .iter()
         .find_map(|job| match job {
@@ -2469,7 +2508,11 @@ fn a_failed_proof_gets_one_repair_and_a_repair_that_checks_turns_green() {
         panic!("the repaired proof is checked")
     };
     assert!(!lean.contains("FALSE"), "{lean}");
-    assert_eq!(*base, 0, "the repair is checked on the statement's base");
+    assert_eq!(
+        *base,
+        100 + version_of(&mls, id_of(&mls, 0)),
+        "the repair is checked after the statement, as the proof was"
+    );
     assert_eq!(
         statuses(&mls),
         [(0, Status::Verified), (1, Status::Verified)]

@@ -390,7 +390,7 @@ fn production_worker_routes_first_mixed_parity_paragraph_to_paired_lean_checks()
             lean,
         } = job
         {
-            checks.push((block, base));
+            checks.push((block, base, version));
             let outcome = if lean.ends_with("sorry") {
                 Outcome::Sorry
             } else {
@@ -413,8 +413,9 @@ fn production_worker_routes_first_mixed_parity_paragraph_to_paired_lean_checks()
     assert_eq!(calls.load(Ordering::SeqCst), 4);
     assert_eq!(checks.len(), 2);
     assert_eq!(
-        checks[0].1, checks[1].1,
-        "proof checks on the statement's base"
+        checks[1].1,
+        checks[0].2 + 100,
+        "the proof checks on the environment that the statement left"
     );
     assert!(mls.next_job().is_none());
     assert_eq!(mls.dots()[0].status, Status::Verified);

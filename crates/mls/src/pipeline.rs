@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde_json::{Value, json};
 
 use crate::openrouter::{segments, segments_json};
-use crate::rules::{declared_names, is_blank};
+use crate::rules::{as_example, declared_names, is_blank};
 use crate::{
     Checked, Failure, Formal, Job, Label, Outcome, Reply, Segment, SplitContext, Status, Tag,
 };
@@ -491,7 +491,6 @@ struct Plan {
 /// A statement whose Lean compiled, for the proof that follows it.
 #[derive(Clone)]
 struct Stated {
-    base: u64,
     version: u64,
     lean: String,
     /// Index of its dot in the plan being built.
@@ -624,6 +623,22 @@ fn node_name(block: &Block) -> String {
         format!("{start}…")
     } else {
         start
+    }
+}
+
+/// The Lean a block is checked with. A proof is checked after every block above, where its
+/// statement is already declared, so it is checked as an `example` that restates the statement
+/// without declaring its name again. Other blocks are checked as they are.
+fn checked_lean(label: Label, lean: &str, statement: Option<&Stated>) -> String {
+    match (label, statement) {
+        (Label::Proof, Some(stated)) => {
+            let name = declared_names(&stated.lean)
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+            as_example(lean, &name)
+        }
+        _ => lean.to_string(),
     }
 }
 
@@ -1733,7 +1748,6 @@ impl Mls {
                 },
                 (Label::Definition | Label::Statement | Label::Skip, _) => None,
             };
-            let base = stmt.as_ref().map_or(chain, |s| s.base);
 
             let stale_proof = stmt
                 .as_ref()
@@ -1800,7 +1814,7 @@ impl Mls {
                 // A timed-out check counts as current whatever its base. Re-checking it would
                 // hang again, so it waits for the block's text to change.
                 Some((checked_base, result))
-                    if *checked_base == base || matches!(result, Err(f) if !f.service) =>
+                    if *checked_base == chain || matches!(result, Err(f) if !f.service) =>
                 {
                     match result {
                         Err(failure) => {
@@ -1831,7 +1845,7 @@ impl Mls {
                                         .collect(),
                                     names_above: names.clone(),
                                     statement: (statement.version, statement.lean.clone()),
-                                    base,
+                                    base: chain,
                                     failed: formal.lean.clone(),
                                     error: error.clone(),
                                 });
@@ -1879,7 +1893,6 @@ impl Mls {
                                 statements.insert(
                                     b.id,
                                     Stated {
-                                        base,
                                         version: b.version,
                                         lean: formal.lean.clone(),
                                         dot: dots.len() - 1,
@@ -1907,11 +1920,18 @@ impl Mls {
                                     }
                                 }
                                 chain = *env;
-                                // The proof restates its statement, so it replaces the statement's Lean.
-                                if let Some(entry) =
-                                    lean.iter_mut().find(|(id, _, _)| Some(*id) == b.statement)
+                                // A proof that directly follows its statement replaces the statement's
+                                // Lean, which is then the last entry. Otherwise the statement stays and
+                                // the proof follows it as an example, so no name is declared twice.
+                                if let Some(entry) = lean
+                                    .last_mut()
+                                    .filter(|(id, _, _)| Some(*id) == b.statement)
                                 {
                                     *entry = (b.id, Label::Proof, formal.lean.clone());
+                                } else {
+                                    let lean_checked =
+                                        checked_lean(b.label, &formal.lean, stmt.as_ref());
+                                    lean.push((b.id, Label::Proof, lean_checked));
                                 }
                                 for name in declared_names(&formal.lean) {
                                     if !names.contains(&name) {
@@ -1935,8 +1955,8 @@ impl Mls {
                     job.get_or_insert_with(|| Job::Check {
                         block: b.id,
                         version: b.version,
-                        lean: formal.lean.clone(),
-                        base,
+                        lean: checked_lean(b.label, &formal.lean, stmt.as_ref()),
+                        base: chain,
                     });
                     pending = true;
                     dots.push(dot(b.first, b.last, b.id, Status::Checking));

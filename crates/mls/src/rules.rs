@@ -214,6 +214,45 @@ pub(crate) fn is_blank(lean: &str) -> bool {
     strip_comments(lean).trim().is_empty()
 }
 
+/// The byte ranges of the maximal runs of identifier characters in `text`.
+fn word_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut start = None;
+    for (index, c) in text.char_indices() {
+        match (start, is_ident_char(c)) {
+            (None, true) => start = Some(index),
+            (Some(begin), false) => {
+                spans.push((begin, index));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(begin) = start {
+        spans.push((begin, text.len()));
+    }
+    spans
+}
+
+/// `lean` with its first declaration of `name` turned into an `example`: the keyword `theorem` or
+/// `lemma`, the whitespace and the name become `example`, and the binders, type and proof stay as
+/// they are. As an example it checks beside the statement that already declares `name`. `lean` is
+/// returned unchanged when it declares no `name`.
+pub(crate) fn as_example(lean: &str, name: &str) -> String {
+    let spans = word_spans(lean);
+    let declaration = spans.windows(2).find(|pair| {
+        let keyword = &lean[pair[0].0..pair[0].1];
+        let declared = &lean[pair[1].0..pair[1].1];
+        matches!(keyword, "theorem" | "lemma")
+            && declared == name
+            && lean[pair[0].1..pair[1].0].chars().all(char::is_whitespace)
+    });
+    match declaration {
+        Some(pair) => format!("{}example{}", &lean[..pair[0].0], &lean[pair[1].1..]),
+        None => lean.to_string(),
+    }
+}
+
 /// Rejects a formalization of `label` that must not be checked. `names_above`
 /// are the names declared by earlier blocks; `statement` is the paired
 /// statement's Lean for a proof.
@@ -272,6 +311,12 @@ pub(crate) fn reject(
         let head = header(statement);
         if head.is_empty() || !normalize(&code).starts_with(&head) {
             return Err("The proof changes the statement above.".to_string());
+        }
+        // The header is the statement's only mention of its name. A proof that cites the name
+        // would use the statement's `sorry` to prove itself.
+        let own_name = declared_names(statement).into_iter().next();
+        if own_name.is_some_and(|name| count_word(&code, &name) > 1) {
+            return Err("The proof cites the statement it proves.".to_string());
         }
     }
     Ok(())

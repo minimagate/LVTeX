@@ -16,6 +16,7 @@ const STATEMENT_SORRY: &str = "A statement must have `sorry` as its whole proof.
 const DEFINITION_SORRY: &str = "The definition uses sorry.";
 const PROOF_SORRY: &str = "The proof uses sorry.";
 const CHANGED: &str = "The proof changes the statement above.";
+const CITES: &str = "The proof cites the statement it proves.";
 
 fn formal(lean: &str) -> Formal {
     Formal {
@@ -332,6 +333,41 @@ fn proof_must_keep_the_header_of_its_statement() {
 }
 
 #[test]
+fn a_proof_may_not_cite_its_own_statement() {
+    let statement = Some("theorem t (n : ℕ) : n + 0 = n := by sorry");
+    check_cases(&[
+        (
+            Label::Proof,
+            "theorem t (n : ℕ) : n + 0 = n := by\n  simp",
+            &[],
+            statement,
+            None,
+        ),
+        (
+            Label::Proof,
+            "theorem t (n : ℕ) : n + 0 = n := by\n  exact t n",
+            &[],
+            statement,
+            Some(CITES),
+        ),
+        (
+            Label::Proof,
+            "theorem t (n : ℕ) : n + 0 = n := by\n  exact t_aux n",
+            &["t_aux"],
+            statement,
+            None,
+        ),
+        (
+            Label::Proof,
+            "theorem t (n : ℕ) : n + 0 = n := by\n  -- t n\n  simp",
+            &[],
+            statement,
+            None,
+        ),
+    ]);
+}
+
+#[test]
 fn an_axiom_after_a_string_that_looks_like_a_comment_is_rejected() {
     check_cases(&[(
         Label::Definition,
@@ -450,5 +486,45 @@ fn uses_lists_the_names_above_that_the_lean_relies_on() {
     ];
     for &(lean, above, expected) in cases {
         assert_eq!(uses(lean, &names(above)), names(expected), "{lean:?}");
+    }
+}
+
+#[test]
+fn as_example_turns_the_declaration_of_the_name_into_an_example() {
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "theorem t (n : ℕ) : n = n := by rfl",
+            "t",
+            "example (n : ℕ) : n = n := by rfl",
+        ),
+        (
+            "lemma t (n : ℕ) : n = n := by rfl",
+            "t",
+            "example (n : ℕ) : n = n := by rfl",
+        ),
+        (
+            "theorem t_aux : True := trivial\n\ntheorem t : True := by\n  exact t_aux",
+            "t",
+            "theorem t_aux : True := trivial\n\nexample : True := by\n  exact t_aux",
+        ),
+        (
+            "theorem tt : True := trivial",
+            "t",
+            "theorem tt : True := trivial",
+        ),
+        ("theorem u : t = t := rfl", "t", "theorem u : t = t := rfl"),
+        (
+            "my_theorem t : True := trivial",
+            "t",
+            "my_theorem t : True := trivial",
+        ),
+        (
+            "theorem t : True := trivial",
+            "",
+            "theorem t : True := trivial",
+        ),
+    ];
+    for &(lean, name, expected) in cases {
+        assert_eq!(as_example(lean, name), expected, "{lean:?} for {name:?}");
     }
 }
