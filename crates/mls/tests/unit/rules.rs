@@ -528,3 +528,48 @@ fn as_example_turns_the_declaration_of_the_name_into_an_example() {
         assert_eq!(as_example(lean, name), expected, "{lean:?} for {name:?}");
     }
 }
+
+#[test]
+fn counterexample_reads_a_refutation_of_the_named_statement() {
+    let refutation = "-- Counterexample: p = 3, where p - 1 = 2 divides 2, so S_2 = -1.\n\
+                      example : ¬ type_of% @X := by\n  intro h\n  exact h";
+    let sentence = Some("p = 3, where p - 1 = 2 divides 2, so S_2 = -1.");
+    let cases: &[(&str, &str, Option<&str>)] = &[
+        (refutation, "X", sentence),
+        (
+            "\n\n  -- Counterexample: n = 0.\nexample : ¬ type_of% @X := by\n  intro h",
+            "X",
+            Some("n = 0."),
+        ),
+        (
+            "-- Counterexample: n = 0.\nexample :\n  ¬  type_of%   @X :=\n  by intro h",
+            "X",
+            Some("n = 0."),
+        ),
+        ("example : ¬ type_of% @X := by\n  intro h", "X", None),
+        (
+            "-- Counterexample:  \nexample : ¬ type_of% @X := by",
+            "X",
+            None,
+        ),
+        (refutation, "Y", None),
+        (refutation, "X2", None),
+        (
+            "-- Counterexample: n = 0.\ntheorem X : True := by\n  intro h",
+            "X",
+            None,
+        ),
+        (
+            "example : ¬ type_of% @X := by\n-- Counterexample: n = 0.",
+            "X",
+            None,
+        ),
+    ];
+    for &(lean, name, expected) in cases {
+        assert_eq!(
+            counterexample(lean, name).as_deref(),
+            expected,
+            "{lean:?} for {name:?}"
+        );
+    }
+}

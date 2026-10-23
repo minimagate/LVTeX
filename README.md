@@ -217,6 +217,14 @@ rules reject the Lean, or Lean reports an error (or a definition or proof still 
 definitions, statements and proofs alike. The block stays grey meanwhile. If the
 third attempt also fails, the block turns red with the last reason.
 
+When a proof's Lean is instead a refutation of its statement (an `example` of the
+negation of the declared statement, opened by a `-- Counterexample:` line) and Lean
+verifies it without relying on unproved results, the statement turns red with
+"False as formalized: …" and the counterexample, the proof turns red with "The
+statement is false: …", and blocks that use the statement turn red. "As formalized"
+matters: the counterexample can also expose a formalization that does not match the
+prose.
+
 After a formalization passes these rules, MLS records which names declared by the
 blocks above it appear in its Lean (whole words outside comments, except names the
 block declares itself). These links drive checking, with no model calls. A block that
@@ -232,7 +240,7 @@ proved yet." If a block above has no valid Lean at all, a missing name is red, w
 | Grey | Being checked |
 | Amber | The statement compiles with `sorry`, or the block relies on one that does |
 | Green | Verified: a definition, or a statement together with its proof, and everything it uses |
-| Red | Lean reported an error, the output was rejected, or the block uses one that does not check |
+| Red | Lean reported an error, the output was rejected, the block uses one that does not check, or its statement is refuted |
 
 Prose, examples and remarks get no dot. Hover or click a dot to see the block's
 panel: a note first, when a link explains the colour; then the assumptions in

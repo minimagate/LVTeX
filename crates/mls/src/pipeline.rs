@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde_json::{Value, json};
 
 use crate::openrouter::{segments, segments_json};
-use crate::rules::{checked_lean, declared_names, is_blank};
+use crate::rules::{checked_lean, counterexample, declared_names, is_blank};
 use crate::{
     Checked, Failure, Formal, Job, Label, Outcome, Reply, Segment, SplitContext, Status, Tag,
 };
@@ -596,6 +596,50 @@ fn unproved_use<'a>(
                 == Some(Status::Sorry)
         })
         .map(String::as_str)
+}
+
+/// The name of `statement` and the counterexample sentence, when the Lean of `formal` refutes it.
+fn refutation(statement: &Stated, formal: &Formal) -> Option<(String, String)> {
+    let name = declared_names(&statement.lean).into_iter().next()?;
+    let sentence = counterexample(&formal.lean, &name)?;
+    Some((name, sentence))
+}
+
+/// Records a verified refutation `formal` of the statement `statement`, named `name`, as the
+/// proof's dot. The statement turns red with the counterexample, unless the refutation relies on a
+/// name that is not proved yet: then the proof is red with a note saying so, and the statement
+/// stays as it was. The name it uses for its own statement is not a dependency.
+fn refute(
+    dots: &mut Vec<Dot>,
+    b: &Block,
+    statement: &Stated,
+    formal: &Formal,
+    declared: &HashMap<String, u64>,
+    name: &str,
+    sentence: &str,
+) {
+    let others: Vec<String> = formal
+        .uses
+        .iter()
+        .filter(|used| used.as_str() != name)
+        .cloned()
+        .collect();
+    if let Some(other) = unproved_use(&others, declared, dots) {
+        let note = format!("The refutation relies on `{other}`, which is not proved yet.");
+        dots.push(noted(b.first, b.last, b.id, Status::Failed, note));
+        return;
+    }
+    dots.push(failed(
+        b.first,
+        b.last,
+        b.id,
+        &format!("The statement is false: {sentence}"),
+        false,
+    ));
+    let old = &dots[statement.dot];
+    let error = format!("False as formalized: {sentence} Lean proves its negation.");
+    let statement_dot = failed(old.paragraph, old.last, old.key, &error, false);
+    dots[statement.dot] = statement_dot;
 }
 
 /// The key of the chart node a block belongs to. A proof belongs to the statement it proves.
@@ -1886,6 +1930,20 @@ impl Mls {
                                 );
                             }
                             (Label::Proof, Outcome::Verified) => {
+                                chain = *env;
+                                // A refutation proves the statement false, so it never declares a name.
+                                let refuted = stmt.as_ref().and_then(|statement| {
+                                    let (name, sentence) = refutation(statement, formal)?;
+                                    Some((statement, name, sentence))
+                                });
+                                if let Some((statement, name, sentence)) = refuted {
+                                    refute(
+                                        &mut dots, b, statement, formal, &declared, &name,
+                                        &sentence,
+                                    );
+                                    lean.push((b.id, Label::Proof, formal.lean.clone()));
+                                    continue;
+                                }
                                 match unproved_use(&formal.uses, &declared, &dots) {
                                     Some(name) => {
                                         let note =
@@ -1905,7 +1963,6 @@ impl Mls {
                                         }
                                     }
                                 }
-                                chain = *env;
                                 // A proof that directly follows its statement replaces the statement's
                                 // Lean, which is then the last entry. Otherwise the statement stays and
                                 // the proof follows it as an example, so no name is declared twice.

@@ -270,6 +270,28 @@ pub(crate) fn checked_lean(label: Label, lean: &str, statement: Option<&str>) ->
     }
 }
 
+/// The start of a refutation of the statement `name`: an `example` of the negation of the
+/// statement's type, with every binder explicit (`type_of%`). It checks beside the statement that
+/// is declared with `sorry`, and proves that the statement is false as formalized.
+pub(crate) fn refutation_header(name: &str) -> String {
+    format!("example : ¬ type_of% @{name} :=")
+}
+
+/// The counterexample sentence when `lean` refutes the statement `name`, else None. A refutation
+/// starts, after any blank lines, with a `-- Counterexample: …` line that says the counterexample
+/// in words, and its code (comments removed, whitespace normalized) starts with
+/// `refutation_header(name)`.
+pub(crate) fn counterexample(lean: &str, name: &str) -> Option<String> {
+    let first = lean.lines().find(|line| !line.trim().is_empty())?.trim();
+    let sentence = first.strip_prefix("-- Counterexample:")?.trim();
+    if sentence.is_empty() {
+        return None;
+    }
+    let code = normalize(&strip_comments(lean));
+    code.starts_with(&normalize(&refutation_header(name)))
+        .then(|| sentence.to_string())
+}
+
 /// Rejects a formalization of `label` that must not be checked. `names_above`
 /// are the names declared by earlier blocks; `statement` is the paired
 /// statement's Lean for a proof.

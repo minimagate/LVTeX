@@ -29,7 +29,8 @@ fn tag_for(_previous: Option<&str>, text: &str, proof_open: bool) -> Tag {
 /// deterministic: a statement ends in `sorry`, a proof replaces that
 /// with `trivial`, and text containing FALSE produces Lean that the REPL rejects. A formalization
 /// carries its first check, as the worker sends it, and a check's environment is 100 plus the block
-/// version, so each check has a predictable environment.
+/// version, so each check has a predictable environment. A proof whose text contains REFUTE is a
+/// refutation of its statement, with the counterexample `COUNTEREXAMPLE`.
 fn answer(job: &Job) -> Reply {
     match job {
         Job::Classify {
@@ -99,6 +100,15 @@ fn answer(job: &Job) -> Reply {
             let mut lean = match label {
                 Label::Definition => format!("def d{block} := 1"),
                 Label::Statement => format!("theorem t{block} : True := by sorry"),
+                Label::Proof if text.contains("REFUTE") => {
+                    let (_, statement) = statement
+                        .as_ref()
+                        .expect("a proof is formalized against its statement");
+                    let name = declared_names(statement).remove(0);
+                    format!(
+                        "-- Counterexample: {COUNTEREXAMPLE}\nexample : ¬ type_of% @{name} := by\n  intro h\n  exact h"
+                    )
+                }
                 Label::Proof => statement
                     .as_ref()
                     .expect("a proof is formalized against its statement")
@@ -164,6 +174,9 @@ fn answer(job: &Job) -> Reply {
         },
     }
 }
+
+/// The counterexample that the mock's refutations give.
+const COUNTEREXAMPLE: &str = "p = 3, where p - 1 = 2 divides 2, so S_2 = -1.";
 
 /// What the mock Lean says about `lean`: FALSE fails, sorry is amber, anything else verifies.
 fn outcome_of(lean: &str) -> Outcome {
@@ -2541,6 +2554,79 @@ fn jev_sees_every_paragraph_of_the_block_above_not_only_the_last() {
         Job::Classify { paragraph, previous: Some(above), .. }
             if *paragraph == proof && above == "Lemma for all n,\n\n+ n = n."
     )));
+}
+
+#[test]
+fn a_refutation_turns_its_statement_and_its_proof_red_and_a_later_use_of_it_does_not_check() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&[
+        "Lemma x.",
+        "Proof REFUTE ∎",
+        "Lemma y.",
+        "Proof USES ∎",
+    ]));
+    run(&mut mls, answer);
+    let (x, refutation, later) = (id_of(&mls, 0), id_of(&mls, 1), id_of(&mls, 3));
+
+    assert_eq!(
+        statuses(&mls),
+        [
+            (0, Status::Failed),
+            (1, Status::Failed),
+            (2, Status::Sorry),
+            (3, Status::Failed),
+        ]
+    );
+    assert_eq!(
+        item(&mls, x).error,
+        Some(format!(
+            "False as formalized: {COUNTEREXAMPLE} Lean proves its negation."
+        ))
+    );
+    assert_eq!(
+        item(&mls, refutation).error,
+        Some(format!("The statement is false: {COUNTEREXAMPLE}"))
+    );
+    assert_eq!(
+        item(&mls, later).note,
+        Some(format!("Uses `t{x}`, which does not check."))
+    );
+
+    let file = mls.twin();
+    assert!(
+        file.contains(&format!(
+            "\n-- lvtex:block {x} statement\ntheorem t{x} : True := by sorry\n"
+        )),
+        "{file}"
+    );
+    assert!(
+        file.contains(&format!(
+            "\n-- lvtex:block {refutation} proof\n-- Counterexample: {COUNTEREXAMPLE}\nexample : ¬ type_of% @t{x} := by\n"
+        )),
+        "{file}"
+    );
+}
+
+#[test]
+fn a_refutation_that_relies_on_an_unproved_statement_is_red_and_leaves_its_statement_amber() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma a.", "Lemma b.", "Proof REFUTE USES ∎"]));
+    run(&mut mls, answer);
+    let (a, b, proof) = (id_of(&mls, 0), id_of(&mls, 1), id_of(&mls, 2));
+
+    assert_eq!(
+        statuses(&mls),
+        [(0, Status::Sorry), (1, Status::Sorry), (2, Status::Failed)]
+    );
+    let details = item(&mls, proof);
+    assert_eq!(
+        details.note,
+        Some(format!(
+            "The refutation relies on `t{a}`, which is not proved yet."
+        ))
+    );
+    assert_eq!(details.error, None);
+    assert_eq!(item(&mls, b).error, None);
 }
 
 fn version_of(mls: &Mls, id: u64) -> u64 {
