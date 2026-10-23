@@ -27,10 +27,9 @@ fn tag_for(_previous: Option<&str>, text: &str, proof_open: bool) -> Tag {
 /// The mock worker. A split cuts after each " / ", which stays at the end of its piece so that the
 /// pieces reproduce the paragraph, and text containing UNSPLIT cannot be cut. Lean is
 /// deterministic: a statement ends in `sorry`, a proof replaces that
-/// with `trivial`, and text containing FALSE produces Lean that the REPL rejects. A repair of a
-/// proof whose text also contains FIXABLE produces Lean that checks, so the first repair is green,
-/// and any other repair stays FALSE. A check's environment is 100 plus the block version, so each
-/// check has a predictable environment.
+/// with `trivial`, and text containing FALSE produces Lean that the REPL rejects. A formalization
+/// carries its first check, as the worker sends it, and a check's environment is 100 plus the block
+/// version, so each check has a predictable environment.
 fn answer(job: &Job) -> Reply {
     match job {
         Job::Classify {
@@ -94,6 +93,7 @@ fn answer(job: &Job) -> Reply {
             text,
             statement,
             names_above,
+            base,
             ..
         } => {
             let mut lean = match label {
@@ -125,6 +125,16 @@ fn answer(job: &Job) -> Reply {
                 }
             }
             let uses = crate::rules::uses(&lean, names_above);
+            // A blank definition declares nothing, so the worker does not check it.
+            let check = (*label != Label::Definition || !is_blank(&lean)).then(|| {
+                (
+                    *base,
+                    Ok(Checked {
+                        env: 100 + *version,
+                        outcome: outcome_of(&lean),
+                    }),
+                )
+            });
             Reply::Formalized {
                 block: *block,
                 version: *version,
@@ -135,30 +145,7 @@ fn answer(job: &Job) -> Reply {
                     assumptions: Vec::new(),
                     uses,
                 }),
-            }
-        }
-        Job::Repair {
-            text,
-            statement,
-            names_above,
-            ..
-        } => {
-            let mut lean = statement.1.replace("sorry", "trivial");
-            if text.contains("USES") {
-                lean.push_str(&format!("\nexample := [{}]", names_above.join(", ")));
-            }
-            if text.contains("FALSE") && !text.contains("FIXABLE") {
-                lean.push_str("\n-- FALSE");
-            }
-            let uses = crate::rules::uses(&lean, names_above);
-            Reply::Repaired {
-                job: job.clone(),
-                result: Ok(Formal {
-                    lean,
-                    lean_name: None,
-                    assumptions: Vec::new(),
-                    uses,
-                }),
+                check,
             }
         }
         Job::Check {
@@ -166,24 +153,26 @@ fn answer(job: &Job) -> Reply {
             version,
             lean,
             base,
-        } => {
-            let outcome = if lean.contains("FALSE") {
-                Outcome::Failed("1:0: error".to_string())
-            } else if lean.contains("sorry") {
-                Outcome::Sorry
-            } else {
-                Outcome::Verified
-            };
-            Reply::Checked {
-                block: *block,
-                version: *version,
-                base: *base,
-                result: Ok(Checked {
-                    env: 100 + *version,
-                    outcome,
-                }),
-            }
-        }
+        } => Reply::Checked {
+            block: *block,
+            version: *version,
+            base: *base,
+            result: Ok(Checked {
+                env: 100 + *version,
+                outcome: outcome_of(lean),
+            }),
+        },
+    }
+}
+
+/// What the mock Lean says about `lean`: FALSE fails, sorry is amber, anything else verifies.
+fn outcome_of(lean: &str) -> Outcome {
+    if lean.contains("FALSE") {
+        Outcome::Failed("1:0: error".to_string())
+    } else if lean.contains("sorry") {
+        Outcome::Sorry
+    } else {
+        Outcome::Verified
     }
 }
 
@@ -246,7 +235,6 @@ fn kinds(jobs: &[Job]) -> Vec<&'static str> {
             Job::Split { .. } => "split",
             Job::Formalize { .. } => "formalize",
             Job::Check { .. } => "check",
-            Job::Repair { .. } => "repair",
         })
         .collect()
 }
@@ -287,9 +275,10 @@ fn a_proof_after_another_block_is_checked_after_it() {
     mls.sync(&paras(&["Lemma t.", "Proof. Trivially. ∎"]));
     let jobs = run(&mut mls, answer);
     let (statement, proof) = (id_of(&mls, 0), id_of(&mls, 1));
-    let Job::Check { base, .. } = &jobs[5] else {
-        panic!("the proof is checked")
+    let Job::Formalize { block, base, .. } = &jobs[3] else {
+        panic!("the proof is formalized and checked")
     };
+    assert_eq!(*block, proof);
     assert_eq!(*base, 100 + version_of(&mls, statement));
     assert_eq!(
         statuses(&mls),
@@ -312,37 +301,33 @@ fn a_statement_then_its_proof_is_formalized_and_checked_in_order() {
     let jobs = run(&mut mls, answer);
     assert_eq!(
         kinds(&jobs),
-        [
-            "classify",
-            "classify",
-            "formalize",
-            "check",
-            "formalize",
-            "check"
-        ]
+        ["classify", "classify", "formalize", "formalize"]
     );
     let (statement, proof) = (id_of(&mls, 0), id_of(&mls, 1));
 
-    let Job::Formalize { block, .. } = &jobs[2] else {
+    let Job::Formalize { block, base, .. } = &jobs[2] else {
         panic!("the statement is formalized")
     };
     assert_eq!(*block, statement);
-    let Job::Check { base, .. } = &jobs[3] else {
-        panic!("the statement is checked")
-    };
     assert_eq!(*base, 0);
 
     let Job::Formalize {
         block,
+        base,
         statement: above,
         lean_above,
         names_above,
         ..
-    } = &jobs[4]
+    } = &jobs[3]
     else {
         panic!("the proof is formalized")
     };
     assert_eq!(*block, proof);
+    assert_eq!(
+        *base,
+        100 + version_of(&mls, statement),
+        "a proof is checked after its statement, on the environment that statement left"
+    );
     assert!(above.is_some());
     assert_eq!(
         lean_above,
@@ -352,20 +337,6 @@ fn a_statement_then_its_proof_is_formalized_and_checked_in_order() {
         )]
     );
     assert_eq!(names_above, &vec![format!("t{statement}")]);
-
-    let Job::Check {
-        block, base, lean, ..
-    } = &jobs[5]
-    else {
-        panic!("the proof is checked")
-    };
-    assert_eq!(*block, proof);
-    assert_eq!(
-        *base,
-        100 + version_of(&mls, statement),
-        "a proof is checked after its statement, on the environment that statement left"
-    );
-    assert!(lean.starts_with("example"), "{lean}");
 
     assert_eq!(
         statuses(&mls),
@@ -386,7 +357,7 @@ fn a_statement_then_its_proof_is_formalized_and_checked_in_order() {
 }
 
 #[test]
-fn a_lone_statement_is_sorry_and_shows_checking_until_each_reply() {
+fn a_lone_statement_is_sorry_once_its_formalization_is_checked() {
     let mut mls = Mls::new();
     mls.sync(&paras(&["Lemma t."]));
 
@@ -394,15 +365,30 @@ fn a_lone_statement_is_sorry_and_shows_checking_until_each_reply() {
     assert!(mls.apply(answer(&classify)));
     assert_eq!(statuses(&mls), [(0, Status::Checking)]);
 
-    let formalize = mls.next_job().expect("the statement is formalized");
+    let formalize = mls
+        .next_job()
+        .expect("the statement is formalized and checked");
     assert!(matches!(formalize, Job::Formalize { .. }));
-    assert!(mls.apply(answer(&formalize)));
     assert_eq!(statuses(&mls), [(0, Status::Checking)]);
-
-    let check = mls.next_job().expect("the statement is checked");
-    assert!(mls.apply(answer(&check)));
+    assert!(mls.apply(answer(&formalize)));
     assert_eq!(statuses(&mls), [(0, Status::Sorry)]);
     assert!(mls.next_job().is_none());
+}
+
+#[test]
+fn a_failed_proof_is_red_and_is_not_formalized_again() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim. ∎"]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(
+        kinds(&jobs),
+        ["classify", "classify", "formalize", "formalize"]
+    );
+    assert_eq!(statuses(&mls), [(0, Status::Sorry), (1, Status::Failed)]);
+    assert!(
+        mls.next_job().is_none(),
+        "a failed proof is final until its text or its statement changes"
+    );
 }
 
 #[test]
@@ -642,10 +628,7 @@ fn editing_a_middle_statement_rechecks_the_tail_without_formalizing_it() {
     let jobs = run(&mut mls, answer);
 
     // The statement below was tagged against the old text above it, so it is tagged again.
-    assert_eq!(
-        kinds(&jobs),
-        ["classify", "classify", "formalize", "check", "check"]
-    );
+    assert_eq!(kinds(&jobs), ["classify", "classify", "formalize", "check"]);
     assert!(matches!(
         &jobs[0],
         Job::Classify { paragraph, text, .. } if *paragraph == a && text == "Lemma a2."
@@ -654,17 +637,17 @@ fn editing_a_middle_statement_rechecks_the_tail_without_formalizing_it() {
         &jobs[1],
         Job::Classify { text, previous, .. } if text == "Lemma b." && previous.as_deref() == Some("Lemma a2.")
     ));
-    let Job::Check {
-        block: checked_a,
+    let Job::Formalize {
+        block: formalized_a,
         version: a_version,
         ..
-    } = &jobs[3]
+    } = &jobs[2]
     else {
-        panic!("the edited statement is checked")
+        panic!("the edited statement is formalized and checked")
     };
-    assert_eq!(*checked_a, a);
-    let Job::Check { block, base, .. } = &jobs[4] else {
-        panic!("the statement below is checked")
+    assert_eq!(*formalized_a, a);
+    let Job::Check { block, base, .. } = &jobs[3] else {
+        panic!("the statement below is checked on the edited statement's environment")
     };
     assert_eq!(*block, b);
     assert_eq!(
@@ -712,6 +695,10 @@ fn a_formalize_reply_for_an_edited_block_is_rejected() {
 fn a_check_reply_for_an_edited_block_is_rejected() {
     let mut mls = Mls::new();
     mls.sync(&paras(&["Def d.", "Lemma a."]));
+    run(&mut mls, answer);
+    // Editing the definition changes the environment the statement is checked on, so it is checked
+    // again on its own, and that check is what goes stale below.
+    mls.sync(&paras(&["Def d2.", "Lemma a."]));
     let a = id_of(&mls, 1);
     let stale = run_until(
         &mut mls,
@@ -719,7 +706,7 @@ fn a_check_reply_for_an_edited_block_is_rejected() {
     );
     let stale_reply = answer(&stale);
 
-    mls.sync(&paras(&["Def d.", "Lemma a2."]));
+    mls.sync(&paras(&["Def d2.", "Lemma a2."]));
     assert!(!mls.apply(stale_reply));
     assert!(matches!(
         mls.next_job(),
@@ -841,24 +828,16 @@ fn a_lost_repl_rechecks_every_block_from_its_base_without_formalizing_again() {
     let mut mls = Mls::new();
     mls.sync(&paras(&["Def d.", "Lemma a."]));
     let a = id_of(&mls, 1);
-    let repl_down = |job: &Job| match job {
-        Job::Check {
-            block,
-            version,
-            base,
-            ..
-        } if *block == a => Reply::Checked {
-            block: *block,
-            version: *version,
-            base: *base,
-            result: Err(Failure {
+    run(
+        &mut mls,
+        check_fails(
+            a,
+            Failure {
                 message: REPL_DOWN.to_string(),
                 service: true,
-            }),
-        },
-        _ => answer(job),
-    };
-    run(&mut mls, repl_down);
+            },
+        ),
+    );
     assert_eq!(statuses(&mls), [(0, Status::Verified), (1, Status::Failed)]);
 
     mls.sync(&paras(&["Def d.", "Lemma a.", "Skip me."]));
@@ -891,28 +870,24 @@ fn editing_a_statement_reformalizes_its_proof_and_checks_it_after_the_statement(
     // The proof was tagged against the old statement text, so it is tagged again.
     assert_eq!(
         kinds(&jobs),
-        [
-            "classify",
-            "classify",
-            "formalize",
-            "check",
-            "formalize",
-            "check"
-        ]
+        ["classify", "classify", "formalize", "formalize"]
     );
 
-    let Job::Check {
+    let Job::Formalize {
         block: checked_a,
         version: a_version,
         ..
-    } = &jobs[3]
+    } = &jobs[2]
     else {
-        panic!("the edited statement is checked")
+        panic!("the edited statement is formalized and checked")
     };
     assert_eq!(*checked_a, a);
     let Job::Formalize {
-        block, statement, ..
-    } = &jobs[4]
+        block,
+        statement,
+        base,
+        ..
+    } = &jobs[3]
     else {
         panic!("the proof is formalized again")
     };
@@ -922,10 +897,6 @@ fn editing_a_statement_reformalizes_its_proof_and_checks_it_after_the_statement(
         Some(*a_version),
         "the proof is formalized against the edited statement"
     );
-    let Job::Check { block, base, .. } = &jobs[5] else {
-        panic!("the proof is checked")
-    };
-    assert_eq!(*block, proof);
     assert_eq!(
         *base,
         100 + *a_version,
@@ -964,20 +935,45 @@ const TIMED_OUT: &str = "Lean took longer than 60 s on this block.";
 
 /// The mock worker, except that the check of block `slow` times out.
 fn times_out(slow: u64) -> impl Fn(&Job) -> Reply {
+    check_fails(
+        slow,
+        Failure {
+            message: TIMED_OUT.to_string(),
+            service: false,
+        },
+    )
+}
+
+/// `answer`, except that the Lean check of block `target` fails with `failure`. The check comes
+/// with the block's formalization, or as a check job of its own.
+fn check_fails(target: u64, failure: Failure) -> impl Fn(&Job) -> Reply {
     move |job| match job {
         Job::Check {
             block,
             version,
             base,
             ..
-        } if *block == slow => Reply::Checked {
+        } if *block == target => Reply::Checked {
             block: *block,
             version: *version,
             base: *base,
-            result: Err(Failure {
-                message: TIMED_OUT.to_string(),
-                service: false,
-            }),
+            result: Err(failure.clone()),
+        },
+        Job::Formalize { block, base, .. } if *block == target => match answer(job) {
+            Reply::Formalized {
+                block,
+                version,
+                statement_version,
+                result,
+                ..
+            } => Reply::Formalized {
+                block,
+                version,
+                statement_version,
+                result,
+                check: Some((*base, Err(failure.clone()))),
+            },
+            other => other,
         },
         _ => answer(job),
     }
@@ -1085,7 +1081,7 @@ fn blocks_above_a_failed_label_still_get_their_jobs() {
     let mut mls = Mls::new();
     mls.sync(&paras(&["Def d.", "Hello."]));
     let jobs = run(&mut mls, fails_on_hello);
-    assert_eq!(kinds(&jobs), ["classify", "classify", "formalize", "check"]);
+    assert_eq!(kinds(&jobs), ["classify", "classify", "formalize"]);
     // The frontier's dot comes first in the plan, so the order of the dots is not checked.
     let dots = statuses(&mls);
     assert_eq!(dots.len(), 2, "{dots:?}");
@@ -1097,12 +1093,37 @@ fn blocks_above_a_failed_label_still_get_their_jobs() {
 fn a_timed_out_check_clears_the_other_checks_so_they_run_again() {
     let mut mls = Mls::new();
     mls.sync(&paras(&["Def d.", "Lemma a."]));
+    run(&mut mls, answer);
     let (d, a) = (id_of(&mls, 0), id_of(&mls, 1));
+
+    // Editing the definition moves the statement onto a new environment, so its check is a job of
+    // its own, and that check times out.
+    mls.sync(&paras(&["Def d2.", "Lemma a."]));
     let jobs = run(&mut mls, times_out(a));
 
     assert!(
         matches!(jobs.last(), Some(Job::Check { block, .. }) if *block == d),
         "the definition is checked on the new REPL: {jobs:?}"
+    );
+    assert_eq!(statuses(&mls), [(0, Status::Verified), (1, Status::Failed)]);
+    assert_eq!(item(&mls, a).error, Some(TIMED_OUT.to_string()));
+}
+
+#[test]
+fn a_formalized_reply_with_a_timed_out_check_clears_the_other_checks() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["Def d.", "Lemma a."]));
+    run(&mut mls, answer);
+    let (d, a) = (id_of(&mls, 0), id_of(&mls, 1));
+
+    // The edited statement is formalized and checked in one job; its check times out.
+    mls.sync(&paras(&["Def d.", "Lemma a2."]));
+    let jobs = run(&mut mls, times_out(a));
+
+    assert_eq!(kinds(&jobs), ["classify", "formalize", "check"]);
+    assert!(
+        matches!(&jobs[2], Job::Check { block, base: 0, .. } if *block == d),
+        "the definition is checked again on a new REPL: {jobs:?}"
     );
     assert_eq!(statuses(&mls), [(0, Status::Verified), (1, Status::Failed)]);
     assert_eq!(item(&mls, a).error, Some(TIMED_OUT.to_string()));
@@ -1129,7 +1150,10 @@ fn a_timed_out_check_is_not_checked_again_when_the_block_above_changes() {
 fn a_stale_lost_repl_still_clears_the_checks_on_the_next_change() {
     let mut mls = Mls::new();
     mls.sync(&paras(&["Def d.", "Lemma a."]));
+    run(&mut mls, answer);
     let (d, a) = (id_of(&mls, 0), id_of(&mls, 1));
+    // Editing the definition sends the statement's Lean for a check on the new environment.
+    mls.sync(&paras(&["Def d2.", "Lemma a."]));
     let Job::Check { version, base, .. } = run_until(
         &mut mls,
         |job| matches!(job, Job::Check { block, .. } if *block == a),
@@ -1146,13 +1170,13 @@ fn a_stale_lost_repl_still_clears_the_checks_on_the_next_change() {
         }),
     };
 
-    mls.sync(&paras(&["Def d.", "Lemma a2."]));
+    mls.sync(&paras(&["Def d2.", "Lemma a2."]));
     assert!(
         !mls.apply(lost),
         "the reply is for the statement's old text"
     );
 
-    mls.sync(&paras(&["Def d.", "Lemma a2.", "Skip me."]));
+    mls.sync(&paras(&["Def d2.", "Lemma a2.", "Skip me."]));
     let jobs = run(&mut mls, answer);
     assert!(
         jobs.iter()
@@ -1279,6 +1303,7 @@ fn lean_with_comment_delimiters_and_quotes_round_trips_through_the_twin() {
                     assumptions: vec!["x : Nat".to_string()],
                     uses: Vec::new(),
                 }),
+                check: None,
             },
             _ => answer(job),
         }
@@ -1321,6 +1346,7 @@ fn a_rejected_formal_is_restored_as_a_failed_dot_without_a_request() {
                     message: REJECTED.to_string(),
                     service: false,
                 }),
+                check: None,
             },
             _ => answer(job),
         }
@@ -1368,6 +1394,7 @@ fn a_restored_formal_that_the_rules_reject_is_a_failed_dot_and_is_never_checked(
                     assumptions: Vec::new(),
                     uses: Vec::new(),
                 }),
+                check: None,
             },
             _ => answer(job),
         }
@@ -1632,14 +1659,7 @@ fn a_paragraph_with_a_statement_and_its_proof_is_read_as_two_blocks() {
     let jobs = run(&mut mls, answer);
     assert_eq!(
         kinds(&jobs),
-        [
-            "classify",
-            "split",
-            "formalize",
-            "check",
-            "formalize",
-            "check"
-        ]
+        ["classify", "split", "formalize", "formalize"]
     );
     let (statement, proof) = (mls.blocks[0].id, mls.blocks[1].id);
     assert_ne!(statement, proof);
@@ -1652,24 +1672,23 @@ fn a_paragraph_with_a_statement_and_its_proof_is_read_as_two_blocks() {
         Job::Formalize { block, label: Label::Statement, text, .. } if *block == statement && text == "Lemma t. /"
     ));
     assert!(matches!(
-        &jobs[4],
+        &jobs[3],
         Job::Formalize { block, label: Label::Proof, text, .. }
             if *block == proof && text == "Proof. ok ∎"
     ));
     assert_eq!(formalized(&jobs), [statement, proof]);
     let Job::Formalize {
-        statement: above, ..
-    } = &jobs[4]
+        statement: above,
+        base,
+        ..
+    } = &jobs[3]
     else {
         panic!("the proof is formalized")
     };
     assert!(above.is_some(), "the proof pairs with the statement piece");
-    let Job::Check { block, base, .. } = &jobs[5] else {
-        panic!("the proof is checked")
-    };
     assert_eq!(
-        (*block, *base),
-        (proof, 100 + version_of(&mls, statement)),
+        *base,
+        100 + version_of(&mls, statement),
         "a proof is checked after its statement, on the environment that statement left"
     );
 
@@ -1804,9 +1823,10 @@ fn mixed_mathematics_uses_authoritative_labels_and_reaches_statement_and_proof_c
                 .collect::<Vec<_>>(),
             items.iter().map(|item| item.label).collect::<Vec<_>>()
         );
+        // Each item is checked once: by its formalization, or by a check job of its own.
         assert_eq!(
             jobs.iter()
-                .filter(|job| matches!(job, Job::Check { .. }))
+                .filter(|job| matches!(job, Job::Formalize { .. } | Job::Check { .. }))
                 .count(),
             items.len()
         );
@@ -1856,14 +1876,7 @@ fn an_ordinary_unpaired_proof_gets_exactly_one_segmentation_recovery() {
     });
     assert_eq!(
         kinds(&jobs),
-        [
-            "classify",
-            "split",
-            "formalize",
-            "check",
-            "formalize",
-            "check"
-        ]
+        ["classify", "split", "formalize", "formalize"]
     );
     assert_eq!(statuses(&recovered), [(0, Status::Verified)]);
 }
@@ -1912,11 +1925,8 @@ fn recovery_after_a_definition_checks_the_extracted_statement_before_its_proof()
             "classify",
             "split",
             "formalize",
-            "check",
             "formalize",
-            "check",
-            "formalize",
-            "check"
+            "formalize"
         ]
     );
     let definition_env = 100 + mls.blocks[0].version;
@@ -1924,7 +1934,7 @@ fn recovery_after_a_definition_checks_the_extracted_statement_before_its_proof()
     let bases: Vec<u64> = jobs
         .iter()
         .filter_map(|job| match job {
-            Job::Check { base, .. } => Some(*base),
+            Job::Formalize { base, .. } => Some(*base),
             _ => None,
         })
         .collect();
@@ -1986,7 +1996,7 @@ fn a_labeled_proof_targeting_the_previous_statement_continues_its_open_proof() {
         }
         _ => answer(job),
     });
-    assert_eq!(kinds(&jobs), ["classify", "split", "formalize", "check"]);
+    assert_eq!(kinds(&jobs), ["classify", "split", "formalize"]);
     assert_eq!(mls.blocks.len(), 2, "the proof remains a single block");
     assert_eq!(mls.blocks[1].id, proof_id);
     assert_eq!(mls.blocks[1].statement, Some(mls.blocks[0].id));
@@ -2355,7 +2365,7 @@ fn editing_only_the_proof_piece_keeps_the_statement_pieces_block() {
 
     mls.sync(&paras(&["Lemma t. / Proof. fine ∎"]));
     let jobs = run(&mut mls, answer);
-    assert_eq!(kinds(&jobs), ["classify", "split", "formalize", "check"]);
+    assert_eq!(kinds(&jobs), ["classify", "split", "formalize"]);
     assert_eq!(mls.blocks[0].id, statement);
     assert_eq!(version_of(&mls, statement), version);
     assert_ne!(mls.blocks[1].id, proof);
@@ -2539,270 +2549,4 @@ fn version_of(mls: &Mls, id: u64) -> u64 {
         .find(|b| b.id == id)
         .expect("the block is in the document")
         .version
-}
-
-fn repairs(jobs: &[Job]) -> usize {
-    kinds(jobs)
-        .into_iter()
-        .filter(|kind| *kind == "repair")
-        .count()
-}
-
-#[test]
-fn a_failed_proof_gets_one_repair_and_a_repair_that_checks_turns_green() {
-    let mut mls = Mls::new();
-    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim FIXABLE. ∎"]));
-    let jobs = run(&mut mls, answer);
-    assert_eq!(
-        kinds(&jobs),
-        [
-            "classify",
-            "classify",
-            "formalize",
-            "check",
-            "formalize",
-            "check",
-            "repair",
-            "check",
-        ]
-    );
-    let proof = id_of(&mls, 1);
-    let Job::Repair {
-        block,
-        failed,
-        error,
-        ..
-    } = &jobs[6]
-    else {
-        panic!("the failed proof is repaired")
-    };
-    assert_eq!(*block, proof);
-    assert!(failed.contains("-- FALSE"), "{failed}");
-    assert_eq!(error, "1:0: error");
-    let Job::Check { lean, base, .. } = &jobs[7] else {
-        panic!("the repaired proof is checked")
-    };
-    assert!(!lean.contains("FALSE"), "{lean}");
-    assert_eq!(
-        *base,
-        100 + version_of(&mls, id_of(&mls, 0)),
-        "the repair is checked after the statement, as the proof was"
-    );
-    assert_eq!(
-        statuses(&mls),
-        [(0, Status::Verified), (1, Status::Verified)]
-    );
-}
-
-#[test]
-fn a_proof_that_still_fails_after_its_repair_is_red_and_is_not_repaired_again() {
-    let mut mls = Mls::new();
-    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim. ∎"]));
-    let jobs = run(&mut mls, answer);
-    assert_eq!(repairs(&jobs), 1);
-    assert_eq!(kinds(&jobs).last(), Some(&"check"));
-    let proof = id_of(&mls, 1);
-    assert_eq!(statuses(&mls), [(0, Status::Sorry), (1, Status::Failed)]);
-    let details = item(&mls, proof);
-    assert_eq!(details.error.as_deref(), Some("1:0: error"));
-    assert!(mls.next_job().is_none());
-}
-
-#[test]
-fn a_proof_is_grey_while_its_repair_is_pending() {
-    let mut mls = Mls::new();
-    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim FIXABLE. ∎"]));
-    let job = run_until(&mut mls, |job| matches!(job, Job::Repair { .. }));
-    assert!(matches!(job, Job::Repair { .. }));
-    assert_eq!(statuses(&mls), [(0, Status::Sorry), (1, Status::Checking)]);
-    assert!(mls.next_job().is_none(), "one job is in flight at a time");
-}
-
-#[test]
-fn a_failed_statement_or_definition_is_not_repaired() {
-    let mut mls = Mls::new();
-    mls.sync(&paras(&["Def d FALSE.", "Lemma t FALSE."]));
-    let jobs = run(&mut mls, answer);
-    assert_eq!(repairs(&jobs), 0, "{:?}", kinds(&jobs));
-    assert_eq!(statuses(&mls), [(0, Status::Failed), (1, Status::Failed)]);
-}
-
-#[test]
-fn a_proof_whose_check_times_out_is_not_repaired() {
-    let mut mls = Mls::new();
-    mls.sync(&paras(&["Lemma t.", "Proof. Trivially. ∎"]));
-    let proof = id_of(&mls, 1);
-    let jobs = run(&mut mls, times_out(proof));
-    assert_eq!(repairs(&jobs), 0);
-    let details = item(&mls, proof);
-    assert_eq!(details.error.as_deref(), Some(TIMED_OUT));
-}
-
-#[test]
-fn a_repair_reply_for_an_edited_proof_is_rejected() {
-    let mut mls = Mls::new();
-    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim FIXABLE. ∎"]));
-    let job = run_until(&mut mls, |job| matches!(job, Job::Repair { .. }));
-    mls.sync(&paras(&[
-        "Lemma t.",
-        "Proof. FALSE claim FIXABLE, edited. ∎",
-    ]));
-    assert!(
-        !mls.apply(answer(&job)),
-        "a repair of the old proof is stale"
-    );
-}
-
-#[test]
-fn a_repair_reply_is_rejected_once_its_statement_is_edited() {
-    let mut mls = Mls::new();
-    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim FIXABLE. ∎"]));
-    let job = run_until(&mut mls, |job| matches!(job, Job::Repair { .. }));
-    mls.sync(&paras(&["Lemma u.", "Proof. FALSE claim FIXABLE. ∎"]));
-    assert!(
-        !mls.apply(answer(&job)),
-        "a repair against the old statement is stale"
-    );
-}
-
-#[test]
-fn a_repair_reply_is_rejected_when_the_context_above_its_proof_changes() {
-    let mut mls = Mls::new();
-    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim FIXABLE. ∎"]));
-    let job = run_until(&mut mls, |job| matches!(job, Job::Repair { .. }));
-    let proof = id_of(&mls, 1);
-    let version = version_of(&mls, proof);
-    mls.sync(&paras(&[
-        "Def d.",
-        "Lemma t.",
-        "Proof. FALSE claim FIXABLE. ∎",
-    ]));
-    assert_eq!(
-        version_of(&mls, proof),
-        version,
-        "the proof itself is unchanged"
-    );
-    assert!(
-        !mls.apply(answer(&job)),
-        "a repair checked above a different context is stale"
-    );
-}
-
-#[test]
-fn a_repaired_proof_that_relies_on_an_unproved_statement_is_amber() {
-    let mut mls = Mls::new();
-    mls.sync(&paras(&[
-        "Lemma t.",
-        "Lemma u USES.",
-        "Proof. FALSE claim FIXABLE USES. ∎",
-    ]));
-    let jobs = run(&mut mls, answer);
-    assert_eq!(repairs(&jobs), 1);
-    let proof = id_of(&mls, 2);
-    assert_eq!(
-        statuses(&mls),
-        [(0, Status::Sorry), (1, Status::Sorry), (2, Status::Sorry)]
-    );
-    let note = format!("Relies on `t{}`, which is not proved yet.", id_of(&mls, 0));
-    assert_eq!(item(&mls, proof).note, Some(note));
-}
-
-#[test]
-fn a_repaired_proof_is_restored_from_the_twin_and_checked_without_a_repair() {
-    let lines = ["Lemma t.", "Proof. FALSE claim FIXABLE. ∎"];
-    let mut mls = Mls::new();
-    mls.sync(&paras(&lines));
-    run(&mut mls, answer);
-    let twin = mls.twin();
-    assert!(!twin.contains("-- FALSE"), "{twin}");
-
-    let mut restored = Mls::new();
-    restored.restore(&twin);
-    restored.sync(&paras(&lines));
-    let jobs = run(&mut restored, answer);
-    assert_eq!(kinds(&jobs), ["check", "check"]);
-    assert_eq!(
-        statuses(&restored),
-        [(0, Status::Verified), (1, Status::Verified)]
-    );
-}
-
-#[test]
-fn a_failed_repair_is_not_asked_again_after_an_edit_below() {
-    let mut mls = Mls::new();
-    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim. ∎"]));
-    run(&mut mls, answer);
-    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim. ∎", "Hello."]));
-    let jobs = run(&mut mls, answer);
-    assert_eq!(kinds(&jobs), ["classify"]);
-    assert_eq!(statuses(&mls), [(0, Status::Sorry), (1, Status::Failed)]);
-}
-
-#[test]
-fn a_timeout_that_clears_a_failed_proof_does_not_repeat_its_repair() {
-    let mut mls = Mls::new();
-    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim. ∎", "Lemma v."]));
-    let slow = id_of(&mls, 2);
-    let jobs = run(&mut mls, times_out(slow));
-    assert_eq!(repairs(&jobs), 1);
-    let proof = id_of(&mls, 1);
-    assert_eq!(item(&mls, proof).error, Some("1:0: error".to_string()));
-}
-
-/// The mock worker, except that every repair is rejected with `failure`.
-fn repair_fails(failure: Failure) -> impl Fn(&Job) -> Reply {
-    move |job| match job {
-        Job::Repair { .. } => Reply::Repaired {
-            job: job.clone(),
-            result: Err(failure.clone()),
-        },
-        _ => answer(job),
-    }
-}
-
-#[test]
-fn a_rejected_repair_is_the_last_diagnostic_and_is_not_asked_again() {
-    let rejection = "The Lean uses `native_decide`, which is not allowed.";
-    let mut mls = Mls::new();
-    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim. ∎"]));
-    let jobs = run(
-        &mut mls,
-        repair_fails(Failure {
-            message: rejection.to_string(),
-            service: false,
-        }),
-    );
-    assert_eq!(repairs(&jobs), 1);
-    assert_eq!(kinds(&jobs).last(), Some(&"repair"));
-    assert!(mls.next_job().is_none());
-    assert_eq!(statuses(&mls), [(0, Status::Sorry), (1, Status::Failed)]);
-    let details = item(&mls, id_of(&mls, 1));
-    assert_eq!(details.error.as_deref(), Some(rejection));
-    assert!(!details.service);
-}
-
-#[test]
-fn a_service_failure_during_repair_halts_with_its_own_message_until_a_retry() {
-    let outage = "OpenRouter is unreachable: no route";
-    let mut mls = Mls::new();
-    mls.sync(&paras(&["Lemma t.", "Proof. FALSE claim. ∎"]));
-    let jobs = run(
-        &mut mls,
-        repair_fails(Failure {
-            message: outage.to_string(),
-            service: true,
-        }),
-    );
-    assert_eq!(repairs(&jobs), 1);
-    assert!(mls.next_job().is_none(), "a service failure halts the walk");
-    let details = item(&mls, id_of(&mls, 1));
-    assert_eq!(details.error.as_deref(), Some(outage));
-    assert!(details.service);
-
-    mls.retry();
-    let jobs = run(&mut mls, answer);
-    assert_eq!(repairs(&jobs), 1, "a retry asks for the repair again");
-    assert_eq!(statuses(&mls), [(0, Status::Sorry), (1, Status::Failed)]);
-    let details = item(&mls, id_of(&mls, 1));
-    assert_eq!(details.error.as_deref(), Some("1:0: error"));
 }

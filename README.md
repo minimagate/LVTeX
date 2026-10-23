@@ -210,11 +210,11 @@ as `#eval` or `set_option`, redefines a name from above, changes the statement
 its proof belongs to, or cites that statement inside its proof, is rejected before
 Lean sees it. The Lean REPL then checks the block on top of the blocks above.
 
-If Lean reports an ordinary error in a proof, MLS makes exactly one repair attempt.
-The block stays grey while it repairs. The failed Lean and its error go, with the
-original context, to the same formalizer, and the repaired Lean must pass the same
-checks as the original before it is checked again on the same base. If the repair
-also fails, the block turns red. There are no further retries.
+MLS formalizes each block until Lean accepts it, at most three times in all. When the
+rules reject the Lean, or Lean reports an error (or a definition or proof still has
+`sorry`), the formalizer is asked again with the failed Lean and the reason, for
+definitions, statements and proofs alike. The block stays grey meanwhile. If the
+third attempt also fails, the block turns red with the last reason.
 
 After a formalization passes these rules, MLS records which names declared by the
 blocks above it appear in its Lean (whole words outside comments, except names the

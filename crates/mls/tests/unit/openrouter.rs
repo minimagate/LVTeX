@@ -616,6 +616,51 @@ fn formalize_request_cuts_a_long_document_above_to_its_start_and_end() {
 }
 
 #[test]
+fn formalize_request_asks_again_with_the_failed_lean_and_the_reason() {
+    let request = formalize_request(
+        Label::Definition,
+        "Let $a$ exist.",
+        None,
+        &[],
+        None,
+        Some(("axiom a : ℕ", "The Lean declares an axiom.")),
+    );
+    let parts = request["messages"][1]["content"]
+        .as_array()
+        .expect("user content parts");
+    let text = parts.last().expect("final part")["text"]
+        .as_str()
+        .expect("text part");
+    assert!(
+        text.ends_with(
+            "Block:\nLet $a$ exist.\n\nYour previous formalization of this block was not accepted:\naxiom a : ℕ\n\nThe reason:\nThe Lean declares an axiom.\n\nReturn a corrected formalization of the same block. Fix what the reason shows and keep the block's meaning: the same objects, hypotheses and conclusion. For a proof, keep the statement's name, binders and type exactly, and never use sorry."
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn formalize_request_cuts_a_long_reason_to_4000_characters() {
+    let reason = "r".repeat(5_000);
+    let request = formalize_request(
+        Label::Statement,
+        "x",
+        None,
+        &[],
+        None,
+        Some(("theorem t : True := by sorry", &reason)),
+    );
+    let parts = request["messages"][1]["content"]
+        .as_array()
+        .expect("user content parts");
+    let text = parts.last().expect("final part")["text"]
+        .as_str()
+        .expect("text part");
+    assert!(text.contains(&"r".repeat(4_000)));
+    assert!(!text.contains(&"r".repeat(4_001)), "the reason is cut");
+}
+
+#[test]
 fn formalize_request_uses_the_model_deterministically_with_a_strict_schema() {
     let request = formalize_request(Label::Statement, "x", None, &[], None, None);
     assert_eq!(request["model"], FORMALIZER_MODEL);

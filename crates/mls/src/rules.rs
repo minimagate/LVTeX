@@ -253,6 +253,23 @@ pub(crate) fn as_example(lean: &str, name: &str) -> String {
     }
 }
 
+/// The Lean a block is checked with. A proof is checked after every block above, where its
+/// statement is already declared, so it is checked as an `example` that restates the statement
+/// without declaring its name again. Other blocks are checked as they are. `statement` is the
+/// paired statement's Lean.
+pub(crate) fn checked_lean(label: Label, lean: &str, statement: Option<&str>) -> String {
+    match (label, statement) {
+        (Label::Proof, Some(statement)) => {
+            let name = declared_names(statement)
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+            as_example(lean, &name)
+        }
+        _ => lean.to_string(),
+    }
+}
+
 /// Rejects a formalization of `label` that must not be checked. `names_above`
 /// are the names declared by earlier blocks; `statement` is the paired
 /// statement's Lean for a proof.

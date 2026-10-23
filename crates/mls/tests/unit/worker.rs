@@ -2,9 +2,10 @@
 //! `cargo test --release -p lvtex-mls scripted_documents -- --ignored --nocapture`.
 
 use super::Worker;
-use crate::openrouter::{CHAT_URL, DECISIONS_URL};
+use crate::openrouter::{CHAT_URL, DECISIONS_URL, formalize_request};
 use crate::{
-    Failure, Formal, Job, Label, Mls, Outcome, Paragraph, Reply, Segment, SplitContext, Status, Tag,
+    Checked, Failure, Formal, Job, Label, Mls, Outcome, Paragraph, Reply, Segment, SplitContext,
+    Status, Tag,
 };
 use documents::{DOCUMENTS, Line, assert_outcome, drive, lean_project, lean_ready};
 use serde_json::{Value, json};
@@ -58,7 +59,40 @@ fn formalize(label: Label, text: &str) -> Job {
         lean_above: Vec::new(),
         names_above: Vec::new(),
         statement: None,
+        base: 0,
     }
+}
+
+/// A worker whose requests get `replies` in turn, and the channel of the request bodies it sent.
+/// A request past the last reply fails as an unreachable service would.
+fn worker_replying(replies: Vec<Result<Value, Failure>>) -> (Worker, mpsc::Receiver<Value>) {
+    let (sent, bodies) = mpsc::channel();
+    let mut replies = replies.into_iter();
+    let worker = Worker::with_request(
+        PathBuf::new(),
+        || {},
+        move |_, body| {
+            let _ = sent.send(body.clone());
+            replies.next().unwrap_or_else(|| Err(unreachable()))
+        },
+    );
+    (worker, bodies)
+}
+
+fn unreachable() -> Failure {
+    Failure {
+        message: "OpenRouter is unreachable: no route".to_string(),
+        service: true,
+    }
+}
+
+/// The text of the last message of a request: the block, with any retry after it.
+fn prompt(body: &Value) -> &str {
+    body["messages"][1]["content"]
+        .as_array()
+        .and_then(|parts| parts.last())
+        .and_then(|part| part["text"].as_str())
+        .unwrap_or_default()
 }
 
 /// A request that fails the way an unreachable service does.
@@ -76,85 +110,205 @@ const PROSE: &str = "Expand both sides in coordinates and use the orthogonality 
 /// The candidate that Lean rejected, and Lean's error for its line 7.
 const FAILED: &str = "theorem quadraticEnergy_add_of_areOrthogonal (u v : ℝ × ℝ) (h : AreOrthogonal u v) : quadraticEnergy (u+v)=quadraticEnergy u+quadraticEnergy v := by\n  obtain ⟨a, b⟩ := u\n  obtain ⟨c, d⟩ := v\n  unfold AreOrthogonal scalarProductB at h\n  unfold quadraticEnergy\n  simp only [Prod.mk_add_mk] at *\n  simp only at h ⊢\n  nlinarith [h]";
 const ERROR: &str = "7:2: `simp` made no progress";
-/// The repaired candidate: the redundant `simp` is gone.
-const REPAIRED: &str = "theorem quadraticEnergy_add_of_areOrthogonal (u v : ℝ × ℝ) (h : AreOrthogonal u v) : quadraticEnergy (u+v)=quadraticEnergy u+quadraticEnergy v := by\n  obtain ⟨a, b⟩ := u\n  obtain ⟨c, d⟩ := v\n  unfold AreOrthogonal scalarProductB at h\n  unfold quadraticEnergy\n  simp only [Prod.mk_add_mk] at *\n  nlinarith [h]";
+/// The corrected candidate: the redundant `simp` is gone.
+const CORRECTED: &str = "theorem quadraticEnergy_add_of_areOrthogonal (u v : ℝ × ℝ) (h : AreOrthogonal u v) : quadraticEnergy (u+v)=quadraticEnergy u+quadraticEnergy v := by\n  obtain ⟨a, b⟩ := u\n  obtain ⟨c, d⟩ := v\n  unfold AreOrthogonal scalarProductB at h\n  unfold quadraticEnergy\n  simp only [Prod.mk_add_mk] at *\n  nlinarith [h]";
+/// The definitions above the regression's proof.
+const DEFINITIONS: [&str; 3] = [
+    "def scalarProductB (u v : ℝ × ℝ) : ℝ := u.1 * v.1 + u.2 * v.2",
+    "def AreOrthogonal (u v : ℝ × ℝ) : Prop := scalarProductB u v = 0",
+    "def quadraticEnergy (u : ℝ × ℝ) : ℝ := u.1^2 + u.2^2",
+];
 
-/// The repair of the regression's proof, with the definitions above it.
-fn repair_job(failed: &str, error: &str) -> Job {
-    Job::Repair {
+/// The job that formalizes the regression's proof, with the definitions above it, checked on base 7.
+fn proof_job() -> Job {
+    Job::Formalize {
         block: 4,
         version: 12,
+        label: Label::Proof,
         text: format!("*Proof.* {PROSE}"),
         above: Some("We keep the notation of the definitions above.".to_string()),
-        lean_above: vec![
-            (
-                1,
-                "def scalarProductB (u v : ℝ × ℝ) : ℝ := u.1 * v.1 + u.2 * v.2".to_string(),
-            ),
-            (
-                2,
-                "def AreOrthogonal (u v : ℝ × ℝ) : Prop := scalarProductB u v = 0".to_string(),
-            ),
-            (
-                3,
-                "def quadraticEnergy (u : ℝ × ℝ) : ℝ := u.1^2 + u.2^2".to_string(),
-            ),
-        ],
+        lean_above: DEFINITIONS
+            .iter()
+            .enumerate()
+            .map(|(index, lean)| (index as u64 + 1, lean.to_string()))
+            .collect(),
         names_above: vec![
             "scalarProductB".to_string(),
             "AreOrthogonal".to_string(),
             "quadraticEnergy".to_string(),
         ],
-        statement: (5, STATEMENT.to_string()),
+        statement: Some((5, STATEMENT.to_string())),
         base: 7,
-        failed: failed.to_string(),
-        error: error.to_string(),
     }
 }
 
 #[test]
-fn a_repair_request_sends_the_proof_its_statement_context_and_the_failed_lean_and_error() {
-    let (sent, bodies) = mpsc::channel();
-    let worker = Worker::with_request(
-        PathBuf::new(),
-        || {},
-        move |_, body| {
-            let _ = sent.send(body.clone());
-            Ok(formalization_reply(REPAIRED))
-        },
+fn a_rejected_formalization_is_asked_again_with_the_lean_and_the_reason() {
+    let (worker, bodies) = worker_replying(vec![
+        Ok(formalization_reply("axiom t : True")),
+        Ok(formalization_reply("theorem t : True := by sorry")),
+    ]);
+    worker.submit(formalize(Label::Statement, "Then t holds."));
+    let Reply::Formalized { result, .. } = reply(&worker) else {
+        panic!("expected a formalization")
+    };
+    let requests: Vec<Value> = bodies.try_iter().collect();
+    assert_eq!(requests.len(), 2);
+    let retry = prompt(&requests[1]);
+    assert!(retry.contains("axiom t : True"), "{retry}");
+    assert!(retry.contains("The Lean declares an axiom."), "{retry}");
+    assert_eq!(
+        result.map(|formal| formal.lean),
+        Ok("theorem t : True := by sorry".to_string())
     );
-    worker.submit(repair_job(FAILED, ERROR));
-    let body = bodies
-        .recv_timeout(TIMEOUT)
-        .expect("the repair sends one request")
-        .to_string();
+}
+
+#[test]
+fn a_malformed_reply_is_asked_again_with_its_reason() {
+    let cut_off = json!({"choices": [{"finish_reason": "length",
+        "message": {"content": "{\"lean\": \"theorem t : Tr"}}]});
+    let (worker, bodies) = worker_replying(vec![
+        Ok(cut_off),
+        Ok(formalization_reply("theorem t : True := by sorry")),
+    ]);
+    worker.submit(formalize(Label::Statement, "Then t holds."));
+    let Reply::Formalized { result, .. } = reply(&worker) else {
+        panic!("expected a formalization")
+    };
+    let requests: Vec<Value> = bodies.try_iter().collect();
+    assert_eq!(requests.len(), 2);
+    let retry = prompt(&requests[1]);
+    assert!(retry.contains("(no usable answer)"), "{retry}");
+    assert!(retry.contains("The formalization was cut off."), "{retry}");
+    assert!(
+        retry.contains("Keep the Lean as short as the block allows."),
+        "{retry}"
+    );
+    assert_eq!(
+        result.map(|formal| formal.lean),
+        Ok("theorem t : True := by sorry".to_string())
+    );
+}
+
+#[test]
+fn a_rejected_proof_is_asked_again_with_its_statement_context_and_the_reason() {
+    let (worker, bodies) = worker_replying(vec![
+        Ok(formalization_reply("axiom extra : True")),
+        Ok(formalization_reply(CORRECTED)),
+    ]);
+    worker.submit(proof_job());
+    let Reply::Formalized { result, .. } = reply(&worker) else {
+        panic!("expected a formalization")
+    };
+    let requests: Vec<Value> = bodies.try_iter().collect();
+    assert_eq!(requests.len(), 2);
+    let body = requests[1].to_string();
     for part in [
         PROSE,
         STATEMENT,
-        "def quadraticEnergy (u : ℝ × ℝ) : ℝ := u.1^2 + u.2^2",
-        "simp only [Prod.mk_add_mk] at *",
-        "simp only at h ⊢",
-        ERROR,
+        DEFINITIONS[2],
+        "axiom extra : True",
+        "The Lean declares an axiom.",
         "Label: proof",
+        "Your previous formalization of this block was not accepted",
+        "keep the statement's name, binders and type exactly",
     ] {
-        assert!(body.contains(part), "the request lacks {part:?}");
+        assert!(body.contains(part), "the retry lacks {part:?}");
     }
-    assert!(body.contains("Fix only what the error shows"), "{body}");
+    assert!(result.is_ok(), "{result:?}");
 }
 
-/// The result of a repair whose reply is `lean`.
-fn repaired_result(lean: &str) -> Result<Formal, Failure> {
-    let answer = formalization_reply(lean);
-    let worker = Worker::with_request(PathBuf::new(), || {}, move |_, _| Ok(answer.clone()));
-    worker.submit(repair_job(FAILED, ERROR));
+#[test]
+fn formalization_stops_after_three_rejected_attempts() {
+    let (worker, bodies) = worker_replying(vec![Ok(formalization_reply("axiom t : True")); 3]);
+    worker.submit(formalize(Label::Statement, "Then t holds."));
+    let Reply::Formalized { result, check, .. } = reply(&worker) else {
+        panic!("expected a formalization")
+    };
+    assert_eq!(bodies.try_iter().count(), 3);
+    assert_eq!(
+        result,
+        Err(Failure {
+            message: "The Lean declares an axiom.".to_string(),
+            service: false,
+        })
+    );
+    assert_eq!(check, None);
+}
+
+#[test]
+fn a_service_failure_stops_the_attempts_at_once() {
+    let (worker, bodies) = worker_replying(vec![
+        Err(unreachable()),
+        Ok(formalization_reply("theorem t : True := by sorry")),
+    ]);
+    worker.submit(formalize(Label::Statement, "Then t holds."));
+    let Reply::Formalized { result, check, .. } = reply(&worker) else {
+        panic!("expected a formalization")
+    };
+    assert_eq!(bodies.try_iter().count(), 1);
+    assert_eq!(result, Err(unreachable()));
+    assert_eq!(check, None);
+}
+
+#[test]
+fn a_blank_definition_is_not_checked() {
+    let (worker, bodies) = worker_replying(vec![Ok(formalization_reply(""))]);
+    worker.submit(formalize(
+        Label::Definition,
+        "Throughout, n is a natural number.",
+    ));
+    let Reply::Formalized { result, check, .. } = reply(&worker) else {
+        panic!("expected a formalization")
+    };
+    assert_eq!(bodies.try_iter().count(), 1);
+    assert_eq!(result.map(|formal| formal.lean), Ok(String::new()));
+    assert_eq!(check, None);
+}
+
+#[test]
+fn an_accepted_proof_is_echoed_with_its_block_and_the_names_it_uses() {
+    let (worker, _bodies) = worker_replying(vec![Ok(formalization_reply(CORRECTED))]);
+    worker.submit(proof_job());
     match reply(&worker) {
-        Reply::Repaired { result, .. } => result,
-        other => panic!("expected a repair, got {other:?}"),
+        Reply::Formalized {
+            block,
+            version,
+            statement_version,
+            result,
+            check,
+        } => {
+            assert_eq!((block, version, statement_version), (4, 12, Some(5)));
+            assert_eq!(
+                result.map(|formal| formal.uses),
+                Ok(vec![
+                    "scalarProductB".to_string(),
+                    "AreOrthogonal".to_string(),
+                    "quadraticEnergy".to_string(),
+                ])
+            );
+            // No Lean project is set up here, so the check is the service failure it reports.
+            assert!(
+                matches!(check, Some((7, Err(Failure { service: true, .. })))),
+                "{check:?}"
+            );
+        }
+        other => panic!("expected a formalization, got {other:?}"),
+    }
+}
+
+/// The result of formalizing the regression's proof when every reply is `lean`.
+fn proof_result(lean: &str) -> Result<Formal, Failure> {
+    let (worker, _bodies) = worker_replying(vec![Ok(formalization_reply(lean)); super::ATTEMPTS]);
+    worker.submit(proof_job());
+    match reply(&worker) {
+        Reply::Formalized { result, .. } => result,
+        other => panic!("expected a formalization, got {other:?}"),
     }
 }
 
 #[test]
-fn a_repaired_proof_is_checked_by_the_same_rules_as_a_formalization() {
+fn a_proof_is_checked_by_the_same_rules_as_a_formalization() {
     let cases = [
         (format!("{HEADER} by\n  sorry"), "The proof uses sorry."),
         (
@@ -168,7 +322,7 @@ fn a_repaired_proof_is_checked_by_the_same_rules_as_a_formalization() {
     ];
     for (lean, message) in cases {
         assert_eq!(
-            repaired_result(&lean),
+            proof_result(&lean),
             Err(Failure {
                 message: message.to_string(),
                 service: false,
@@ -179,48 +333,87 @@ fn a_repaired_proof_is_checked_by_the_same_rules_as_a_formalization() {
 }
 
 #[test]
-fn an_accepted_repair_is_echoed_with_its_job_and_the_names_it_uses_recomputed() {
-    let job = repair_job(FAILED, ERROR);
-    let worker = Worker::with_request(
-        PathBuf::new(),
-        || {},
-        |_, _| Ok(formalization_reply(REPAIRED)),
+fn a_lean_error_is_asked_again_and_the_accepted_attempt_is_checked_on_the_base() {
+    let mut requests = Vec::new();
+    let mut replies = vec![
+        formalization_reply("def d := 1"),
+        formalization_reply("def d := 2"),
+    ]
+    .into_iter();
+    let mut request = |_: &str, body: &Value| -> Result<Value, Failure> {
+        requests.push(body.clone());
+        Ok(replies.next().expect("a reply for each request"))
+    };
+    let mut checks = Vec::new();
+    let mut outcomes =
+        vec![Outcome::Failed("1:0: error".to_string()), Outcome::Verified].into_iter();
+    let mut check = |lean: &str, base: u64| -> Result<Checked, Failure> {
+        checks.push((lean.to_string(), base));
+        Ok(Checked {
+            env: 5,
+            outcome: outcomes.next().expect("an outcome for each check"),
+        })
+    };
+    let (result, checked) = super::formalize(
+        &mut request,
+        &mut check,
+        |retry| formalize_request(Label::Definition, "Let d be 1.", None, &[], None, retry),
+        Label::Definition,
+        &[],
+        None,
+        7,
     );
-    worker.submit(job.clone());
-    match reply(&worker) {
-        Reply::Repaired {
-            job: echoed,
-            result,
-        } => {
-            assert_eq!(echoed, job);
-            assert_eq!(
-                result.map(|formal| formal.uses),
-                Ok(vec![
-                    "scalarProductB".to_string(),
-                    "AreOrthogonal".to_string(),
-                    "quadraticEnergy".to_string(),
-                ])
-            );
-        }
-        other => panic!("expected a repair, got {other:?}"),
-    }
+    assert_eq!(requests.len(), 2);
+    let retry = prompt(&requests[1]);
+    assert!(retry.contains("def d := 1"), "{retry}");
+    assert!(retry.contains("1:0: error"), "{retry}");
+    assert_eq!(
+        checks,
+        [("def d := 1".to_string(), 7), ("def d := 2".to_string(), 7)]
+    );
+    assert_eq!(
+        result.map(|formal| formal.lean),
+        Ok("def d := 2".to_string())
+    );
+    assert_eq!(
+        checked,
+        Some((
+            7,
+            Ok(Checked {
+                env: 5,
+                outcome: Outcome::Verified,
+            })
+        ))
+    );
 }
 
 #[test]
-fn a_repair_whose_request_fails_is_a_service_failure_for_its_job() {
-    let job = repair_job(FAILED, ERROR);
-    let worker = Worker::with_request(PathBuf::new(), || {}, no_request);
-    worker.submit(job.clone());
-    match reply(&worker) {
-        Reply::Repaired {
-            job: echoed,
-            result: Err(failure),
-        } => {
-            assert_eq!(echoed, job);
-            assert!(failure.service, "{}", failure.message);
-        }
-        other => panic!("expected a failed repair, got {other:?}"),
-    }
+fn a_timed_out_check_is_returned_at_once_without_asking_again() {
+    let mut requests = 0;
+    let mut request = |_: &str, _: &Value| -> Result<Value, Failure> {
+        requests += 1;
+        Ok(formalization_reply("def d := 1"))
+    };
+    let timeout = Failure {
+        message: "The Lean check timed out.".to_string(),
+        service: false,
+    };
+    let mut check = |_: &str, _: u64| -> Result<Checked, Failure> { Err(timeout.clone()) };
+    let (result, checked) = super::formalize(
+        &mut request,
+        &mut check,
+        |retry| formalize_request(Label::Definition, "Let d be 1.", None, &[], None, retry),
+        Label::Definition,
+        &[],
+        None,
+        7,
+    );
+    assert_eq!(requests, 1);
+    assert_eq!(
+        result.map(|formal| formal.lean),
+        Ok("def d := 1".to_string())
+    );
+    assert_eq!(checked, Some((7, Err(timeout))));
 }
 
 #[test]
@@ -378,37 +571,52 @@ fn production_worker_routes_first_mixed_parity_paragraph_to_paired_lean_checks()
         text: case.text.into(),
         open: false,
     }]);
+    // Each formalization is checked on its base. The worker cannot check Lean here, so the test
+    // supplies the check, with the outcome that Lean gives: a statement ends in `sorry`.
     let mut checks = Vec::new();
     for _ in 0..8 {
         let Some(job) = mls.next_job() else {
             break;
         };
-        if let Job::Check {
+        let Job::Formalize {
             block,
             version,
             base,
-            lean,
-        } = job
-        {
-            checks.push((block, base, version));
-            let outcome = if lean.ends_with("sorry") {
-                Outcome::Sorry
-            } else {
-                Outcome::Verified
-            };
-            assert!(mls.apply(Reply::Checked {
-                block,
-                version,
-                base,
-                result: Ok(crate::Checked {
-                    env: version + 100,
-                    outcome
-                })
-            }));
-        } else {
+            ..
+        } = &job
+        else {
             worker.submit(job);
             assert!(mls.apply(reply(&worker)));
-        }
+            continue;
+        };
+        let (block, version, base) = (*block, *version, *base);
+        checks.push((block, base, version));
+        worker.submit(job);
+        let Reply::Formalized {
+            statement_version,
+            result,
+            ..
+        } = reply(&worker)
+        else {
+            panic!("expected a formalization")
+        };
+        let outcome = match &result {
+            Ok(formal) if formal.lean.ends_with("sorry") => Outcome::Sorry,
+            _ => Outcome::Verified,
+        };
+        assert!(mls.apply(Reply::Formalized {
+            block,
+            version,
+            statement_version,
+            result,
+            check: Some((
+                base,
+                Ok(Checked {
+                    env: version + 100,
+                    outcome,
+                })
+            )),
+        }));
     }
     assert_eq!(calls.load(Ordering::SeqCst), 4);
     assert_eq!(checks.len(), 2);
@@ -591,8 +799,10 @@ fn formalize_rejects_an_axiom_without_a_service_failure() {
             version,
             statement_version,
             result,
+            check,
         } => {
             assert_eq!((block, version, statement_version), (3, 9, None));
+            assert_eq!(check, None);
             assert_eq!(
                 result,
                 Err(Failure {
@@ -643,6 +853,7 @@ fn formalize_records_the_names_above_that_the_lean_uses() {
         lean_above: Vec::new(),
         names_above: vec!["d1".into(), "t2".into()],
         statement: None,
+        base: 0,
     });
     match reply(&worker) {
         Reply::Formalized { result, .. } => {
@@ -836,7 +1047,7 @@ fn scripted_documents_end_with_their_dots() {
 
 #[test]
 #[ignore = "needs the Lean project in lean/ built (lake build Mathlib repl)"]
-fn the_regression_fails_at_the_redundant_simp_and_its_repair_checks_on_the_same_base() {
+fn the_regression_fails_at_the_redundant_simp_and_the_corrected_proof_checks_on_the_same_base() {
     let project = lean_project();
     if !lean_ready(&project) {
         eprintln!(
@@ -845,15 +1056,8 @@ fn the_regression_fails_at_the_redundant_simp_and_its_repair_checks_on_the_same_
         );
         return;
     }
-    let Job::Repair { lean_above, .. } = repair_job(FAILED, ERROR) else {
-        unreachable!("repair_job builds a repair")
-    };
     // The definitions above the proof, checked on the base the statement's proof is checked on.
-    let definitions = lean_above
-        .iter()
-        .map(|(_, lean)| lean.as_str())
-        .collect::<Vec<_>>()
-        .join("\n\n");
+    let definitions = DEFINITIONS.join("\n\n");
     let mut repl = None;
     let base = super::check(&mut repl, &project, &definitions, 0).expect("the definitions check");
     assert_eq!(base.outcome, Outcome::Verified, "{definitions}");
@@ -861,14 +1065,11 @@ fn the_regression_fails_at_the_redundant_simp_and_its_repair_checks_on_the_same_
     let failed = super::check(&mut repl, &project, FAILED, base.env).expect("the candidate checks");
     match failed.outcome {
         Outcome::Failed(message) => {
-            assert!(
-                message.contains("7:2: `simp` made no progress"),
-                "{message}"
-            )
+            assert!(message.contains(ERROR), "{message}")
         }
         other => panic!("the candidate should fail, got {other:?}"),
     }
-    let repaired =
-        super::check(&mut repl, &project, REPAIRED, base.env).expect("the repair checks");
-    assert_eq!(repaired.outcome, Outcome::Verified);
+    let corrected =
+        super::check(&mut repl, &project, CORRECTED, base.env).expect("the corrected proof checks");
+    assert_eq!(corrected.outcome, Outcome::Verified);
 }

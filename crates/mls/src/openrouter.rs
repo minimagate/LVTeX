@@ -52,6 +52,7 @@ Rules:
 - Make each declaration self-contained with explicit binders. Do not use `variable`, `section`, `namespace` or `open ... in` blocks that span declarations.
 - Reuse definitions and results from the Lean above by their exact name and signature instead of redefining or reproving them: a corollary cites the theorem it follows from. Never cite a name you have not seen above or do not know to exist in Mathlib. Prefer Mathlib's existing notions (Group, Filter.Tendsto, Real, Finset) over new ones.
 - Use standard Mathlib names and notation (ℕ, ℤ, ℝ, ∀, ∃, →). Prefer robust tactics such as simp, ring, linarith, nlinarith, omega, positivity, field_simp and gcongr, together with explicit Mathlib lemmas.
+- Notation scoped to a namespace, such as `ᵀ` or `⬝ᵥ` from `Matrix`, needs that namespace opened for the declaration: write `open Matrix in` (or the namespace concerned) directly before it.
 - Keep the formalization faithful to the block: the same objects, hypotheses and conclusion.
 - Carry the standing hypotheses and conventions fixed in the document above (for example "Let $G$ be a finite group" or "Throughout, $A$ is a symmetric matrix") into every block they govern, as explicit binders and hypotheses, unless the block overrides them. The document above is context only: formalize nothing from it except what this block needs.
 - Formalize the claim the block asserts or conjectures, even if it is false. Words such as "hope" or "guess" do not weaken the conclusion. Finite examples or computations never replace a universal claim, and never add a bound or hypothesis that the block does not state. A statement keeps its exact form with `by sorry` as its proof, whether or not it is true; a later proof may then fail in Lean."#;
@@ -311,6 +312,8 @@ pub(crate) fn split_request(text: &str, context: &SplitContext) -> Value {
 
 /// Document text above a block longer than this many characters is cut to its start and its end.
 const ABOVE_LIMIT: usize = 40_000;
+/// The characters of a rejection's reason that a retry sends back, so a long Lean error stays bounded.
+const RETRY_REASON_CHARS: usize = 4_000;
 /// The characters kept from the start of a cut document: the notation it fixes is set up there.
 const ABOVE_HEAD: usize = 8_000;
 /// The characters kept from the end of a cut document: the conventions nearest the block.
@@ -335,15 +338,15 @@ fn bounded_above(above: &str) -> Cow<'_, str> {
 /// The request that formalizes one block. The system prompt and the last Lean
 /// segment carry cache_control, so an edit in the middle of the document invalidates
 /// only the cached suffix after it. `above` is the document text above the block (see
-/// `Job::Formalize`). `repair` is the failed Lean and Lean's error for a proof that
-/// is asked again (see `Job::Repair`).
+/// `Job::Formalize`). `retry` is the failed Lean and the reason it was not accepted, for a block
+/// that is asked again (see `worker`).
 pub(crate) fn formalize_request(
     label: Label,
     text: &str,
     above: Option<&str>,
     lean_above: &[(u64, String)],
     statement: Option<&str>,
-    repair: Option<(&str, &str)>,
+    retry: Option<(&str, &str)>,
 ) -> Value {
     let system = json!({"role": "system", "content": [
         {"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}
@@ -358,15 +361,26 @@ pub(crate) fn formalize_request(
     let statement = statement
         .map(|statement| format!("Most recent statement:\n{statement}\n\n"))
         .unwrap_or_default();
-    let repair = repair
-        .map(|(failed, error)| {
+    let retry = retry
+        .map(|(failed, reason)| {
+            let reason: String = reason.chars().take(RETRY_REASON_CHARS).collect();
+            // A reply that was cut off or is not JSON has no Lean to send back, so the retry asks
+            // for a short answer instead.
+            let (failed, short) = if failed.trim().is_empty() {
+                (
+                    "(no usable answer)",
+                    " Keep the Lean as short as the block allows.",
+                )
+            } else {
+                (failed, "")
+            };
             format!(
-                "\n\nThe Lean formalized for this proof before failed to check:\n{failed}\n\nLean's error:\n{error}\n\nReturn a repaired formalization of the same proof. Fix only what the error shows: keep the statement's name, binders and type exactly, keep the hypotheses and the argument of the block, and never use sorry."
+                "\n\nYour previous formalization of this block was not accepted:\n{failed}\n\nThe reason:\n{reason}\n\nReturn a corrected formalization of the same block. Fix what the reason shows and keep the block's meaning: the same objects, hypotheses and conclusion. For a proof, keep the statement's name, binders and type exactly, and never use sorry.{short}"
             )
         })
         .unwrap_or_default();
     let prompt = format!(
-        "Document above:\n{}\n\nLabel: {}\n\n{statement}Block:\n{text}{repair}",
+        "Document above:\n{}\n\nLabel: {}\n\n{statement}Block:\n{text}{retry}",
         above.map_or(Cow::Borrowed("(none)"), bounded_above),
         label.name(),
     );

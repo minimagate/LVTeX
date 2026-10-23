@@ -140,6 +140,8 @@ pub enum Job {
         text: String,
         context: SplitContext,
     },
+    /// Formalizes one block until Lean accepts it, asking again with the failed Lean and its reason
+    /// (see `worker`). Lean checks the result on `base` in the same job.
     Formalize {
         block: u64,
         version: u64,
@@ -152,6 +154,9 @@ pub enum Job {
         names_above: Vec<String>,
         /// For proofs: the paired statement's version and Lean.
         statement: Option<(u64, String)>,
+        /// The REPL environment the Lean is checked on, as for `Job::Check`; 0 is the environment
+        /// right after `import Mathlib`.
+        base: u64,
     },
     Check {
         block: u64,
@@ -159,25 +164,6 @@ pub enum Job {
         lean: String,
         /// The REPL environment to check on; 0 is the environment right after `import Mathlib`.
         base: u64,
-    },
-    /// Once per proof whose Lean failed to check: a repaired translation of the same proof, asked
-    /// with the failed candidate and Lean's error. Every field is the context it is checked against,
-    /// so a reply that no longer matches the plan is rejected.
-    Repair {
-        block: u64,
-        version: u64,
-        text: String,
-        /// The document's settled text above the block, as in `Job::Formalize`.
-        above: Option<String>,
-        lean_above: Vec<(u64, String)>,
-        names_above: Vec<String>,
-        /// The paired statement's version and Lean.
-        statement: (u64, String),
-        /// The REPL environment the statement's proof is checked on: the one the repair is checked on.
-        base: u64,
-        /// The Lean that failed, and the error Lean gave for it.
-        failed: String,
-        error: String,
     },
 }
 
@@ -200,21 +186,21 @@ pub enum Reply {
         context: SplitContext,
         result: Result<Vec<Segment>, Failure>,
     },
+    /// The answer to a `Job::Formalize`, which it echoes: the formal that Lean accepted, or the last
+    /// attempt, and that attempt's Lean check. `check` holds the base and the check of the returned
+    /// formal, and is `None` when nothing was checked: a blank definition, a rejected or failed
+    /// formalization, or a request that failed.
     Formalized {
         block: u64,
         version: u64,
         statement_version: Option<u64>,
         result: Result<Formal, Failure>,
+        check: Option<(u64, Result<Checked, Failure>)>,
     },
     Checked {
         block: u64,
         version: u64,
         base: u64,
         result: Result<Checked, Failure>,
-    },
-    /// The answer to a `Job::Repair`, which it echoes.
-    Repaired {
-        job: Job,
-        result: Result<Formal, Failure>,
     },
 }

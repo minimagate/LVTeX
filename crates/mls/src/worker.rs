@@ -5,7 +5,7 @@ use crate::openrouter::{
     parse_formal, parse_items, parse_split, parse_tag, split_request,
 };
 use crate::repl::Repl;
-use crate::{Checked, Failure, Formal, Job, Label, Reply, Tag, rules};
+use crate::{Checked, Failure, Formal, Job, Label, Outcome, Reply, Tag, rules};
 use serde_json::Value;
 use std::{
     fmt,
@@ -109,6 +109,17 @@ impl Worker {
     }
 }
 
+/// The most formalization requests one block gets in one job. A formalization that the rules reject,
+/// that Lean does not accept, or whose reply is malformed is asked again with the reason, up to this
+/// many in all.
+const ATTEMPTS: usize = 3;
+
+/// The formal of a formalization job and the check of that formal (see `Reply::Formalized`).
+type Formalized = (
+    Result<Formal, Failure>,
+    Option<(u64, Result<Checked, Failure>)>,
+);
+
 /// Computes the reply to one job. A failed request or Lean check becomes a failed reply.
 fn run(
     job: &Job,
@@ -171,51 +182,33 @@ fn run(
             lean_above,
             names_above,
             statement,
+            base,
         } => {
             let statement_lean = statement.as_ref().map(|(_, lean)| lean.as_str());
-            let body = formalize_request(
+            let (result, check) = formalize(
+                request,
+                &mut |lean, on| check(repl, project, lean, on),
+                |retry| {
+                    formalize_request(
+                        *label,
+                        text,
+                        above.as_deref(),
+                        lean_above,
+                        statement_lean,
+                        retry,
+                    )
+                },
                 *label,
-                text,
-                above.as_deref(),
-                lean_above,
+                names_above,
                 statement_lean,
-                None,
+                *base,
             );
-            let result = checked_formal(request, &body, *label, names_above, statement_lean);
             Reply::Formalized {
                 block: *block,
                 version: *version,
                 statement_version: statement.as_ref().map(|(version, _)| *version),
                 result,
-            }
-        }
-        Job::Repair {
-            text,
-            above,
-            lean_above,
-            names_above,
-            statement,
-            failed,
-            error,
-            ..
-        } => {
-            let body = formalize_request(
-                Label::Proof,
-                text,
-                above.as_deref(),
-                lean_above,
-                Some(&statement.1),
-                Some((failed, error)),
-            );
-            Reply::Repaired {
-                job: job.clone(),
-                result: checked_formal(
-                    request,
-                    &body,
-                    Label::Proof,
-                    names_above,
-                    Some(&statement.1),
-                ),
+                check,
             }
         }
         Job::Check {
@@ -232,28 +225,78 @@ fn run(
     }
 }
 
-/// Sends one formalization request and checks the reply with the rules. The formal carries the
-/// names from above that its Lean uses.
-fn checked_formal(
+/// Formalizes one block. Each attempt sends a request, applies the rules and checks the Lean on
+/// `base`. A rejected or unaccepted formalization is asked again with its Lean and the reason, and
+/// so is a reply that was cut off or is not valid JSON, with its reason and no Lean. Up to
+/// `ATTEMPTS` requests in all; the last attempt is the result. A service failure, or a timed-out
+/// check, stops at once. `body` builds the request from the retry, if any.
+fn formalize(
     request: &mut impl FnMut(&str, &Value) -> Result<Value, Failure>,
-    body: &Value,
+    check: &mut impl FnMut(&str, u64) -> Result<Checked, Failure>,
+    body: impl Fn(Option<(&str, &str)>) -> Value,
     label: Label,
     names_above: &[String],
     statement: Option<&str>,
-) -> Result<Formal, Failure> {
-    request(CHAT_URL, body)
-        .and_then(|response| parse_formal(&response))
-        .and_then(|mut formal| {
-            rules::reject(label, &formal, names_above, statement)
-                .map(|()| {
-                    formal.uses = rules::uses(&formal.lean, names_above);
-                    formal
-                })
-                .map_err(|message| Failure {
+    base: u64,
+) -> Formalized {
+    let mut retry: Option<(String, String)> = None;
+    let mut last = None;
+    for _ in 0..ATTEMPTS {
+        let request_body = body(
+            retry
+                .as_ref()
+                .map(|(lean, reason)| (lean.as_str(), reason.as_str())),
+        );
+        let mut formal = match request(CHAT_URL, &request_body).and_then(|r| parse_formal(&r)) {
+            Ok(formal) => formal,
+            Err(failure) if failure.service => return (Err(failure), None),
+            Err(failure) => {
+                retry = Some((String::new(), failure.message.clone()));
+                last = Some((Err(failure), None));
+                continue;
+            }
+        };
+        if let Err(message) = rules::reject(label, &formal, names_above, statement) {
+            retry = Some((formal.lean.clone(), message.clone()));
+            last = Some((
+                Err(Failure {
                     message,
                     service: false,
-                })
-        })
+                }),
+                None,
+            ));
+            continue;
+        }
+        formal.uses = rules::uses(&formal.lean, names_above);
+        if label == Label::Definition && rules::is_blank(&formal.lean) {
+            return (Ok(formal), None);
+        }
+        let lean = rules::checked_lean(label, &formal.lean, statement);
+        let checked = match check(&lean, base) {
+            Ok(checked) => checked,
+            Err(failure) => return (Ok(formal), Some((base, Err(failure)))),
+        };
+        match unaccepted(label, &checked.outcome) {
+            None => return (Ok(formal), Some((base, Ok(checked)))),
+            Some(reason) => {
+                retry = Some((formal.lean.clone(), reason));
+                last = Some((Ok(formal), Some((base, Ok(checked)))));
+            }
+        }
+    }
+    // `ATTEMPTS` is at least one, so the loop ran and set `last`.
+    last.expect("the formalization loop makes at least one attempt")
+}
+
+/// Why Lean's outcome does not accept a formalization of `label`, or None when it does. A
+/// statement may keep its `sorry`; a definition or a proof may not.
+fn unaccepted(label: Label, outcome: &Outcome) -> Option<String> {
+    match (label, outcome) {
+        (_, Outcome::Verified) | (Label::Statement, Outcome::Sorry) => None,
+        (Label::Definition, Outcome::Sorry) => Some("The definition uses sorry.".to_string()),
+        (_, Outcome::Sorry) => Some("The proof uses sorry.".to_string()),
+        (_, Outcome::Failed(error)) => Some(error.clone()),
+    }
 }
 
 /// Checks `lean` on the REPL, starting the REPL on first use. Any failed check drops the REPL: a
@@ -311,6 +354,7 @@ fn failure_reply(job: &Job, failure: Failure) -> Reply {
             version: *version,
             statement_version: statement.as_ref().map(|(version, _)| *version),
             result: Err(failure),
+            check: None,
         },
         Job::Check {
             block,
@@ -321,10 +365,6 @@ fn failure_reply(job: &Job, failure: Failure) -> Reply {
             block: *block,
             version: *version,
             base: *base,
-            result: Err(failure),
-        },
-        Job::Repair { .. } => Reply::Repaired {
-            job: job.clone(),
             result: Err(failure),
         },
     }

@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde_json::{Value, json};
 
 use crate::openrouter::{segments, segments_json};
-use crate::rules::{as_example, declared_names, is_blank};
+use crate::rules::{checked_lean, declared_names, is_blank};
 use crate::{
     Checked, Failure, Formal, Job, Label, Outcome, Reply, Segment, SplitContext, Status, Tag,
 };
@@ -211,9 +211,6 @@ struct Block {
     statement_version: Option<u64>,
     /// The base environment it was checked on, and the result.
     check: Option<(u64, Result<Checked, Failure>)>,
-    /// Proofs: whether the one automatic repair has been asked for this version. Set when its reply
-    /// is accepted, so a repaired proof that still fails is final. A new formalization clears it.
-    repaired: bool,
 }
 
 /// Where segmentation stops. A `Classify` frontier is the first unit that needs a tag, and a
@@ -626,22 +623,6 @@ fn node_name(block: &Block) -> String {
     }
 }
 
-/// The Lean a block is checked with. A proof is checked after every block above, where its
-/// statement is already declared, so it is checked as an `example` that restates the statement
-/// without declaring its name again. Other blocks are checked as they are.
-fn checked_lean(label: Label, lean: &str, statement: Option<&Stated>) -> String {
-    match (label, statement) {
-        (Label::Proof, Some(stated)) => {
-            let name = declared_names(&stated.lean)
-                .into_iter()
-                .next()
-                .unwrap_or_default();
-            as_example(lean, &name)
-        }
-        _ => lean.to_string(),
-    }
-}
-
 /// The document text above a block whose `above` is a byte length into `document`, None when
 /// nothing is above.
 fn document_above(document: &str, above: usize) -> Option<String> {
@@ -649,13 +630,15 @@ fn document_above(document: &str, above: usize) -> Option<String> {
 }
 
 /// The job that formalizes block `b`, against the statement it pairs with, the document above it,
-/// the Lean above it and the names declared above it.
+/// the Lean above it and the names declared above it. Its Lean is checked on `base`, the environment
+/// the block would be checked on.
 fn formalize_job(
     b: &Block,
     document: &str,
     statement: Option<&Stated>,
     lean: &[(u64, Label, String)],
     names: &[String],
+    base: u64,
 ) -> Job {
     Job::Formalize {
         block: b.id,
@@ -669,6 +652,7 @@ fn formalize_job(
             .collect(),
         names_above: names.to_vec(),
         statement: statement.map(|s| (s.version, s.lean.clone())),
+        base,
     }
 }
 
@@ -771,7 +755,6 @@ fn new_block(
         formal: None,
         statement_version: None,
         check: None,
-        repaired: false,
     }
 }
 
@@ -1058,8 +1041,6 @@ impl Mls {
         for block in self.blocks.iter_mut().chain(self.parked.values_mut()) {
             if matches!(&block.formal, Some(Err(f)) if f.service) {
                 block.formal = None;
-                // A repair that failed for a service is asked again, as a formalization is.
-                block.repaired = false;
             }
             if repl_lost || matches!(&block.check, Some((_, Err(f))) if f.service) {
                 block.check = None;
@@ -1252,7 +1233,6 @@ impl Mls {
                     block.formal = prior.formal;
                     block.statement_version = prior.statement_version;
                     block.check = prior.check;
-                    block.repaired = prior.repaired;
                 }
                 prior => {
                     block.version = next();
@@ -1392,7 +1372,11 @@ impl Mls {
                 version,
                 statement_version,
                 result,
+                check,
             } => {
+                if let Some((_, check)) = &check {
+                    self.check_failed(check);
+                }
                 let Some(index) = self
                     .blocks
                     .iter()
@@ -1403,33 +1387,7 @@ impl Mls {
                 let b = &mut self.blocks[index];
                 b.formal = Some(result);
                 b.statement_version = statement_version;
-                b.check = None;
-                b.repaired = false;
-                self.remember_formal(index);
-                true
-            }
-            Reply::Repaired { job, result } => {
-                // Applied only while the plan still asks for this repair: an edit to the proof, its
-                // statement or the context above it, or a lost check, makes the reply stale.
-                let Job::Repair { block, version, .. } = &job else {
-                    return false;
-                };
-                if self.plan().job.as_ref() != Some(&job) {
-                    return false;
-                }
-                let Some(index) = self
-                    .blocks
-                    .iter()
-                    .position(|b| b.id == *block && b.version == *version)
-                else {
-                    return false;
-                };
-                let b = &mut self.blocks[index];
-                b.repaired = true;
-                // The repair's outcome is the block's formal, so a rejection shows as its last
-                // diagnostic and a service failure halts like any other (see `retry_services`).
-                b.formal = Some(result);
-                b.check = None;
+                b.check = check;
                 self.remember_formal(index);
                 true
             }
@@ -1439,18 +1397,7 @@ impl Mls {
                 base,
                 result,
             } => {
-                match &result {
-                    // The REPL is gone. The next edit or `retry` tries again (see `retry_services`).
-                    Err(failure) if failure.service => self.repl_lost = true,
-                    // A timeout kills the REPL, so every environment that a check was made on is
-                    // gone. This block's own check is set below, when its reply is current.
-                    Err(_) => {
-                        for b in self.blocks.iter_mut().chain(self.parked.values_mut()) {
-                            b.check = None;
-                        }
-                    }
-                    Ok(_) => {}
-                }
+                self.check_failed(&result);
                 let Some(b) = self
                     .blocks
                     .iter_mut()
@@ -1461,6 +1408,23 @@ impl Mls {
                 b.check = Some((base, result));
                 true
             }
+        }
+    }
+
+    /// Clears what a failed check invalidates, whether its reply is current or not. A service
+    /// failure means the REPL is gone, so the next edit or `retry` tries again (see
+    /// `retry_services`). Any other failure is a timeout, which kills the REPL: every environment
+    /// that a check was made on is gone, so every check is cleared. The reply's own check is stored
+    /// by the caller, after this.
+    fn check_failed(&mut self, result: &Result<Checked, Failure>) {
+        match result {
+            Err(failure) if failure.service => self.repl_lost = true,
+            Err(_) => {
+                for b in self.blocks.iter_mut().chain(self.parked.values_mut()) {
+                    b.check = None;
+                }
+            }
+            Ok(_) => {}
         }
     }
 
@@ -1813,7 +1777,7 @@ impl Mls {
                 }
                 _ => {
                     job.get_or_insert_with(|| {
-                        formalize_job(b, &self.document, stmt.as_ref(), &lean, &names)
+                        formalize_job(b, &self.document, stmt.as_ref(), &lean, &names, chain)
                     });
                     pending = true;
                     dots.push(dot(b.first, b.last, b.id, Status::Checking));
@@ -1836,7 +1800,7 @@ impl Mls {
                     dots.push(noted(b.first, b.last, b.id, Status::Failed, note));
                 } else {
                     job.get_or_insert_with(|| {
-                        formalize_job(b, &self.document, stmt.as_ref(), &lean, &names)
+                        formalize_job(b, &self.document, stmt.as_ref(), &lean, &names, chain)
                     });
                     pending = true;
                     dots.push(dot(b.first, b.last, b.id, Status::Checking));
@@ -1874,30 +1838,6 @@ impl Mls {
                             halted |= failure.service;
                         }
                         Ok(Checked { env, outcome }) => match (b.label, outcome) {
-                            (Label::Proof, Outcome::Failed(error))
-                                if !b.repaired && stmt.is_some() =>
-                            {
-                                let statement = stmt
-                                    .as_ref()
-                                    .expect("a proof is checked against its statement");
-                                job.get_or_insert_with(|| Job::Repair {
-                                    block: b.id,
-                                    version: b.version,
-                                    text: b.text.clone(),
-                                    above: document_above(&self.document, b.above),
-                                    lean_above: lean
-                                        .iter()
-                                        .map(|(id, _, lean)| (*id, lean.clone()))
-                                        .collect(),
-                                    names_above: names.clone(),
-                                    statement: (statement.version, statement.lean.clone()),
-                                    base: chain,
-                                    failed: formal.lean.clone(),
-                                    error: error.clone(),
-                                });
-                                pending = true;
-                                dots.push(dot(b.first, b.last, b.id, Status::Checking));
-                            }
                             (
                                 Label::Definition | Label::Statement | Label::Proof | Label::Skip,
                                 Outcome::Failed(message),
@@ -1975,8 +1915,11 @@ impl Mls {
                                 {
                                     *entry = (b.id, Label::Proof, formal.lean.clone());
                                 } else {
-                                    let lean_checked =
-                                        checked_lean(b.label, &formal.lean, stmt.as_ref());
+                                    let lean_checked = checked_lean(
+                                        b.label,
+                                        &formal.lean,
+                                        stmt.as_ref().map(|s| s.lean.as_str()),
+                                    );
                                     lean.push((b.id, Label::Proof, lean_checked));
                                 }
                                 for name in declared_names(&formal.lean) {
@@ -2001,7 +1944,11 @@ impl Mls {
                     job.get_or_insert_with(|| Job::Check {
                         block: b.id,
                         version: b.version,
-                        lean: checked_lean(b.label, &formal.lean, stmt.as_ref()),
+                        lean: checked_lean(
+                            b.label,
+                            &formal.lean,
+                            stmt.as_ref().map(|s| s.lean.as_str()),
+                        ),
                         base: chain,
                     });
                     pending = true;
