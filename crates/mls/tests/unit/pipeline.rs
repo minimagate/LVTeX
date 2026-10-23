@@ -1388,6 +1388,45 @@ fn a_then_line_after_a_definition_starts_its_own_statement() {
 }
 
 #[test]
+fn a_heading_is_never_classified_and_gets_no_dot() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["## Section", "Lemma t."]));
+    let jobs = run(&mut mls, answer);
+    assert!(
+        !jobs
+            .iter()
+            .any(|job| matches!(job, Job::Classify { text, .. } if text == "## Section")),
+        "{jobs:?}"
+    );
+    assert_eq!(statuses(&mls), [(1, Status::Sorry)]);
+}
+
+#[test]
+fn a_statement_under_a_heading_never_joins_it() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["# Title", "Then x = x."]));
+    let jobs = run(&mut mls, answer);
+    assert_eq!(formalize_texts(&jobs), ["Then x = x."]);
+    let dots = mls.dots();
+    assert_eq!(dots.len(), 1, "{dots:?}");
+    assert_eq!((dots[0].paragraph, dots[0].last), (1, 1));
+}
+
+#[test]
+fn a_hash_without_a_space_or_a_seventh_hash_is_not_a_heading() {
+    let mut mls = Mls::new();
+    mls.sync(&paras(&["#hashtag", "####### seven"]));
+    let jobs = run(&mut mls, answer);
+    for text in ["#hashtag", "####### seven"] {
+        assert!(
+            jobs.iter()
+                .any(|job| matches!(job, Job::Classify { text: t, .. } if t == text)),
+            "{text} is classified"
+        );
+    }
+}
+
+#[test]
 fn a_plus_line_after_a_proof_that_has_ended_is_not_part_of_it() {
     let mut mls = Mls::new();
     mls.sync(&paras(&["Lemma t.", "Proof. Done. ∎", "+ Not part of it."]));

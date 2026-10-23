@@ -639,6 +639,13 @@ fn formalize_job(
     }
 }
 
+/// Whether `text` is an ATX Markdown heading: one to six `#` followed by a space or the end.
+fn is_heading(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    let hashes = trimmed.bytes().take_while(|&b| b == b'#').count();
+    (1..=6).contains(&hashes) && matches!(trimmed[hashes..].chars().next(), None | Some(' '))
+}
+
 /// Whether a paragraph with `tag` joins `unit`, the unit above it. An unfinished proof takes a
 /// proof. Otherwise Jev must say the paragraph continues the unit, and the two must be of one label,
 /// or the paragraph must be Skip, or the unit prose.
@@ -1021,6 +1028,11 @@ impl Mls {
             let Some(text) = para.settled.as_deref() else {
                 continue;
             };
+            // A heading names a section and is never a statement: it gets no job and separates.
+            if is_heading(text) {
+                walk.separate(text);
+                continue;
+            }
             let spot = Spot { paragraph: i };
             let tag = match walk.tag(spot, para.id, text, &para.label) {
                 Read::Tag(tag) => tag,

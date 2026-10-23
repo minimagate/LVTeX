@@ -178,7 +178,7 @@ A block's dot sits beside its first paragraph. A paragraph cut into several item
 amber, then green. A proof does not need ∎: Enter closes it like any other block.
 The last block waits, with no dot and no request,
 only while it ends in `:` or `,`. A convention that only fixes notation ("Throughout,
-$n$ is a natural number") declares nothing and gets no dot.
+$n$ is a natural number") declares nothing and gets no dot. A Markdown heading is never sent to Jev: it gets no dot and never joins the block above or below it.
 
 A paragraph that holds several items, such as a statement followed by its proof, or a
 definition followed by a claim about it, needs no paragraph break. Claude Sonnet 5.5
